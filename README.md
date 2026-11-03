@@ -17,11 +17,18 @@
 
 内容在本机处理，无账户、广告或云上传。
 
-## 开始使用
+## 安装
 
-需要 **macOS 15+**；已测试平台以 Apple Silicon 为主，Intel 尚未完成验证。
+需要 **macOS 15+、Apple Silicon（M 系列芯片）**。
 
-安装支持 Swift 6 的 Xcode 或 Command Line Tools 后，在项目目录运行：
+- **直接下载**：[GitHub 预览版](https://github.com/caijyii/patch/releases/tag/v0.1.0-preview.1)，下载 ZIP，解压后将 `Patch.app` 拖入「应用程序」。无需开发工具。
+- **让 Agent 安装**：把仓库链接和[安装说明](docs/install.md#让-agent-安装)交给自己的 Agent，让它下载、校验并安装。
+
+当前为临时签名、未公证的预览包，首次打开可能需要你在系统设置中确认。[安装与权限说明](docs/install.md)
+
+### 从源码构建
+
+开发者需安装支持 Swift 6 的 Xcode 或 Command Line Tools，在项目目录运行：
 
 ```sh
 bash scripts/build-sandbox-app.sh
