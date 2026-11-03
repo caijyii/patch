@@ -1,0 +1,194 @@
+[
+  {
+    "key": "blossom",
+    "shapes": [
+      {
+        "path": "M 48 55 Q 43 74 47 88",
+        "fill": null,
+        "stroke": "#697f63",
+        "width": 2.7
+      },
+      {
+        "path": "M 46 79 C 34 80 27 72 26 66 C 39 64 46 69 46 79 Z",
+        "fill": "#a7ba8d",
+        "stroke": "#697f63",
+        "width": 2.7
+      },
+      {
+        "path": "M 46 72 C 47 61 57 57 64 59 C 64 69 56 75 46 72 Z",
+        "fill": "#c3cda5",
+        "stroke": "#697f63",
+        "width": 2.7
+      },
+      {
+        "path": "M 40 39 C 25 36 24 23 32 20 C 36 18 41 22 44 27 C 42 12 51 9 57 14 C 61 18 58 26 55 29 C 67 20 76 27 73 35 C 72 41 64 43 60 42 C 70 50 64 61 57 59 C 52 58 49 52 48 48 C 44 62 31 61 30 52 C 29 47 34 42 40 39 Z",
+        "fill": "#f8eedb",
+        "stroke": "#635e50",
+        "width": 2.7
+      },
+      {
+        "path": "M 41 34 C 44 29 53 30 55 36 C 57 42 52 47 46 45 C 40 43 38 39 41 34 Z",
+        "fill": "#dfb75e",
+        "stroke": "#a58953",
+        "width": 2.1
+      }
+    ]
+  },
+  {
+    "key": "leaf-fluttering-in-wind",
+    "shapes": [
+      {
+        "path": "M 16 67 C 18 43 41 24 76 16 C 81 45 65 73 39 76 C 28 77 20 72 16 67 Z",
+        "fill": "#b7c8a2",
+        "stroke": "#697f63",
+        "width": 2.7
+      },
+      {
+        "path": "M 23 65 C 39 57 54 45 72 23 C 68 51 55 69 38 71 Z",
+        "fill": "#97b28a",
+        "stroke": null,
+        "width": 2.7
+      },
+      {
+        "path": "M 12 83 C 20 69 44 58 70 26 M 31 67 Q 29 52 36 43 M 45 55 Q 43 40 50 32 M 45 55 Q 57 57 64 50",
+        "fill": null,
+        "stroke": "#697f63",
+        "width": 2.5
+      },
+      {
+        "path": "M 69 75 Q 79 71 84 60 M 75 83 Q 85 78 88 68",
+        "fill": null,
+        "stroke": "#a6b5a0",
+        "width": 2.2
+      }
+    ]
+  },
+  {
+    "key": "cat",
+    "shapes": [
+      {
+        "path": "M 65 68 C 82 76 84 57 76 53 C 69 49 65 57 70 60",
+        "fill": null,
+        "stroke": "#9d7954",
+        "width": 7.0
+      },
+      {
+        "path": "M 26 50 C 17 64 20 83 38 86 C 55 90 71 82 68 69 C 67 59 61 52 58 47 Z",
+        "fill": "#d9bd91",
+        "stroke": "#635e50",
+        "width": 2.7
+      },
+      {
+        "path": "M 28 60 C 31 56 39 57 42 65 L 48 82 C 35 86 25 78 28 60 Z",
+        "fill": "#f8ecd8",
+        "stroke": null,
+        "width": 2.7
+      },
+      {
+        "path": "M 21 34 L 22 14 Q 23 10 27 13 L 39 24 Q 47 22 53 24 L 67 14 Q 71 12 71 18 L 69 38 C 75 50 65 61 46 60 C 27 61 15 50 21 34 Z",
+        "fill": "#e7cda5",
+        "stroke": "#635e50",
+        "width": 2.7
+      },
+      {
+        "path": "M 27 20 L 28 31 L 35 27 Z M 65 21 L 59 29 L 66 33 Z",
+        "fill": "#d3a297",
+        "stroke": null,
+        "width": 2.7
+      },
+      {
+        "path": "M 34 39 Q 36 37 38 40 M 54 39 Q 56 36 58 39 M 43 46 L 46 48 L 49 45 M 46 48 Q 45 53 41 51 M 46 48 Q 48 52 51 50 M 29 47 L 19 45 M 62 45 L 74 42 M 39 71 Q 37 78 41 81",
+        "fill": null,
+        "stroke": "#635e50",
+        "width": 2.4
+      },
+      {
+        "path": "M 44 25 L 45 31 M 52 25 L 51 30",
+        "fill": null,
+        "stroke": "#a88962",
+        "width": 2.7
+      }
+    ]
+  },
+  {
+    "key": "smiling-face-with-smiling-eyes",
+    "shapes": [
+      {
+        "path": "M 49 13 C 68 12 82 28 82 48 C 84 67 67 83 48 82 C 27 84 12 68 14 47 C 12 27 28 11 49 13 Z",
+        "fill": "#ecd39a",
+        "stroke": "#635e50",
+        "width": 2.7
+      },
+      {
+        "path": "M 25 34 Q 26 25 36 23",
+        "fill": null,
+        "stroke": "#fff2d1",
+        "width": 4.8
+      },
+      {
+        "path": "M 27 43 Q 33 35 39 43 M 57 42 Q 63 34 69 41 M 35 57 C 40 70 59 72 65 56",
+        "fill": null,
+        "stroke": "#635e50",
+        "width": 3.4
+      },
+      {
+        "path": "M 25 51 Q 30 48 34 51 M 63 50 Q 68 47 72 50",
+        "fill": null,
+        "stroke": "#d9a28b",
+        "width": 5.3
+      }
+    ]
+  },
+  {
+    "key": "red-heart",
+    "shapes": [
+      {
+        "path": "M 48 82 C 35 69 13 51 14 33 C 15 13 37 9 47 28 C 58 10 78 16 82 31 C 87 50 65 71 48 82 Z",
+        "fill": "#d8a29a",
+        "stroke": "#8f6966",
+        "width": 2.8
+      },
+      {
+        "path": "M 45 76 C 30 64 19 49 21 34 C 24 20 33 20 40 28 C 29 23 24 32 26 42 C 28 55 39 64 45 76 Z",
+        "fill": "#e4bcb0",
+        "stroke": null,
+        "width": 2.7
+      },
+      {
+        "path": "M 24 35 Q 26 26 33 27",
+        "fill": null,
+        "stroke": "#f7e7d8",
+        "width": 3.5
+      },
+      {
+        "path": "M 73 39 Q 72 49 66 55",
+        "fill": null,
+        "stroke": "#c38c87",
+        "width": 2.2
+      }
+    ]
+  },
+  {
+    "key": "star",
+    "shapes": [
+      {
+        "path": "M 48 12 Q 51 8 54 16 L 62 34 L 83 37 Q 88 38 82 44 L 67 57 L 71 79 Q 72 86 65 82 L 47 71 L 28 82 Q 22 86 24 79 L 28 57 L 12 42 Q 8 37 16 36 L 37 34 Z",
+        "fill": "#e8ce91",
+        "stroke": "#9a845a",
+        "width": 2.8
+      },
+      {
+        "path": "M 49 22 L 43 40 L 25 41 M 62 65 L 65 75",
+        "fill": null,
+        "stroke": "#f8e8bc",
+        "width": 3.4
+      },
+      {
+        "path": "M 78 17 L 80 11 M 84 24 L 89 22",
+        "fill": null,
+        "stroke": "#b09a70",
+        "width": 2.4
+      }
+    ]
+  }
+]

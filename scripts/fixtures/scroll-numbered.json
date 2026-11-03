@@ -1,0 +1,22 @@
+{
+  "description": "Public generated Patch test document captured in TextEdit; contains no personal content.",
+  "sourceTrace": "PatchScrollTrace-A53A615A-64B8-4DBF-A06E-EDEE813CCF5E",
+  "beforeFrame": 1,
+  "afterFrame": 3,
+  "verticalDisplacementPixels": 168,
+  "dimensions": [
+    1152,
+    564
+  ],
+  "beforeFix": "paused: 画面重复度较高，无法确定滚动距离",
+  "checks": [
+    "append exact bottom rows",
+    "reverse revisit preserves pixels",
+    "upward extension",
+    "periodic pattern still rejected in verify-core.swift"
+  ],
+  "sha256": {
+    "scroll-numbered-before.png": "d2d1d2690c0cc716fffd6d12187cf6cecbe555c01984870d1617ab6f3ed8c259",
+    "scroll-numbered-after.png": "7fbdc678875368be62416306b4c80f8ed234dd9e4e58773b03a8cbdd579f36d1"
+  }
+}

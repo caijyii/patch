@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M 49 55 C 46 66 48 78 46 88" fill="none" stroke="#697f63" stroke-width="2.7"/>
+  <path d="M 48 78 C 34 80 25 71 24 63 C 38 61 47 66 48 78 Z" fill="#a6ba8b" stroke="#697f63" stroke-width="2.7"/>
+  <path d="M 47 72 C 50 60 60 56 70 58 C 69 69 58 75 47 72 Z" fill="#bdcba2" stroke="#697f63" stroke-width="2.7"/>
+  <path d="M 43.90 24.72 C 37.92 15.33 40.50 5.92 48.52 6.00 C 56.54 6.20 57.21 17.13 51.76 25.66 Z" fill="#e9d49c" stroke="#ac925f" stroke-width="2.3"/>
+  <path d="M 52.50 24.87 C 54.34 13.89 62.55 8.63 68.46 14.06 C 74.29 19.57 67.47 28.13 57.71 30.84 Z" fill="#e3c784" stroke="#ac925f" stroke-width="2.3"/>
+  <path d="M 58.69 30.55 C 67.29 23.47 76.01 25.25 76.84 32.97 C 77.63 40.69 67.86 42.84 58.72 38.47 Z" fill="#efdda8" stroke="#ac925f" stroke-width="2.3"/>
+  <path d="M 59.64 38.90 C 70.78 39.20 77.13 46.60 72.57 53.21 C 67.93 59.75 58.50 54.19 54.47 44.90 Z" fill="#e9d49c" stroke="#ac925f" stroke-width="2.3"/>
+  <path d="M 55.05 45.71 C 63.39 53.09 63.00 61.98 55.51 64.01 C 48.00 66.00 44.35 56.68 47.23 46.97 Z" fill="#e3c784" stroke="#ac925f" stroke-width="2.3"/>
+  <path d="M 47.16 47.97 C 48.80 58.99 42.62 66.53 35.32 63.19 C 28.07 59.75 31.91 49.50 40.36 43.91 Z" fill="#efdda8" stroke="#ac925f" stroke-width="2.3"/>
+  <path d="M 39.51 44.49 C 33.53 53.87 24.69 54.88 21.51 47.80 C 18.37 40.69 27.00 35.63 37.04 36.96 Z" fill="#e9d49c" stroke="#ac925f" stroke-width="2.3"/>
+  <path d="M 36.03 36.84 C 25.35 39.99 17.02 34.92 19.31 27.23 C 21.71 19.57 32.39 21.95 39.10 29.53 Z" fill="#e3c784" stroke="#ac925f" stroke-width="2.3"/>
+  <path d="M 38.42 28.78 C 28.29 24.15 25.33 14.86 32.10 10.56 C 38.94 6.35 45.44 15.16 45.53 25.28 Z" fill="#efdda8" stroke="#ac925f" stroke-width="2.3"/>
+  <path d="M 49 22 C 58 21 64 29 63 38 C 63 47 56 52 47 50 C 38 51 32 44 33 35 C 32 26 40 21 49 22 Z" fill="#ad8a62" stroke="#826e52" stroke-width="2.7"/>
+  <path d="M 41 30 Q 44 27 48 28 M 39 39 L 40 40 M 48 35 L 49 36 M 55 40 L 56 41 M 47 44 L 48 45" fill="none" stroke="#d7bd8d" stroke-width="2.3"/>
+</svg>

@@ -1,0 +1,322 @@
+[
+  {
+    "id": "patch-blossom",
+    "title": "小花",
+    "emoji": "🌼",
+    "category": "自然",
+    "file": "pdf/patch-blossom.pdf",
+    "legacyIDs": [
+      "fluent-blossom"
+    ]
+  },
+  {
+    "id": "patch-tulip",
+    "title": "郁金香",
+    "emoji": "🌷",
+    "category": "自然",
+    "file": "pdf/patch-tulip.pdf",
+    "legacyIDs": [
+      "fluent-tulip"
+    ]
+  },
+  {
+    "id": "patch-seedling",
+    "title": "幼苗",
+    "emoji": "🌱",
+    "category": "自然",
+    "file": "pdf/patch-seedling.pdf",
+    "legacyIDs": [
+      "fluent-seedling"
+    ]
+  },
+  {
+    "id": "patch-leaf-fluttering-in-wind",
+    "title": "飘叶",
+    "emoji": "🍃",
+    "category": "自然",
+    "file": "pdf/patch-leaf-fluttering-in-wind.pdf",
+    "legacyIDs": [
+      "fluent-leaf-fluttering-in-wind"
+    ]
+  },
+  {
+    "id": "patch-sunflower",
+    "title": "向日葵",
+    "emoji": "🌻",
+    "category": "自然",
+    "file": "pdf/patch-sunflower.pdf",
+    "legacyIDs": [
+      "fluent-sunflower"
+    ]
+  },
+  {
+    "id": "patch-front-facing-baby-chick",
+    "title": "小鸡",
+    "emoji": "🐥",
+    "category": "动物",
+    "file": "pdf/patch-front-facing-baby-chick.pdf",
+    "legacyIDs": [
+      "fluent-front-facing-baby-chick"
+    ]
+  },
+  {
+    "id": "patch-cat",
+    "title": "小猫",
+    "emoji": "🐈",
+    "category": "动物",
+    "file": "pdf/patch-cat.pdf",
+    "legacyIDs": [
+      "fluent-cat"
+    ]
+  },
+  {
+    "id": "patch-butterfly",
+    "title": "蝴蝶",
+    "emoji": "🦋",
+    "category": "动物",
+    "file": "pdf/patch-butterfly.pdf",
+    "legacyIDs": [
+      "fluent-butterfly"
+    ]
+  },
+  {
+    "id": "patch-sun",
+    "title": "太阳",
+    "emoji": "☀️",
+    "category": "自然",
+    "file": "pdf/patch-sun.pdf",
+    "legacyIDs": [
+      "fluent-sun"
+    ]
+  },
+  {
+    "id": "patch-rainbow",
+    "title": "彩虹",
+    "emoji": "🌈",
+    "category": "自然",
+    "file": "pdf/patch-rainbow.pdf",
+    "legacyIDs": [
+      "fluent-rainbow"
+    ]
+  },
+  {
+    "id": "patch-cherry-blossom",
+    "title": "樱花",
+    "emoji": "🌸",
+    "category": "自然",
+    "file": "pdf/patch-cherry-blossom.pdf",
+    "legacyIDs": [
+      "fluent-cherry-blossom"
+    ]
+  },
+  {
+    "id": "patch-four-leaf-clover",
+    "title": "四叶草",
+    "emoji": "🍀",
+    "category": "自然",
+    "file": "pdf/patch-four-leaf-clover.pdf",
+    "legacyIDs": [
+      "fluent-four-leaf-clover"
+    ]
+  },
+  {
+    "id": "patch-maple-leaf",
+    "title": "枫叶",
+    "emoji": "🍁",
+    "category": "自然",
+    "file": "pdf/patch-maple-leaf.pdf",
+    "legacyIDs": [
+      "fluent-maple-leaf"
+    ]
+  },
+  {
+    "id": "patch-mushroom",
+    "title": "蘑菇",
+    "emoji": "🍄",
+    "category": "自然",
+    "file": "pdf/patch-mushroom.pdf",
+    "legacyIDs": [
+      "fluent-mushroom"
+    ]
+  },
+  {
+    "id": "patch-cactus",
+    "title": "仙人掌",
+    "emoji": "🌵",
+    "category": "自然",
+    "file": "pdf/patch-cactus.pdf",
+    "legacyIDs": [
+      "fluent-cactus"
+    ]
+  },
+  {
+    "id": "patch-herb",
+    "title": "香草",
+    "emoji": "🌿",
+    "category": "自然",
+    "file": "pdf/patch-herb.pdf",
+    "legacyIDs": [
+      "fluent-herb"
+    ]
+  },
+  {
+    "id": "patch-dog",
+    "title": "小狗",
+    "emoji": "🐕",
+    "category": "动物",
+    "file": "pdf/patch-dog.pdf",
+    "legacyIDs": [
+      "fluent-dog"
+    ]
+  },
+  {
+    "id": "patch-rabbit",
+    "title": "兔子",
+    "emoji": "🐇",
+    "category": "动物",
+    "file": "pdf/patch-rabbit.pdf",
+    "legacyIDs": [
+      "fluent-rabbit"
+    ]
+  },
+  {
+    "id": "patch-panda",
+    "title": "熊猫",
+    "emoji": "🐼",
+    "category": "动物",
+    "file": "pdf/patch-panda.pdf",
+    "legacyIDs": [
+      "fluent-panda"
+    ]
+  },
+  {
+    "id": "patch-fox",
+    "title": "狐狸",
+    "emoji": "🦊",
+    "category": "动物",
+    "file": "pdf/patch-fox.pdf",
+    "legacyIDs": [
+      "fluent-fox"
+    ]
+  },
+  {
+    "id": "patch-honeybee",
+    "title": "蜜蜂",
+    "emoji": "🐝",
+    "category": "动物",
+    "file": "pdf/patch-honeybee.pdf",
+    "legacyIDs": [
+      "fluent-honeybee"
+    ]
+  },
+  {
+    "id": "patch-smiling-face-with-smiling-eyes",
+    "title": "微笑",
+    "emoji": "😊",
+    "category": "表情",
+    "file": "pdf/patch-smiling-face-with-smiling-eyes.pdf",
+    "legacyIDs": [
+      "fluent-smiling-face-with-smiling-eyes"
+    ]
+  },
+  {
+    "id": "patch-face-blowing-a-kiss",
+    "title": "飞吻",
+    "emoji": "😘",
+    "category": "表情",
+    "file": "pdf/patch-face-blowing-a-kiss.pdf",
+    "legacyIDs": [
+      "fluent-face-blowing-a-kiss"
+    ]
+  },
+  {
+    "id": "patch-smiling-face-with-heart-eyes",
+    "title": "心动",
+    "emoji": "😍",
+    "category": "表情",
+    "file": "pdf/patch-smiling-face-with-heart-eyes.pdf",
+    "legacyIDs": [
+      "fluent-smiling-face-with-heart-eyes"
+    ]
+  },
+  {
+    "id": "patch-partying-face",
+    "title": "派对",
+    "emoji": "🥳",
+    "category": "表情",
+    "file": "pdf/patch-partying-face.pdf",
+    "legacyIDs": [
+      "fluent-partying-face"
+    ]
+  },
+  {
+    "id": "patch-thinking-face",
+    "title": "思考",
+    "emoji": "🤔",
+    "category": "表情",
+    "file": "pdf/patch-thinking-face.pdf",
+    "legacyIDs": [
+      "fluent-thinking-face"
+    ]
+  },
+  {
+    "id": "patch-red-heart",
+    "title": "爱心",
+    "emoji": "❤️",
+    "category": "物件",
+    "file": "pdf/patch-red-heart.pdf",
+    "legacyIDs": [
+      "fluent-red-heart"
+    ]
+  },
+  {
+    "id": "patch-star",
+    "title": "星星",
+    "emoji": "⭐",
+    "category": "物件",
+    "file": "pdf/patch-star.pdf",
+    "legacyIDs": [
+      "fluent-star"
+    ]
+  },
+  {
+    "id": "patch-sparkles",
+    "title": "闪光",
+    "emoji": "✨",
+    "category": "物件",
+    "file": "pdf/patch-sparkles.pdf",
+    "legacyIDs": [
+      "fluent-sparkles"
+    ]
+  },
+  {
+    "id": "patch-balloon",
+    "title": "气球",
+    "emoji": "🎈",
+    "category": "物件",
+    "file": "pdf/patch-balloon.pdf",
+    "legacyIDs": [
+      "fluent-balloon"
+    ]
+  },
+  {
+    "id": "patch-party-popper",
+    "title": "礼花",
+    "emoji": "🎉",
+    "category": "物件",
+    "file": "pdf/patch-party-popper.pdf",
+    "legacyIDs": [
+      "fluent-party-popper"
+    ]
+  },
+  {
+    "id": "patch-wrapped-gift",
+    "title": "礼物",
+    "emoji": "🎁",
+    "category": "物件",
+    "file": "pdf/patch-wrapped-gift.pdf",
+    "legacyIDs": [
+      "fluent-wrapped-gift"
+    ]
+  }
+]

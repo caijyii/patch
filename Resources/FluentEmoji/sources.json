@@ -1,0 +1,308 @@
+{
+  "project": "Microsoft Fluent Emoji",
+  "repository": "https://github.com/microsoft/fluentui-emoji",
+  "revision": "1ffb34c752ecf5d402f04cfb4b392c77f57c54bc",
+  "style": "Flat",
+  "license": "MIT",
+  "license_url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/LICENSE",
+  "license_sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+  "source_svg_modified": false,
+  "assets": [
+    {
+      "id": "fluent-blossom",
+      "upstream_path": "assets/Blossom/Flat/blossom_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Blossom/Flat/blossom_flat.svg",
+      "svg": "svg/fluent-blossom.svg",
+      "pdf": "pdf/fluent-blossom.pdf",
+      "svg_sha256": "dc9929c37cf4da46b732c04f3ee23927e142a7a260848538afd79e30860fd2eb",
+      "pdf_sha256": "b8536d9823ba865e97f0f190578e341a91b513dd8efb167cc23921d69764bd98"
+    },
+    {
+      "id": "fluent-tulip",
+      "upstream_path": "assets/Tulip/Flat/tulip_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Tulip/Flat/tulip_flat.svg",
+      "svg": "svg/fluent-tulip.svg",
+      "pdf": "pdf/fluent-tulip.pdf",
+      "svg_sha256": "4709c1f256ba1620a24ec72e957f3132915759167683c6f723a7d412850fff48",
+      "pdf_sha256": "9092227a8f53027fcfd6ee7eff5084db8fe52bd1c93c960e84b882d65f082ed4"
+    },
+    {
+      "id": "fluent-seedling",
+      "upstream_path": "assets/Seedling/Flat/seedling_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Seedling/Flat/seedling_flat.svg",
+      "svg": "svg/fluent-seedling.svg",
+      "pdf": "pdf/fluent-seedling.pdf",
+      "svg_sha256": "69afa13809bd8192cb4599db991f7cedd3cea054efb5eb68f6f93d8bb19b3652",
+      "pdf_sha256": "090bef078d6749e958ae908055f443825505432316b581f7e690601b6feb29d5"
+    },
+    {
+      "id": "fluent-leaf-fluttering-in-wind",
+      "upstream_path": "assets/Leaf fluttering in wind/Flat/leaf_fluttering_in_wind_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Leaf%20fluttering%20in%20wind/Flat/leaf_fluttering_in_wind_flat.svg",
+      "svg": "svg/fluent-leaf-fluttering-in-wind.svg",
+      "pdf": "pdf/fluent-leaf-fluttering-in-wind.pdf",
+      "svg_sha256": "a1f5b88707dc2bfbe64a94401e905ab9d45cbc15d01a92d8a4fb165ba8591c93",
+      "pdf_sha256": "d25ea8d1092c2c9f301364e350b6ee9b242b9b91ea4eb64a83171a5202c88347"
+    },
+    {
+      "id": "fluent-sunflower",
+      "upstream_path": "assets/Sunflower/Flat/sunflower_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Sunflower/Flat/sunflower_flat.svg",
+      "svg": "svg/fluent-sunflower.svg",
+      "pdf": "pdf/fluent-sunflower.pdf",
+      "svg_sha256": "af0f5db9816f1545121d2d4c80a145e8809d50830f8516fd99a631bca7702ea6",
+      "pdf_sha256": "f0eb069ee0b60adf9b079ce4d9c3c4d2d0be2d828a8eeb991b3ba6e29788cbd4"
+    },
+    {
+      "id": "fluent-front-facing-baby-chick",
+      "upstream_path": "assets/Front-facing baby chick/Flat/front-facing_baby_chick_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Front-facing%20baby%20chick/Flat/front-facing_baby_chick_flat.svg",
+      "svg": "svg/fluent-front-facing-baby-chick.svg",
+      "pdf": "pdf/fluent-front-facing-baby-chick.pdf",
+      "svg_sha256": "c30dde8a472180bc98b4580dab6ff2bc7f82bc2b110f8b270f60d8886ac7c97a",
+      "pdf_sha256": "29ca8c9bfb4edbe9542f2cf0ea084ed0e62ffeaaf41eb878ea5e458036a8cf3e"
+    },
+    {
+      "id": "fluent-cat",
+      "upstream_path": "assets/Cat/Flat/cat_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Cat/Flat/cat_flat.svg",
+      "svg": "svg/fluent-cat.svg",
+      "pdf": "pdf/fluent-cat.pdf",
+      "svg_sha256": "59f5401062509f4d0fb310817ce9a9656724c6c924a4d42f2a33ac6bb0964602",
+      "pdf_sha256": "3e007f3e8c9b0fb7ff8f05729197ef9381bd00ded8891ca45d9c099ec9a848bc"
+    },
+    {
+      "id": "fluent-butterfly",
+      "upstream_path": "assets/Butterfly/Flat/butterfly_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Butterfly/Flat/butterfly_flat.svg",
+      "svg": "svg/fluent-butterfly.svg",
+      "pdf": "pdf/fluent-butterfly.pdf",
+      "svg_sha256": "118a7aee6fb3360fef0dcf86aeaac8e022c35c3f52529145750155a8893f50fc",
+      "pdf_sha256": "c39c4452981b1231e05e7dfbfb9cbd6c75797f763424e3076075cc9627488810"
+    },
+    {
+      "id": "fluent-sun",
+      "upstream_path": "assets/Sun/Flat/sun_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Sun/Flat/sun_flat.svg",
+      "svg": "svg/fluent-sun.svg",
+      "pdf": "pdf/fluent-sun.pdf",
+      "svg_sha256": "a51d98e68ac038b917584d43b7729174f035a94ed7cd694802a3a7160f0b08f2",
+      "pdf_sha256": "427d85e8ec768052a26e334ee05d680a3d4ebc558f0a5dac13ad5365f29bf486"
+    },
+    {
+      "id": "fluent-rainbow",
+      "upstream_path": "assets/Rainbow/Flat/rainbow_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Rainbow/Flat/rainbow_flat.svg",
+      "svg": "svg/fluent-rainbow.svg",
+      "pdf": "pdf/fluent-rainbow.pdf",
+      "svg_sha256": "85a0bee875fa032375f0448ac5ed89bf5fa8662438dbb539abbfcba118c18c74",
+      "pdf_sha256": "a7568d16cafa9549e78fffa6cb79ff94825aa7b579a0224e0151940a657c5f95"
+    },
+    {
+      "id": "fluent-cherry-blossom",
+      "upstream_path": "assets/Cherry blossom/Flat/cherry_blossom_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Cherry%20blossom/Flat/cherry_blossom_flat.svg",
+      "svg": "svg/fluent-cherry-blossom.svg",
+      "pdf": "pdf/fluent-cherry-blossom.pdf",
+      "svg_sha256": "eb1ec221824f85581b5dc685e2a8d31bf9f6113c08d0940ee361234173336e62",
+      "pdf_sha256": "49add52bccc77f74b5b04f70ec3f87c3f95213b50c2b73ba5bf7ec97c4e6ca1e"
+    },
+    {
+      "id": "fluent-four-leaf-clover",
+      "upstream_path": "assets/Four leaf clover/Flat/four_leaf_clover_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Four%20leaf%20clover/Flat/four_leaf_clover_flat.svg",
+      "svg": "svg/fluent-four-leaf-clover.svg",
+      "pdf": "pdf/fluent-four-leaf-clover.pdf",
+      "svg_sha256": "36744bdfb2a2668c3610e57123a9fc48de57886b59a92f5b10282e97675add23",
+      "pdf_sha256": "9b437f7524cfb43c3bf33728d68b049eaf9288c83eefb646781c9d36d02f641a"
+    },
+    {
+      "id": "fluent-maple-leaf",
+      "upstream_path": "assets/Maple leaf/Flat/maple_leaf_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Maple%20leaf/Flat/maple_leaf_flat.svg",
+      "svg": "svg/fluent-maple-leaf.svg",
+      "pdf": "pdf/fluent-maple-leaf.pdf",
+      "svg_sha256": "d25ef7d53b27dc57684ffb72ad2b281a19ef0a1b3262d780f7e6c164f0fca4cd",
+      "pdf_sha256": "fa290cf3762d7b7337d07cbf2436566f9b242aeff6e68e9fd1bb9b72bd85d5a3"
+    },
+    {
+      "id": "fluent-mushroom",
+      "upstream_path": "assets/Mushroom/Flat/mushroom_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Mushroom/Flat/mushroom_flat.svg",
+      "svg": "svg/fluent-mushroom.svg",
+      "pdf": "pdf/fluent-mushroom.pdf",
+      "svg_sha256": "80114589bc5ecf3caa4625437208b05479838d678c48758232589295c06f3d3d",
+      "pdf_sha256": "29a99a8c24310a9841903545c470fbd69ff66ee7e121737a17d74e54ef315d67"
+    },
+    {
+      "id": "fluent-cactus",
+      "upstream_path": "assets/Cactus/Flat/cactus_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Cactus/Flat/cactus_flat.svg",
+      "svg": "svg/fluent-cactus.svg",
+      "pdf": "pdf/fluent-cactus.pdf",
+      "svg_sha256": "ca0a29dfc8d0beae5771012d99822bc3a67e2521987260d7b3613b6c3487bb3c",
+      "pdf_sha256": "1addb6d10b517f43101d05fb7556923bea46b77e2bd007454b06a925808bf8ed"
+    },
+    {
+      "id": "fluent-herb",
+      "upstream_path": "assets/Herb/Flat/herb_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Herb/Flat/herb_flat.svg",
+      "svg": "svg/fluent-herb.svg",
+      "pdf": "pdf/fluent-herb.pdf",
+      "svg_sha256": "e0478c6692108c4431d0ba82fb8bc6998007e5e3f5fcaae6a899a935270117e0",
+      "pdf_sha256": "fffd3f03930f2ec180348186ee50324b5ab9376717a990f678a089ba635156aa"
+    },
+    {
+      "id": "fluent-dog",
+      "upstream_path": "assets/Dog/Flat/dog_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Dog/Flat/dog_flat.svg",
+      "svg": "svg/fluent-dog.svg",
+      "pdf": "pdf/fluent-dog.pdf",
+      "svg_sha256": "e3ee366f39d9f47bbb5a6dc22a521dbea32f05f2216d0665a551b134ca2474da",
+      "pdf_sha256": "736d9bff0bc768f237876a37a75eeebcc78ca424895d09a2104b3f2cb87f39f7"
+    },
+    {
+      "id": "fluent-rabbit",
+      "upstream_path": "assets/Rabbit/Flat/rabbit_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Rabbit/Flat/rabbit_flat.svg",
+      "svg": "svg/fluent-rabbit.svg",
+      "pdf": "pdf/fluent-rabbit.pdf",
+      "svg_sha256": "e78f7552298062c599bd7290ff52bad25de352477a9475e34332c52eafe2c5d7",
+      "pdf_sha256": "8bc7cb7468ca07023ade372d19d3dad8c0314d1ed2aea9ecece59aa74159212c"
+    },
+    {
+      "id": "fluent-panda",
+      "upstream_path": "assets/Panda/Flat/panda_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Panda/Flat/panda_flat.svg",
+      "svg": "svg/fluent-panda.svg",
+      "pdf": "pdf/fluent-panda.pdf",
+      "svg_sha256": "c713e668dbdb6cd53ead805cd968b839ed706dc5ebe40f68d02e89879f2b9996",
+      "pdf_sha256": "98d32530f850948cb2f808b44ed83080dd80d2fdda4b189be07075af4277fd19"
+    },
+    {
+      "id": "fluent-fox",
+      "upstream_path": "assets/Fox/Flat/fox_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Fox/Flat/fox_flat.svg",
+      "svg": "svg/fluent-fox.svg",
+      "pdf": "pdf/fluent-fox.pdf",
+      "svg_sha256": "05992c69f46f9a8ef14e7a95894baa3168f4c195d8d3de3f3a09ce82d68bffc9",
+      "pdf_sha256": "aee22e3649442f982355368ce1ba49ed33323ceff81ffc3a0138a355abd1e38d"
+    },
+    {
+      "id": "fluent-honeybee",
+      "upstream_path": "assets/Honeybee/Flat/honeybee_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Honeybee/Flat/honeybee_flat.svg",
+      "svg": "svg/fluent-honeybee.svg",
+      "pdf": "pdf/fluent-honeybee.pdf",
+      "svg_sha256": "bb82291c1870bcc05fb694c0f0a4dc63ca0c593fc12e7edd17fc32264ae8d9d5",
+      "pdf_sha256": "a22dbfbbdd056a0e8a64baf222a6e931d9f388423fab435ad7fc38a83405e1d5"
+    },
+    {
+      "id": "fluent-smiling-face-with-smiling-eyes",
+      "upstream_path": "assets/Smiling face with smiling eyes/Flat/smiling_face_with_smiling_eyes_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Smiling%20face%20with%20smiling%20eyes/Flat/smiling_face_with_smiling_eyes_flat.svg",
+      "svg": "svg/fluent-smiling-face-with-smiling-eyes.svg",
+      "pdf": "pdf/fluent-smiling-face-with-smiling-eyes.pdf",
+      "svg_sha256": "4a429b15f9aa2831f2fe786923751b6d59b099fabff39a4e41003267629cda25",
+      "pdf_sha256": "aac3adfd571d63708b7114885c866510eb04b2f0d5be6fe7adae595b1d3fa621"
+    },
+    {
+      "id": "fluent-face-blowing-a-kiss",
+      "upstream_path": "assets/Face blowing a kiss/Flat/face_blowing_a_kiss_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Face%20blowing%20a%20kiss/Flat/face_blowing_a_kiss_flat.svg",
+      "svg": "svg/fluent-face-blowing-a-kiss.svg",
+      "pdf": "pdf/fluent-face-blowing-a-kiss.pdf",
+      "svg_sha256": "40840ebc5aaaaf9c6068b8225c64edf5f9ca4e550f58941cbfe2fb4eb4498783",
+      "pdf_sha256": "8b9127095fa28c249c6d97bd511cd0882a1bc5997d55986fb5aff66d3be26a09"
+    },
+    {
+      "id": "fluent-smiling-face-with-heart-eyes",
+      "upstream_path": "assets/Smiling face with heart-eyes/Flat/smiling_face_with_heart-eyes_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Smiling%20face%20with%20heart-eyes/Flat/smiling_face_with_heart-eyes_flat.svg",
+      "svg": "svg/fluent-smiling-face-with-heart-eyes.svg",
+      "pdf": "pdf/fluent-smiling-face-with-heart-eyes.pdf",
+      "svg_sha256": "378f8488b83385f293743eaec09bca85e02e841e2277ef73035e75f2ce2242ea",
+      "pdf_sha256": "217a66a70a94b1bd2d15dd51609d0fe0a627c4b78c2978001a568eb2da323358"
+    },
+    {
+      "id": "fluent-partying-face",
+      "upstream_path": "assets/Partying face/Flat/partying_face_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Partying%20face/Flat/partying_face_flat.svg",
+      "svg": "svg/fluent-partying-face.svg",
+      "pdf": "pdf/fluent-partying-face.pdf",
+      "svg_sha256": "e74f8e3543ddee0fe7839a457eada5faebb10745f8aaca645e697630ecd1e386",
+      "pdf_sha256": "4b5fd43c23572b12240ae2a1f5432031ebf5bca6f245c2d6c35b8122e275024b"
+    },
+    {
+      "id": "fluent-thinking-face",
+      "upstream_path": "assets/Thinking face/Flat/thinking_face_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Thinking%20face/Flat/thinking_face_flat.svg",
+      "svg": "svg/fluent-thinking-face.svg",
+      "pdf": "pdf/fluent-thinking-face.pdf",
+      "svg_sha256": "3026c4db7c56c913318d0526e774cd4f7feb5733f7fe9a2d3d5edc84d00bbe2d",
+      "pdf_sha256": "96b8e157e90af86481455b32efee79e08dc6e6c7d67fce870541d02009cef199"
+    },
+    {
+      "id": "fluent-red-heart",
+      "upstream_path": "assets/Red heart/Flat/red_heart_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Red%20heart/Flat/red_heart_flat.svg",
+      "svg": "svg/fluent-red-heart.svg",
+      "pdf": "pdf/fluent-red-heart.pdf",
+      "svg_sha256": "61846b9c946736481d65dbf244fe53792d06d50405c2d5f3e40a0a06cbfe5317",
+      "pdf_sha256": "5f42c2a302ef59a1715a32266cb20dfbf98e17a8a4c5039dc8166248a5924ec1"
+    },
+    {
+      "id": "fluent-star",
+      "upstream_path": "assets/Star/Flat/star_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Star/Flat/star_flat.svg",
+      "svg": "svg/fluent-star.svg",
+      "pdf": "pdf/fluent-star.pdf",
+      "svg_sha256": "47b4772001147be3920d3471e9c1ac2024ca739b384f414ac37cf95a59a07bfa",
+      "pdf_sha256": "f39acf2ccd0f05e6cb672583af8348b63e683831e9b80dd574b00783dbdffc7a"
+    },
+    {
+      "id": "fluent-sparkles",
+      "upstream_path": "assets/Sparkles/Flat/sparkles_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Sparkles/Flat/sparkles_flat.svg",
+      "svg": "svg/fluent-sparkles.svg",
+      "pdf": "pdf/fluent-sparkles.pdf",
+      "svg_sha256": "d5802877677464187a510c3fbb9d8c272dea164bcca2bf6a2270944e6cd2324e",
+      "pdf_sha256": "5ae078ed2df20bef87d30f287e4c558501b96bca0de3e989c8c913483fedff4b"
+    },
+    {
+      "id": "fluent-balloon",
+      "upstream_path": "assets/Balloon/Flat/balloon_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Balloon/Flat/balloon_flat.svg",
+      "svg": "svg/fluent-balloon.svg",
+      "pdf": "pdf/fluent-balloon.pdf",
+      "svg_sha256": "5b7af328c99543aa940215cd82af39c6248c54d5f3b36260284364db63490e73",
+      "pdf_sha256": "115fb8ae26640fed1421c399928f6fbcb3626fea4f80b0c059fd690425e63990"
+    },
+    {
+      "id": "fluent-party-popper",
+      "upstream_path": "assets/Party popper/Flat/party_popper_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Party%20popper/Flat/party_popper_flat.svg",
+      "svg": "svg/fluent-party-popper.svg",
+      "pdf": "pdf/fluent-party-popper.pdf",
+      "svg_sha256": "8128c958bfc06568aa49d03cd001556a6c6223660f43c657d381e638416c51f6",
+      "pdf_sha256": "eaa81fee2cffe3641d2ae22b6cb7bdd5ade8a6d0983fd9233b83e9216516a946"
+    },
+    {
+      "id": "fluent-wrapped-gift",
+      "upstream_path": "assets/Wrapped gift/Flat/wrapped_gift_flat.svg",
+      "url": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Wrapped%20gift/Flat/wrapped_gift_flat.svg",
+      "svg": "svg/fluent-wrapped-gift.svg",
+      "pdf": "pdf/fluent-wrapped-gift.pdf",
+      "svg_sha256": "326da81790739066b77219b1a84dbcdb2efb4fddbf4d1767c7097c6ab9b7634b",
+      "pdf_sha256": "9a5f06bc9b602c55fc694550446a3967270499266343e3ae33fb2afd6336b92e"
+    }
+  ],
+  "conversion": {
+    "tool": "svglib 1.6.0 + ReportLab 4.4.9",
+    "input": "Unmodified official Flat SVG",
+    "output": "One 32 x 32 pt PDF page per SVG",
+    "reproducible_pdf": true,
+    "runtime_dependency": false,
+    "notes": "Conversion runs only during development. Shipping application reads bundled static PDFs. SVG sources remain unchanged."
+  }
+}

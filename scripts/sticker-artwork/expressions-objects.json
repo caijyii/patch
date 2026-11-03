@@ -1,0 +1,312 @@
+[
+  {
+    "key": "face-blowing-a-kiss",
+    "shapes": [
+      {
+        "path": "M 49 13 C 68 12 82 28 82 48 C 84 67 67 83 48 82 C 27 84 12 68 14 47 C 12 27 28 11 49 13 Z",
+        "fill": "#ecd39a",
+        "stroke": "#635e50",
+        "width": 2.7
+      },
+      {
+        "path": "M 25 34 Q 26 25 36 23",
+        "fill": null,
+        "stroke": "#fff2d1",
+        "width": 4.8
+      },
+      {
+        "path": "M 29 40 Q 31 38 33 41 M 53 41 Q 59 35 65 40 M 41 54 Q 51 54 46 59 Q 53 62 44 65",
+        "fill": null,
+        "stroke": "#635e50",
+        "width": 3.3
+      },
+      {
+        "path": "M 68 76 C 61 70 53 64 55 57 C 57 51 63 52 67 58 C 70 52 77 52 80 58 C 83 64 75 72 68 76 Z",
+        "fill": "#d8a29a",
+        "stroke": "#8f6966",
+        "width": 2.2
+      },
+      {
+        "path": "M 23 49 Q 28 47 32 50",
+        "fill": null,
+        "stroke": "#d9a28b",
+        "width": 4.5
+      }
+    ]
+  },
+  {
+    "key": "smiling-face-with-heart-eyes",
+    "shapes": [
+      {
+        "path": "M 49 13 C 68 12 82 28 82 48 C 84 67 67 83 48 82 C 27 84 12 68 14 47 C 12 27 28 11 49 13 Z",
+        "fill": "#ecd39a",
+        "stroke": "#635e50",
+        "width": 2.7
+      },
+      {
+        "path": "M 25 34 Q 26 25 36 23",
+        "fill": null,
+        "stroke": "#fff2d1",
+        "width": 4.8
+      },
+      {
+        "path": "M 32 47 C 27 42 21 38 22 32 C 23 27 30 26 33 32 C 37 27 43 28 44 33 C 46 38 39 44 32 47 Z",
+        "fill": "#ca8e87",
+        "stroke": "#996f65",
+        "width": 1.8
+      },
+      {
+        "path": "M 64 46 C 59 42 52 37 53 31 C 54 26 61 26 64 31 C 68 26 74 27 75 32 C 76 38 70 43 64 46 Z",
+        "fill": "#ca8e87",
+        "stroke": "#996f65",
+        "width": 1.8
+      },
+      {
+        "path": "M 33 58 Q 48 64 65 56 C 60 75 41 76 33 58 Z",
+        "fill": "#8c705b",
+        "stroke": "#635e50",
+        "width": 2.5
+      },
+      {
+        "path": "M 42 68 Q 49 63 57 67 Q 51 73 42 68 Z",
+        "fill": "#d6a08c",
+        "stroke": null,
+        "width": 2.7
+      }
+    ]
+  },
+  {
+    "key": "partying-face",
+    "shapes": [
+      {
+        "path": "M 50 27 C 71 26 84 40 82 59 C 80 78 66 88 47 85 C 27 83 16 70 19 52 C 21 35 33 26 50 27 Z",
+        "fill": "#ecd39a",
+        "stroke": "#635e50",
+        "width": 2.7
+      },
+      {
+        "path": "M 15 38 L 31 8 Q 34 4 38 10 L 56 37 Q 35 43 15 38 Z",
+        "fill": "#a8bca0",
+        "stroke": "#6d8167",
+        "width": 2.7
+      },
+      {
+        "path": "M 24 23 L 46 27 M 20 31 L 51 34",
+        "fill": null,
+        "stroke": "#f5ead7",
+        "width": 4
+      },
+      {
+        "path": "M 31 51 Q 36 46 42 51 M 56 51 Q 61 45 66 50",
+        "fill": null,
+        "stroke": "#635e50",
+        "width": 3
+      },
+      {
+        "path": "M 47 65 Q 50 61 53 65 Q 53 69 49 70 Z",
+        "fill": "#8c705b",
+        "stroke": "#635e50",
+        "width": 2.7
+      },
+      {
+        "path": "M 52 64 L 73 62 L 79 67 L 76 73 L 53 69 Z",
+        "fill": "#c7b6cf",
+        "stroke": "#8e7e99",
+        "width": 2
+      },
+      {
+        "path": "M 67 17 L 64 22 M 82 30 L 87 35 M 9 61 L 6 67",
+        "fill": null,
+        "stroke": "#bb9f71",
+        "width": 3
+      },
+      {
+        "path": "M 78 12 Q 84 10 84 16",
+        "fill": null,
+        "stroke": "#ba9691",
+        "width": 2.5
+      }
+    ]
+  },
+  {
+    "key": "thinking-face",
+    "shapes": [
+      {
+        "path": "M 49 13 C 68 12 82 28 82 48 C 84 67 67 83 48 82 C 27 84 12 68 14 47 C 12 27 28 11 49 13 Z",
+        "fill": "#ecd39a",
+        "stroke": "#635e50",
+        "width": 2.7
+      },
+      {
+        "path": "M 25 34 Q 26 25 36 23",
+        "fill": null,
+        "stroke": "#fff2d1",
+        "width": 4.8
+      },
+      {
+        "path": "M 26 34 Q 33 29 40 34 M 56 29 Q 64 29 69 33 M 32 41 L 33 43 M 60 40 L 61 42 M 42 59 Q 49 56 56 59",
+        "fill": null,
+        "stroke": "#635e50",
+        "width": 3
+      },
+      {
+        "path": "M 62 83 C 52 88 42 85 36 80 C 31 77 26 73 28 69 C 31 65 35 71 39 72 L 45 73 L 51 60 Q 53 56 56 58 Q 60 59 57 65 L 54 72 L 64 68 Q 70 67 70 73 L 68 79 Z",
+        "fill": "#dfbd80",
+        "stroke": "#635e50",
+        "width": 2.4
+      },
+      {
+        "path": "M 43 77 Q 51 80 57 77",
+        "fill": null,
+        "stroke": "#a68a5d",
+        "width": 2
+      }
+    ]
+  },
+  {
+    "key": "sparkles",
+    "shapes": [
+      {
+        "path": "M 44 12 Q 49 39 70 45 Q 49 51 43 78 Q 37 51 15 46 Q 37 41 44 12 Z",
+        "fill": "#e8ce91",
+        "stroke": "#9a845a",
+        "width": 2.7
+      },
+      {
+        "path": "M 74 8 Q 76 22 88 25 Q 77 28 73 42 Q 70 29 59 26 Q 71 21 74 8 Z",
+        "fill": "#f1dfb2",
+        "stroke": "#aa9167",
+        "width": 2.1
+      },
+      {
+        "path": "M 76 62 Q 78 74 88 78 Q 78 82 75 91 Q 73 81 62 78 Q 73 74 76 62 Z",
+        "fill": "#d8b57b",
+        "stroke": "#9a845a",
+        "width": 2
+      },
+      {
+        "path": "M 40 31 Q 37 40 29 44",
+        "fill": null,
+        "stroke": "#fcf0d3",
+        "width": 3
+      }
+    ]
+  },
+  {
+    "key": "balloon",
+    "shapes": [
+      {
+        "path": "M 49 65 C 32 72 63 76 45 89",
+        "fill": null,
+        "stroke": "#9b8c75",
+        "width": 2.3
+      },
+      {
+        "path": "M 49 60 L 43 68 Q 49 71 55 68 Z",
+        "fill": "#c98d86",
+        "stroke": "#906f66",
+        "width": 2.1
+      },
+      {
+        "path": "M 49 10 C 70 9 82 24 77 41 C 73 55 59 64 49 64 C 35 62 22 52 19 37 C 15 21 29 9 49 10 Z",
+        "fill": "#d8a29a",
+        "stroke": "#906f66",
+        "width": 2.7
+      },
+      {
+        "path": "M 29 32 Q 29 22 40 19",
+        "fill": null,
+        "stroke": "#f7e7d8",
+        "width": 4.2
+      }
+    ]
+  },
+  {
+    "key": "party-popper",
+    "shapes": [
+      {
+        "path": "M 14 84 L 27 39 Q 31 34 36 41 L 61 66 Q 67 72 61 75 L 18 88 Q 12 90 14 84 Z",
+        "fill": "#d4b2aa",
+        "stroke": "#92776b",
+        "width": 2.7
+      },
+      {
+        "path": "M 20 65 L 39 82 M 24 52 L 52 78",
+        "fill": null,
+        "stroke": "#f3dfae",
+        "width": 5.5
+      },
+      {
+        "path": "M 27 40 C 31 34 43 43 53 54 C 64 65 68 74 61 75 C 54 74 47 67 40 59 C 31 49 25 44 27 40 Z",
+        "fill": "#f6dfac",
+        "stroke": "#92776b",
+        "width": 2.3
+      },
+      {
+        "path": "M 43 46 C 41 31 57 36 55 21 Q 53 13 62 12",
+        "fill": null,
+        "stroke": "#829d83",
+        "width": 3
+      },
+      {
+        "path": "M 54 55 C 65 44 69 58 79 47 Q 84 40 87 43",
+        "fill": null,
+        "stroke": "#b4939c",
+        "width": 3
+      },
+      {
+        "path": "M 62 31 L 70 22 M 77 12 L 82 16 M 34 22 L 33 16 M 78 65 L 84 67",
+        "fill": null,
+        "stroke": "#b89c64",
+        "width": 3
+      }
+    ]
+  },
+  {
+    "key": "wrapped-gift",
+    "shapes": [
+      {
+        "path": "M 20 42 L 76 41 L 78 80 Q 79 85 73 86 L 23 85 Q 18 85 19 80 Z",
+        "fill": "#c3cdb0",
+        "stroke": "#78856b",
+        "width": 2.7
+      },
+      {
+        "path": "M 18 34 Q 16 34 16 38 L 16 48 Q 43 51 81 48 L 80 36 Q 80 33 75 34 Z",
+        "fill": "#d9dfca",
+        "stroke": "#78856b",
+        "width": 2.7
+      },
+      {
+        "path": "M 42 35 L 54 35 L 55 85 L 42 85 Z",
+        "fill": "#d6ada0",
+        "stroke": "#a38576",
+        "width": 2
+      },
+      {
+        "path": "M 47 33 C 34 35 19 26 25 17 C 31 9 43 22 47 33 Z",
+        "fill": "#dbb4a7",
+        "stroke": "#9c8074",
+        "width": 2.5
+      },
+      {
+        "path": "M 49 33 C 51 19 65 8 71 17 C 78 28 61 35 49 33 Z",
+        "fill": "#e6c6b5",
+        "stroke": "#9c8074",
+        "width": 2.5
+      },
+      {
+        "path": "M 46 28 Q 51 25 55 30 L 55 36 L 45 36 Z",
+        "fill": "#c49d90",
+        "stroke": "#9c8074",
+        "width": 2.1
+      },
+      {
+        "path": "M 46 35 L 35 48 M 53 36 L 62 46",
+        "fill": null,
+        "stroke": "#9c8074",
+        "width": 2.3
+      }
+    ]
+  }
+]

@@ -1,0 +1,250 @@
+// SPDX-FileCopyrightText: 2026 caijyii
+// SPDX-License-Identifier: MIT
+
+import Foundation
+
+/// Annotation sizes are stored in screen points, independent of display scale.
+struct AnnotationPreference: Codable, Equatable {
+    var colorID: Int = 0
+    var width: Double = 3
+    var fontSize: Double = 18
+    var numberSize: Double = 24
+    var mosaicBlockSize: Double = 12
+
+    var validated: AnnotationPreference {
+        var result = self
+        let defaults = AnnotationPreference()
+        if !(0..<5).contains(colorID) { result.colorID = defaults.colorID }
+        if !width.isFinite || !(0.5...40).contains(width) { result.width = defaults.width }
+        if !fontSize.isFinite || !(8...256).contains(fontSize) { result.fontSize = defaults.fontSize }
+        if !numberSize.isFinite || !(8...256).contains(numberSize) { result.numberSize = defaults.numberSize }
+        if !mosaicBlockSize.isFinite || !(1...128).contains(mosaicBlockSize) { result.mosaicBlockSize = defaults.mosaicBlockSize }
+        return result
+    }
+}
+
+struct ShortcutModifiers: OptionSet, Codable, Hashable {
+    let rawValue: UInt32
+
+    static let command = ShortcutModifiers(rawValue: 1 << 0)
+    static let control = ShortcutModifiers(rawValue: 1 << 1)
+    static let option = ShortcutModifiers(rawValue: 1 << 2)
+    static let shift = ShortcutModifiers(rawValue: 1 << 3)
+    static let supported: ShortcutModifiers = [.command, .control, .option, .shift]
+}
+
+struct KeyboardShortcut: Codable, Hashable {
+    var keyCode: UInt32
+    var modifiers: ShortcutModifiers
+
+    var isValid: Bool {
+        Self.keyNames[keyCode] != nil
+            && modifiers.rawValue & ~ShortcutModifiers.supported.rawValue == 0
+            && (!modifiers.intersection([.command, .control, .option]).isEmpty
+                || (modifiers == [.shift] && Self.shiftOnlyKeyCodes.contains(keyCode)))
+    }
+
+    var invalidReason: String? {
+        guard !isValid else { return nil }
+        if modifiers == [.shift], Self.keyNames[keyCode] != nil {
+            return "这个 Shift 组合会影响日常输入，请加上 ⌘、⌃ 或 ⌥。"
+        }
+        return "请使用修饰键加一个按键；Shift 可单独配合功能键或方向键。"
+    }
+
+    static let shiftOnlyKeyCodes: Set<UInt32> = [
+        64, 79, 80, 90, 96, 97, 98, 99, 100, 101, 103, 105, 106, 107, 109, 111, 113,
+        115, 116, 118, 119, 120, 121, 122, 123, 124, 125, 126
+    ]
+
+    var displayString: String {
+        var result = ""
+        if modifiers.contains(.control) { result += "⌃" }
+        if modifiers.contains(.option) { result += "⌥" }
+        if modifiers.contains(.shift) { result += "⇧" }
+        if modifiers.contains(.command) { result += "⌘" }
+        return result + (Self.keyNames[keyCode] ?? "键 \(keyCode)")
+    }
+
+    /// Policy is separate from structural validity so previously saved bindings remain visible.
+    var isApplicationReserved: Bool {
+        // The screenshot view handles Command-C/S/Z regardless of additional modifiers.
+        if modifiers.contains(.command), [UInt32(8), 1, 6].contains(keyCode) { return true }
+        // Cut, paste, select all, quit, settings, close, minimize and hide.
+        if modifiers == [.command], [UInt32(7), 9, 0, 12, 43, 13, 46, 4].contains(keyCode) { return true }
+        // Native close-all-windows and hide-other-applications commands.
+        if modifiers == [.command, .option], [UInt32(13), 4].contains(keyCode) { return true }
+        return false
+    }
+
+    // Virtual key codes, rather than translated characters, are what Carbon registers.
+    // Escape, Tab and Delete remain available for cancelling/navigating the recorder.
+    static let keyNames: [UInt32: String] = [
+        0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X", 8: "C", 9: "V",
+        10: "§", 11: "B", 12: "Q", 13: "W", 14: "E", 15: "R", 16: "Y", 17: "T",
+        18: "1", 19: "2", 20: "3", 21: "4", 22: "6", 23: "5", 24: "=", 25: "9", 26: "7",
+        27: "−", 28: "8", 29: "0", 30: "]", 31: "O", 32: "U", 33: "[", 34: "I", 35: "P",
+        36: "↩", 37: "L", 38: "J", 39: "′", 40: "K", 41: ";", 42: "\\", 43: ",", 44: "/",
+        45: "N", 46: "M", 47: ".", 49: "空格", 50: "`",
+        64: "F17", 65: "数字键 .", 67: "数字键 *", 69: "数字键 +", 71: "数字键清除", 75: "数字键 /",
+        76: "⌤", 78: "数字键 −", 79: "F18", 80: "F19", 81: "数字键 =", 82: "数字键 0", 83: "数字键 1",
+        84: "数字键 2", 85: "数字键 3", 86: "数字键 4", 87: "数字键 5", 88: "数字键 6",
+        89: "数字键 7", 90: "F20", 91: "数字键 8", 92: "数字键 9",
+        96: "F5", 97: "F6", 98: "F7", 99: "F3", 100: "F8", 101: "F9", 103: "F11",
+        105: "F13", 106: "F16", 107: "F14", 109: "F10", 111: "F12", 113: "F15",
+        115: "Home", 116: "Page Up", 118: "F4", 119: "End", 120: "F2", 121: "Page Down",
+        122: "F1", 123: "←", 124: "→", 125: "↓", 126: "↑"
+    ]
+}
+
+enum ShortcutAction: String, CaseIterable, Codable, Hashable {
+    case screenshot, scroll, text, pin, record, subject, togglePins
+
+    /// Presentation order is independent of legacy hotkey installation priority.
+    static let displayOrder: [ShortcutAction] = [.screenshot, .scroll, .subject, .record, .text, .pin]
+
+    static let settingsOrder = displayOrder + [ShortcutAction.togglePins]
+
+    var title: String {
+        switch self {
+        case .screenshot: return "截图"
+        case .scroll: return "长截图"
+        case .text: return "提取文字"
+        case .pin: return "贴图"
+        case .record: return "录屏"
+        case .subject: return "主体截图"
+        case .togglePins: return "贴图显隐"
+        }
+    }
+
+    var legacyID: UInt32 {
+        switch self {
+        case .screenshot: return 1
+        case .scroll: return 2
+        case .text: return 3
+        case .pin: return 4
+        case .record: return 5
+        case .subject: return 6
+        case .togglePins: return 7
+        }
+    }
+
+    init?(legacyID: UInt32) {
+        guard let action = Self.allCases.first(where: { $0.legacyID == legacyID }) else { return nil }
+        self = action
+    }
+
+    var defaultShortcut: KeyboardShortcut {
+        let keyCodes: [UInt32] = [18, 19, 20, 21, 23, 22, 26]
+        return KeyboardShortcut(keyCode: keyCodes[Int(legacyID - 1)], modifiers: [.option])
+    }
+
+    static var defaultShortcuts: [ShortcutAction: KeyboardShortcut] {
+        Dictionary(uniqueKeysWithValues: allCases.map { ($0, $0.defaultShortcut) })
+    }
+}
+
+protocol PreferencesStorage: AnyObject {
+    func read() -> Data?
+    func write(_ data: Data)
+}
+
+final class UserDefaultsPreferencesStorage: PreferencesStorage {
+    private let defaults: UserDefaults
+    private let key: String
+
+    init(defaults: UserDefaults = .standard, key: String = "patch.preferences.v1") {
+        self.defaults = defaults
+        self.key = key
+    }
+
+    func read() -> Data? { defaults.data(forKey: key) }
+    func write(_ data: Data) { defaults.set(data, forKey: key) }
+}
+
+/// No UserDefaults domain is touched by tests using this storage.
+final class MemoryPreferencesStorage: PreferencesStorage {
+    private(set) var data: Data?
+    private(set) var writeCount = 0
+
+    init(data: Data? = nil) { self.data = data }
+    func read() -> Data? { data }
+    func write(_ data: Data) { self.data = data; writeCount += 1 }
+}
+
+@MainActor
+final class PreferencesStore {
+    static let shared = PreferencesStore(storage: UserDefaultsPreferencesStorage())
+
+    private struct Snapshot: Codable {
+        var version = 1
+        var annotations: [String: AnnotationPreference] = [:]
+        var shortcuts: [String: KeyboardShortcut] = [:]
+    }
+
+    private let storage: PreferencesStorage
+    private var snapshot: Snapshot
+
+    init(storage: PreferencesStorage) {
+        self.storage = storage
+        if let data = storage.read(), let decoded = try? JSONDecoder().decode(Snapshot.self, from: data), decoded.version == 1 {
+            snapshot = decoded
+        } else { snapshot = Snapshot() }
+    }
+
+    func annotation(for tool: String) -> AnnotationPreference {
+        if let saved = snapshot.annotations[tool] { return saved.validated }
+        var defaults = AnnotationPreference()
+        if tool == "贴纸" { defaults.fontSize = 16 }
+        return defaults
+    }
+
+    /// Call only after the user changes a setting, never when selecting an existing object.
+    func setAnnotation(_ preference: AnnotationPreference, for tool: String) {
+        let preference = preference.validated
+        guard snapshot.annotations[tool] != preference else { return }
+        snapshot.annotations[tool] = preference
+        persist()
+    }
+
+    var shortcuts: [ShortcutAction: KeyboardShortcut] {
+        if snapshot.shortcuts.isEmpty { return ShortcutAction.defaultShortcuts }
+        let missingDefaults = Set([ShortcutAction.subject, .togglePins].filter { snapshot.shortcuts[$0.rawValue] == nil })
+        var result: [ShortcutAction: KeyboardShortcut] = [:]
+        for action in ShortcutAction.allCases {
+            if missingDefaults.contains(action) {
+                result[action] = action.defaultShortcut
+                continue
+            }
+            guard let shortcut = snapshot.shortcuts[action.rawValue], shortcut.isValid else {
+                return ShortcutAction.defaultShortcuts
+            }
+            result[action] = shortcut
+        }
+        if !missingDefaults.isEmpty {
+            let existing = result.filter { !missingDefaults.contains($0.key) }
+            guard Set(existing.values).count == existing.count else { return ShortcutAction.defaultShortcuts }
+            // Keep old custom keys even if one owns the new default. Launch installs
+            // those actions first and reports the subject key conflict for repair.
+            return result
+        }
+        return Set(result.values).count == result.count ? result : ShortcutAction.defaultShortcuts
+    }
+
+    /// HotKeys must successfully apply this configuration before it is persisted.
+    @discardableResult
+    func setShortcuts(_ shortcuts: [ShortcutAction: KeyboardShortcut]) -> Bool {
+        guard shortcuts.count == ShortcutAction.allCases.count,
+              ShortcutAction.allCases.allSatisfy({ shortcuts[$0]?.isValid == true }),
+              Set(shortcuts.values).count == shortcuts.count else { return false }
+        let encoded = Dictionary(uniqueKeysWithValues: shortcuts.map { ($0.key.rawValue, $0.value) })
+        guard snapshot.shortcuts != encoded else { return true }
+        snapshot.shortcuts = encoded
+        persist()
+        return true
+    }
+
+    private func persist() {
+        if let data = try? JSONEncoder().encode(snapshot) { storage.write(data) }
+    }
+}

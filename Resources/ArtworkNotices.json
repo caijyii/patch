@@ -1,0 +1,23 @@
+{
+  "project": "Patch",
+  "author": "caijyii",
+  "copyright": "Copyright (c) 2026 caijyii",
+  "license": "MIT",
+  "source_profile": "https://github.com/caijyii",
+  "artwork": [
+    {
+      "name": "Application and menu bar icons",
+      "source": "Sources/ScreenLeaf/IconArtwork.swift"
+    },
+    {
+      "name": "Seasonal Home scenery",
+      "source": "Sources/ScreenLeaf/HomeSceneryArtwork.swift"
+    },
+    {
+      "name": "Original vector stickers",
+      "source": "scripts/sticker-artwork",
+      "provenance": "PatchStickers/sources.json"
+    }
+  ],
+  "note": "Source attribution only; does not add marks to user captures or exports. Brand use is described in BRANDING.md in the source distribution."
+}

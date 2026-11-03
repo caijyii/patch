@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>小贴 · Patch 本地截图验证</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { display: flex; flex-direction: column; background: #edf2f7; color: #182437; }
+    header { flex: none; padding: 14px 20px 12px; background: #fff; border-bottom: 1px solid #cad4df; }
+    h1 { margin: 0 0 7px; font-size: 21px; }
+    .intro { margin: 0 0 10px; font-size: 13px; line-height: 1.45; color: #49596d; }
+    .controls { display: flex; gap: 10px 16px; align-items: center; flex-wrap: wrap; }
+    button { border: 1px solid #98aabd; border-radius: 6px; padding: 6px 11px; background: #f8fbff; color: #182437; font-size: 13px; cursor: pointer; }
+    button:focus-visible { outline: 3px solid #4b85d4; outline-offset: 2px; }
+    label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+    .readout { font: 13px ui-monospace, Menlo, monospace; padding: 6px 9px; background: #eaf1fb; border-radius: 5px; }
+    #audioStatus { min-width: 200px; font-size: 12px; color: #49596d; }
+    main { flex: 1; min-height: 0; padding: 14px 20px; }
+    #viewport { height: 100%; width: 100%; overflow: auto; border: 3px solid #2566ba; border-radius: 6px; background: #fff; overscroll-behavior: contain; scrollbar-gutter: stable; }
+    #content { width: max(1920px, calc(100% + 640px)); min-height: 6200px; padding: 22px; background: #fff; }
+    .ocr { width: 1840px; padding: 22px 24px; background: #fff8df; border: 2px solid #d09b26; border-radius: 10px; }
+    .ocr strong { display: block; font-size: 31px; line-height: 1.6; font-weight: 650; }
+    .ocr p { margin: 10px 0 0; font-size: 19px; line-height: 1.7; }
+    .dynamic { width: 1840px; margin-top: 16px; height: 120px; padding: 15px 22px; overflow: hidden; position: relative; border: 2px dashed #ad6795; background: #f8e9f3; border-radius: 10px; }
+    .dynamic strong { display: block; font-size: 19px; margin-bottom: 8px; }
+    .dynamic span { font-size: 16px; }
+    .orb { position: absolute; width: 68px; height: 68px; left: 590px; top: 25px; border-radius: 17px; background: linear-gradient(135deg, #9e3f9c, #ef8078); }
+    .row { width: 1840px; height: 276px; margin-top: 16px; padding: 18px 22px; border: 2px solid var(--border); border-left: 9px solid var(--border); border-radius: 9px; background: var(--background); }
+    .row h2 { margin: 0 0 8px; font-size: 24px; line-height: 1.4; }
+    .row p { margin: 0 0 12px; font-size: 17px; line-height: 1.55; }
+    .row canvas { display: block; width: 1770px; height: 140px; border: 1px solid #8195ae; border-radius: 3px; background: #fff; }
+    footer { flex: none; padding: 0 20px 10px; color: #49596d; font-size: 12px; line-height: 1.45; }
+    .end { width: 1840px; margin-top: 20px; padding: 24px; border: 3px solid #28845a; border-radius: 9px; background: #e8f7ed; font-size: 25px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>小贴 · Patch · 全本地截图验证页</h1>
+    <p class="intro">框选下方蓝框内部的内容，排除本栏、蓝边与滚动条。内容可上下及左右滚动；纹理与编号互不重复。无网络请求，声音与动画默认关闭。</p>
+    <div class="controls">
+      <span class="readout" id="position">scrollTop=0 · scrollLeft=0</span>
+      <button id="topButton" type="button">回到顶部与左侧</button>
+      <button id="bottomButton" type="button">到最底部</button>
+      <label><input id="motionToggle" type="checkbox">打开动态区域</label>
+      <button id="audioButton" type="button">播放 440 / 880 Hz 测试音</button>
+      <button id="stopAudioButton" type="button">停止声音</button>
+      <span id="audioStatus" role="status">静音 · 点击后才会播放</span>
+    </div>
+  </header>
+  <main>
+    <div id="viewport" aria-label="上下和左右滚动的截图测试区域" tabindex="0">
+      <div id="content">
+        <section class="ocr">
+          <strong>Patch OCR Test: Capture text clearly.</strong>
+          <strong>截图文字提取测试：春风吹过山谷，云影落在湖面。</strong>
+          <p>Numbers: 0123456789 · Email: patch@example.test · Code: Patch-2026-1013</p>
+          <p>长截图测试：向下与向上分别开始，按编号检查没有丢行、重复行或左右错位。</p>
+        </section>
+        <section class="dynamic" id="dynamicRegion">
+          <strong>动态区域 · 默认静态</strong>
+          <span id="dynamicLabel">固定参考文字：紫色方块保持静止，状态编号 0000。</span>
+          <div class="orb" id="orb" aria-hidden="true"></div>
+        </section>
+        <div id="rows"></div>
+        <section class="end">END OF CAPTURE · 长截图内容结束<br>最后核对：21 个不同编号行、完整顶部 OCR 文字与本结束标记。</section>
+      </div>
+    </div>
+  </main>
+  <footer>手动：每次滚动一小段并停顿。自动：先回到顶部选“向下”，或到底部选“向上”。横锁：在蓝框内用触控板斜向滚动，观察 scrollLeft；解锁后应能横向移动。声音仅为浏览器本地合成，不使用麦克风。</footer>
+  <script>
+    (() => {
+      "use strict";
+      const viewport = document.getElementById("viewport");
+      const position = document.getElementById("position");
+      const rows = document.getElementById("rows");
+      const topics = [
+        ["晨光映照山脊", "Morning light crosses the ridgeline", "Amber ridge / 17 maps / eastbound"],
+        ["松林里的清风", "A clear breeze passes through the pine forest", "Pine compass / 28 trails / north gate"],
+        ["蓝色湖面与倒影", "Blue water reflects the distant clouds", "Lake marker / 39 boats / quiet shore"],
+        ["石桥连接两岸", "An old stone bridge joins the river banks", "Bridge ledger / 46 arches / west crossing"],
+        ["城墙下的花园", "A small garden grows beneath the city wall", "Garden index / 57 leaves / south path"],
+        ["沙丘间的足迹", "Footprints curve between the sand dunes", "Desert note / 63 dunes / sunrise stop"],
+        ["雨后的白色街道", "The pale street shines after the rain", "Rain signal / 74 windows / station square"],
+        ["夜空中的星轨", "Star trails stretch across the winter sky", "Star record / 85 minutes / summit field"],
+        ["木屋门前的红叶", "Red leaves collect beside the cabin door", "Cabin archive / 96 branches / forest edge"],
+        ["竹径通往茶室", "A bamboo path leads to the tea house", "Tea route / 108 cups / hillside room"],
+        ["港口的橙色灯塔", "An orange lighthouse watches the harbor", "Harbor sheet / 119 ropes / pier seven"],
+        ["高原上的风车", "Windmills turn slowly on the plateau", "Plateau chart / 127 blades / mountain road"],
+        ["书架间的午后", "Afternoon settles between the bookshelves", "Library memo / 138 volumes / reading desk"],
+        ["瀑布旁的苔石", "Mossy stones line the waterfall pool", "Falls journal / 149 stones / canyon bend"],
+        ["雪地中的小路", "A narrow path appears across the snow", "Snow report / 156 steps / northern pass"],
+        ["市场里的彩色陶碗", "Colorful bowls brighten the village market", "Market receipt / 167 bowls / pottery lane"],
+        ["铁轨穿过麦田", "Rail tracks pass through the wheat fields", "Rail timetable / 178 cars / golden valley"],
+        ["海岛上的白帆", "White sails move around the coastal island", "Island survey / 189 sails / eastern bay"],
+        ["果园旁的旧邮局", "The old post office stands beside the orchard", "Postal list / 197 stamps / orchard corner"],
+        ["剧院幕后的灯光", "Backstage lights warm the empty theater", "Theater cue / 208 lamps / balcony row"],
+        ["清晨广场上的钟声", "Morning bells ring above the open square", "Bell certificate / 219 notes / final plaza"]
+      ];
+
+      function randomGenerator(seed) {
+        let state = seed >>> 0;
+        return () => {
+          state ^= state << 13;
+          state ^= state >>> 17;
+          state ^= state << 5;
+          return (state >>> 0) / 4294967296;
+        };
+      }
+
+      topics.forEach((topic, index) => {
+        const number = String(index + 1).padStart(2, "0");
+        const hue = (index * 47 + 13) % 360;
+        const row = document.createElement("section");
+        row.className = "row";
+        row.style.setProperty("--border", `hsl(${hue} 43% 45%)`);
+        row.style.setProperty("--background", `hsl(${hue} 40% 97%)`);
+        const heading = document.createElement("h2");
+        heading.textContent = `${number} · ${topic[0]} / ${topic[1]}`;
+        const detail = document.createElement("p");
+        detail.textContent = `${topic[2]} · 唯一定位码 SL-${number}-${731 + index * 89} · 横向右侧标记 → ROW ${number} RIGHT EDGE`;
+        const canvas = document.createElement("canvas");
+        canvas.width = 1770;
+        canvas.height = 140;
+        canvas.setAttribute("aria-label", `第 ${number} 行独有的静态图案`);
+        row.append(heading, detail, canvas);
+        rows.append(row);
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        const random = randomGenerator(1973 + index * 104729);
+        context.fillStyle = `hsl(${hue} 24% 91%)`;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        for (let mark = 0; mark < 350; mark += 1) {
+          context.fillStyle = `hsl(${Math.floor(random() * 360)} ${35 + random() * 45}% ${28 + random() * 45}%)`;
+          const x = Math.floor(random() * canvas.width);
+          const y = Math.floor(random() * canvas.height);
+          const width = 3 + Math.floor(random() * 19);
+          const height = 3 + Math.floor(random() * 23);
+          context.fillRect(x, y, width, height);
+        }
+        context.font = "bold 34px Menlo, monospace";
+        context.fillStyle = "#ffffff";
+        context.fillRect(17, 40, 310, 60);
+        context.fillStyle = "#142842";
+        context.fillText(`SL / ROW ${number}`, 29, 81);
+        context.fillStyle = "#ffffff";
+        context.fillRect(1325, 42, 425, 55);
+        context.fillStyle = "#142842";
+        context.fillText(`RIGHT ${number}: ${index * 37 + 41}`, 1340, 79);
+      });
+
+      function updatePosition() {
+        position.textContent = `scrollTop=${Math.round(viewport.scrollTop)} · scrollLeft=${Math.round(viewport.scrollLeft)}`;
+      }
+      viewport.addEventListener("scroll", updatePosition, { passive: true });
+      document.getElementById("topButton").addEventListener("click", () => viewport.scrollTo({ top: 0, left: 0, behavior: "instant" }));
+      document.getElementById("bottomButton").addEventListener("click", () => viewport.scrollTo({ top: viewport.scrollHeight, left: 0, behavior: "instant" }));
+      updatePosition();
+
+      const motionToggle = document.getElementById("motionToggle");
+      const orb = document.getElementById("orb");
+      const dynamicLabel = document.getElementById("dynamicLabel");
+      let motionFrame = 0;
+      let motionStart = 0;
+      function animateMotion(time) {
+        if (!motionToggle.checked) return;
+        if (!motionStart) motionStart = time;
+        const elapsed = time - motionStart;
+        const x = Math.sin(elapsed / 350) * 210;
+        const angle = (elapsed / 8) % 360;
+        orb.style.transform = `translateX(${x}px) rotate(${angle}deg)`;
+        dynamicLabel.textContent = `动态验证：方块持续移动，状态编号 ${String(Math.floor(elapsed / 80)).padStart(4, "0")}。`;
+        motionFrame = requestAnimationFrame(animateMotion);
+      }
+      motionToggle.addEventListener("change", () => {
+        cancelAnimationFrame(motionFrame);
+        motionStart = 0;
+        if (motionToggle.checked) {
+          motionFrame = requestAnimationFrame(animateMotion);
+        } else {
+          orb.style.transform = "none";
+          dynamicLabel.textContent = "固定参考文字：紫色方块保持静止，状态编号 0000。";
+        }
+      });
+
+      const audioStatus = document.getElementById("audioStatus");
+      let audioContext = null;
+      let audioOscillators = [];
+      let audioGain = null;
+      let audioSafetyTimer = 0;
+      function stopAudio() {
+        window.clearTimeout(audioSafetyTimer);
+        for (const oscillator of audioOscillators) {
+          try { oscillator.stop(); } catch (_) { /* Already stopped. */ }
+          oscillator.disconnect();
+        }
+        audioOscillators = [];
+        if (audioGain) { audioGain.disconnect(); audioGain = null; }
+        audioStatus.textContent = "静音 · 点击后才会播放";
+      }
+      document.getElementById("audioButton").addEventListener("click", async () => {
+        stopAudio();
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) {
+          audioStatus.textContent = "此环境不支持 WebAudio";
+          return;
+        }
+        try {
+          if (!audioContext) audioContext = new AudioContextClass();
+          await audioContext.resume();
+          audioGain = audioContext.createGain();
+          audioGain.gain.value = 0.035;
+          audioGain.connect(audioContext.destination);
+          for (const frequency of [440, 880]) {
+            const oscillator = audioContext.createOscillator();
+            oscillator.type = "sine";
+            oscillator.frequency.value = frequency;
+            oscillator.connect(audioGain);
+            oscillator.start();
+            audioOscillators.push(oscillator);
+          }
+          audioStatus.textContent = "播放中：440 + 880 Hz · 60 秒后自动停止";
+          audioSafetyTimer = window.setTimeout(stopAudio, 60000);
+        } catch (error) {
+          stopAudio();
+          audioStatus.textContent = `声音不可用：${error.message || String(error)}`;
+        }
+      });
+      document.getElementById("stopAudioButton").addEventListener("click", stopAudio);
+      window.addEventListener("pagehide", stopAudio);
+    })();
+  </script>
+</body>
+</html>

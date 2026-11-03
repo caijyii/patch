@@ -1,0 +1,1547 @@
+// This probe is concatenated after ImageTools.swift by verify-images.sh so it can
+// exercise the actual private rendering and text-layout code without production hooks.
+import Darwin
+
+private struct ImageToolsVerificationFailure: Error, CustomStringConvertible {
+    let description: String
+}
+
+private struct ImageToolsTextLayoutSnapshot: Equatable {
+    let containerWidth: CGFloat
+    let lineEnds: [Int]
+    let text: String
+}
+
+extension ImageToolsCanvas {
+    fileprivate var verificationHistoryRetainsRaster: Bool {
+        history.contains { $0.annotations.contains { $0.mosaic != nil } }
+    }
+    fileprivate func verificationAdd(_ annotation: ImageToolsAnnotation) throws {
+        try commitAnnotations(annotations + [annotation], selecting: nil)
+    }
+    fileprivate func verificationMosaic(_ rect: CGRect) throws {
+        let annotation = ImageToolsAnnotation(tool: .mosaic,
+            points: [rect.origin, CGPoint(x: rect.maxX, y: rect.maxY)],
+            color: .red, width: 3, mosaicBlockSize: 12)
+        try commitAnnotations(annotations + [annotation], selecting: nil)
+    }
+    fileprivate func verificationWriteText(_ text: String, at point: CGPoint) {
+        beginTextEditing(at: point)
+        textEditor?.stringValue = text
+        textEditor?.currentEditor()?.string = text
+        finishTextEditing()
+    }
+}
+
+extension ImageToolsEditorController {
+    fileprivate var verificationCanvas: ImageToolsCanvas { canvas }
+    fileprivate var verificationMagnification: CGFloat { scroll.magnification }
+    fileprivate var verificationToolTitle: String? { controls.activeTool?.rawValue }
+    fileprivate var verificationColor: NSColor {
+        let colors: [NSColor] = [.systemRed, .systemYellow, .systemGreen, .systemBlue, .white]
+        let index = controls.colorButtons.firstIndex { $0.state == .on } ?? 0
+        return colors[index]
+    }
+    private var verificationSizes: [Double] {
+        switch controls.activeTool {
+        case .text: return [14, 18, 24, 32, 48]
+        case .number: return [18, 24, 32, 40]
+        case .mosaic: return [4, 8, 12, 20, 32]
+        default: return [1.5, 3, 5, 8]
+        }
+    }
+    fileprivate var verificationWidthIndex: Int {
+        verificationSizes.firstIndex(of: controls.sizeControl.slider.doubleValue) ?? -1
+    }
+    fileprivate var verificationUndoEnabled: Bool { controls.undoButton.isEnabled }
+    fileprivate func verificationChangeColor(_ color: NSColor) {
+        let colors: [NSColor] = [.systemRed, .systemYellow, .systemGreen, .systemBlue, .white]
+        if let index = colors.firstIndex(where: { $0.isEqual(color) }) { controls.colorButtons[index].performClick(nil) }
+    }
+    fileprivate func verificationChangeWidth(_ index: Int) {
+        controls.sizeControl.slider.doubleValue = verificationSizes[index]
+        controls.sizeControl.slider.sendAction(controls.sizeControl.slider.action, to: controls.sizeControl.slider.target)
+    }
+    fileprivate func verificationChangeTool(_ tool: ImageToolsTool) { controls.toolButtons[tool]?.performClick(nil) }
+    fileprivate func verificationUndo() { controls.undoButton.performClick(nil) }
+    fileprivate func verificationApply() {
+        (actions.compactMap { $0 as? NSButton }.first { $0.title == "应用到贴图" })?.performClick(nil)
+    }
+}
+
+extension ImageToolsPinController {
+    fileprivate var verificationImage: CGImage? { imageView?.image }
+    fileprivate var verificationTextView: ImageToolsPinTextView? { textView }
+    fileprivate func verificationEditing(_ value: Bool) { setTextEditing(value) }
+    fileprivate func verificationTextColor(_ color: NSColor) { colorSelectedText(color) }
+
+    fileprivate var verificationZoom: CGFloat { scale }
+    fileprivate var verificationMenuTitles: [String] { contextMenu().items.filter { !$0.isSeparatorItem }.map(\.title) }
+    fileprivate var verificationHasEditor: Bool { inlineEditor != nil }
+    fileprivate var verificationSelected: Bool { selected && surface.selected }
+    fileprivate var verificationHUD: NSWindow? { hud }
+    fileprivate var verificationHUDTitles: [String] { toolbar.rows.flatMap { $0.compactMap { ($0 as? NSButton)?.title } } }
+    fileprivate var verificationImageViewport: CGSize { scroll.contentView.bounds.size }
+    fileprivate var verificationImageContentFrame: CGRect? {
+        imageView.map { surface.convert($0.bounds, from: $0) }
+    }
+    fileprivate var verificationOutlineFrame: CGRect { selectionOutline.frame }
+    fileprivate var verificationPinViewportFrame: CGRect {
+        surface.convert(scroll.contentView.bounds, from: scroll.contentView)
+    }
+    fileprivate var verificationTextDocumentSize: CGSize { textView?.frame.size ?? .zero }
+    fileprivate var verificationTextSelection: NSRange? { textView?.selectedRange() }
+    fileprivate var verificationTextRemainsEditable: Bool {
+        textView?.isEditable == true && textView?.isSelectable == true
+            && textView?.textContainerInset == CGSize(width: 12, height: 12)
+            && textView?.textContainer?.widthTracksTextView == false
+    }
+    fileprivate func verificationSelectText(_ range: NSRange) { setTextEditing(true); textView?.setSelectedRange(range) }
+    fileprivate func verificationTextReceivesHit() -> Bool {
+        guard let textView, !textView.visibleRect.isEmpty else { return false }
+        let point = surface.convert(CGPoint(x: textView.visibleRect.midX, y: textView.visibleRect.midY), from: textView)
+        return surface.hitTest(point) === textView
+    }
+    fileprivate func verificationEditPinText(_ text: String) throws {
+        guard let textView else { throw ImageToolsVerificationFailure(description: "Text edit fixture has no text view") }
+        textView.string = text
+        textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+    }
+    fileprivate func verificationContentReceivesHit(at point: CGPoint) -> Bool {
+        let expected = scroll.hitTest(point)
+        return expected != nil && surface.hitTest(point) === expected
+    }
+    fileprivate func verificationScrollImage() {
+        scroll.contentView.scroll(to: CGPoint(x: 0, y: 120))
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+    fileprivate func verificationSelect() { setSelected(true) }
+    fileprivate func verificationDeselect() { setSelected(false) }
+    fileprivate func verificationDeactivate() { applicationDeactivated(Notification(name: NSApplication.didResignActiveNotification)) }
+    fileprivate func verificationHUDOCR() {
+        (toolbar.rows.flatMap { $0 }.compactMap { $0 as? NSButton }.first { $0.title == "提取文字" })?.performClick(nil)
+    }
+    fileprivate func verificationDrag(dx: CGFloat, dy: CGFloat, useHUD: Bool = false,
+                                      afterMouseDown: (() -> Void)? = nil, option: Bool = true) throws {
+        guard let window, let source = useHUD ? hud : window else {
+            throw ImageToolsVerificationFailure(description: "Pin drag has no event window")
+        }
+        let view: NSView?
+        if useHUD { view = toolbar.rows.first?.first }
+        else { view = imageView ?? textView }
+        guard let view else { throw ImageToolsVerificationFailure(description: "Pin drag has no view") }
+        let hitView = useHUD ? view : scroll.contentView
+        let start = source.convertPoint(toScreen: hitView.convert(CGPoint(x: hitView.bounds.midX, y: hitView.bounds.midY), to: nil))
+        let flags: NSEvent.ModifierFlags = textView != nil && !useHUD && option ? [.option] : []
+        func event(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+            guard let result = NSEvent.mouseEvent(with: type, location: source.convertPoint(fromScreen: point),
+                modifierFlags: flags, timestamp: 0, windowNumber: source.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: 1) else {
+                throw ImageToolsVerificationFailure(description: "Cannot create local pin mouse event")
+            }
+            return result
+        }
+        view.mouseDown(with: try event(.leftMouseDown, at: start))
+        afterMouseDown?()
+        let end = CGPoint(x: start.x + dx, y: start.y + dy)
+        view.mouseDragged(with: try event(.leftMouseDragged, at: end))
+        view.mouseUp(with: try event(.leftMouseUp, at: end))
+    }
+    fileprivate func verificationPrepareEditor() -> InlineAnnotationView? { annotateImage(); return inlineEditor }
+    fileprivate func verificationWheel(_ amount: Int32, precise: Bool) throws {
+        guard let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: precise ? .pixel : .line,
+            wheelCount: 1, wheel1: amount, wheel2: 0, wheel3: 0) else {
+            throw ImageToolsVerificationFailure(description: "Cannot create local scroll fixture")
+        }
+        cgEvent.setIntegerValueField(.scrollWheelEventIsContinuous, value: precise ? 1 : 0)
+        guard let event = NSEvent(cgEvent: cgEvent) else { throw ImageToolsVerificationFailure(description: "Cannot bridge scroll fixture") }
+        if let imageView { imageView.scrollWheel(with: event) }
+        else { textView?.scrollWheel(with: event) }
+    }
+    fileprivate func verificationPinch(_ factor: CGFloat) {
+        if let imageView { imageView.onZoom?(factor, CGPoint(x: imageView.bounds.midX, y: imageView.bounds.midY)) }
+        else if let textView { textView.onZoom?(factor, CGPoint(x: textView.bounds.midX, y: textView.bounds.midY)) }
+    }
+    fileprivate func verificationTextLayout() throws -> ImageToolsTextLayoutSnapshot {
+        guard let textView, let container = textView.textContainer, let layout = textView.layoutManager else {
+            throw ImageToolsVerificationFailure(description: "Text pin has no text layout manager")
+        }
+        layout.ensureLayout(for: container)
+        var glyph = 0
+        var ends: [Int] = []
+        while glyph < layout.numberOfGlyphs {
+            var range = NSRange()
+            _ = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &range)
+            guard NSMaxRange(range) > glyph else {
+                throw ImageToolsVerificationFailure(description: "Text layout has a non-advancing glyph range")
+            }
+            ends.append(NSMaxRange(range))
+            glyph = NSMaxRange(range)
+        }
+        return ImageToolsTextLayoutSnapshot(containerWidth: container.containerSize.width,
+                                            lineEnds: ends, text: textView.string)
+    }
+    fileprivate func verificationScale(_ newScale: CGFloat) {
+        scale = newScale
+        updateScale()
+    }
+}
+
+extension ImageToolsOCRController {
+    fileprivate var verificationCopyEnabled: Bool { copyButton.isEnabled }
+    fileprivate var verificationStatusHidden: Bool { status.isHidden }
+    fileprivate var verificationText: String { textView.string }
+    fileprivate func verificationCopy() { copyText() }
+    fileprivate func verificationEdit(_ text: String) {
+        textView.string = text
+        textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+    }
+}
+
+@main
+private struct ImageToolsVerification {
+    @MainActor static func main() {
+        do {
+            _ = NSApplication.shared
+            let outputDirectory = CommandLine.arguments.dropFirst().first ?? "/private/tmp"
+            try verifyArrowTips(outputDirectory: URL(fileURLWithPath: outputDirectory))
+            try verifyIndependentToolSizes()
+            try verifyObjectEditing()
+            try verifyMosaicEditing()
+            try verifyLegacyEditorBinding()
+            try verifyImagePinContentBounds(outputDirectory: URL(fileURLWithPath: outputDirectory))
+            try verifyImagePinSelection(outputDirectory: URL(fileURLWithPath: outputDirectory))
+            try verifyTextPinContentBounds(outputDirectory: URL(fileURLWithPath: outputDirectory))
+            try verifyPinsAndOCRPresentation(outputDirectory: URL(fileURLWithPath: outputDirectory))
+            try verifyInlineWorkflows(outputDirectory: URL(fileURLWithPath: outputDirectory))
+            try verifyRendering(outputDirectory: URL(fileURLWithPath: outputDirectory))
+            try verifyRegionRendering()
+            try verifyTextLayout()
+            try verifyOCRLanguages()
+            if CommandLine.arguments.contains("--ocr") {
+                print("Checking optional local end-to-end OCR…")
+                fflush(stdout)
+                try verifyOCR(outputDirectory: URL(fileURLWithPath: outputDirectory))
+                try verifyOCRAngles(outputDirectory: URL(fileURLWithPath: outputDirectory))
+            } else {
+                print("SKIP: end-to-end OCR (run scripts/verify-images.sh --ocr to include it)")
+            }
+            print("PASS: all requested image verification checks completed")
+        } catch {
+            fflush(stdout)
+            fputs("FAIL: \(error)\n", stderr)
+            exit(1)
+        }
+    }
+
+    private static func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
+        guard try condition() else { throw ImageToolsVerificationFailure(description: message) }
+    }
+
+    private static func rgba(_ image: CGImage, x: Int, y: Int) throws -> [CGFloat] {
+        guard let color = NSBitmapImageRep(cgImage: image).colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+            throw ImageToolsVerificationFailure(description: "Cannot read raster pixel (\(x), \(y))")
+        }
+        return [color.redComponent, color.greenComponent, color.blueComponent, color.alphaComponent]
+    }
+
+    private static func same(_ lhs: [CGFloat], _ rhs: [CGFloat]) -> Bool {
+        lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { abs($0 - $1) < 0.015 }
+    }
+
+    private static func solidImage(width: Int = 260, height: Int = 260) throws -> CGImage {
+        guard let context = CGContext(data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw ImageToolsVerificationFailure(description: "Cannot allocate solid image")
+        }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let image = context.makeImage() else {
+            throw ImageToolsVerificationFailure(description: "Cannot make solid image")
+        }
+        return image
+    }
+
+    @MainActor private static func verifyArrowTips(outputDirectory: URL) throws {
+        let source = try solidImage()
+        let tip = CGPoint(x: 130, y: 130)
+        for width: CGFloat in [3, 6, 10, 18] {
+            for direction in 0..<8 {
+                let angle = CGFloat(direction) * .pi / 4
+                let unit = CGPoint(x: cos(angle), y: sin(angle))
+                let start = CGPoint(x: tip.x - unit.x * 80, y: tip.y - unit.y * 80)
+                let canvas = ImageToolsCanvas(image: source)
+                try canvas.verificationAdd(ImageToolsAnnotation(tool: .arrow,
+                    points: [start, tip], color: .red, width: width))
+                let image = try canvas.renderedImage()
+                let bitmap = NSBitmapImageRep(cgImage: image)
+                let radius = Int(width) + 3
+                var protrusion: CGFloat = 0
+                for y in 130 - radius...130 + radius {
+                    for x in 130 - radius...130 + radius {
+                        guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                              color.redComponent > 0.75, color.greenComponent < 0.9 else { continue }
+                        let forward = (CGFloat(x) + 0.5 - tip.x) * unit.x + (CGFloat(y) + 0.5 - tip.y) * unit.y
+                        protrusion = max(protrusion, forward)
+                    }
+                }
+                if protrusion > 1 {
+                    try ImageToolsUI.png(image).write(to: outputDirectory.appendingPathComponent("arrow-tip-probe.png"), options: .atomic)
+                }
+                try require(protrusion <= 1,
+                    "Arrow projects \(protrusion) pixels beyond its endpoint (direction \(direction), width \(width)); raster saved as arrow-tip-probe.png")
+                let shaft = try rgba(image, x: Int(start.x + unit.x * 30), y: Int(start.y + unit.y * 30))
+                try require(shaft[0] > 0.8 && shaft[1] < 0.6, "Arrow shaft disappeared before its head")
+            }
+        }
+        for length: CGFloat in [0, 0.1, 2, 4] {
+            for direction in 0..<8 {
+                let angle = CGFloat(direction) * .pi / 4
+                let unit = CGPoint(x: cos(angle), y: sin(angle))
+                let canvas = ImageToolsCanvas(image: source)
+                try canvas.verificationAdd(ImageToolsAnnotation(tool: .arrow,
+                    points: [CGPoint(x: tip.x - unit.x * length, y: tip.y - unit.y * length), tip],
+                    color: .red, width: 18))
+                let bitmap = NSBitmapImageRep(cgImage: try canvas.renderedImage())
+                var colored = 0
+                for y in 105...155 {
+                    for x in 105...155 {
+                        guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                              color.redComponent > 0.75, color.greenComponent < 0.9 else { continue }
+                        colored += 1
+                        let forward = (CGFloat(x) + 0.5 - tip.x) * unit.x + (CGFloat(y) + 0.5 - tip.y) * unit.y
+                        try require(forward <= 1, "Very short arrow produces an endpoint protrusion")
+                    }
+                }
+                if length < 0.5 { try require(colored == 0, "Zero-length arrow produced a stray mark") }
+            }
+        }
+        print("PASS: arrow tips stop at their endpoint for eight directions, four widths and very short strokes")
+    }
+
+    @MainActor private static func mouse(_ type: NSEvent.EventType, on canvas: ImageToolsCanvas,
+                                         at point: CGPoint, clickCount: Int = 1) -> NSEvent {
+        NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: [],
+            timestamp: 0, windowNumber: canvas.window?.windowNumber ?? 0, context: nil,
+            eventNumber: 0, clickCount: clickCount, pressure: 1)!
+    }
+
+    @MainActor private static func canvasWindow(_ canvas: ImageToolsCanvas) -> NSWindow {
+        let window = NSWindow(contentRect: canvas.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = canvas
+        return window
+    }
+
+    private static func inkBounds(_ image: CGImage) throws -> CGRect {
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        var minX = image.width, minY = image.height, maxX = -1, maxY = -1
+        for y in 0..<image.height {
+            for x in 0..<image.width {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if color.redComponent < 0.9 || color.greenComponent < 0.9 || color.blueComponent < 0.9 {
+                    minX = min(minX, x); maxX = max(maxX, x)
+                    minY = min(minY, y); maxY = max(maxY, y)
+                }
+            }
+        }
+        try require(maxX >= minX && maxY >= minY, "Annotation rendered no visible pixels")
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+    }
+
+    @MainActor private static func verifyIndependentToolSizes() throws {
+        let source = try solidImage()
+        var textImages: [CGImage] = []
+        for width: CGFloat in [3, 18] {
+            let canvas = ImageToolsCanvas(image: source)
+            let window = canvasWindow(canvas)
+            canvas.annotationWidth = width
+            canvas.annotationFontSize = 20
+            canvas.verificationWriteText("Patch", at: CGPoint(x: 30, y: 30))
+            try require(canvas.annotations.last?.fontSize == 20, "Text did not preserve the selected font size")
+            let image = try canvas.renderedImage()
+            canvas.annotationFontSize = 64
+            let rerendered = try canvas.renderedImage()
+            try require(try ImageToolsUI.png(image) == ImageToolsUI.png(rerendered), "Changing current font size resized an existing text annotation")
+            textImages.append(image)
+            withExtendedLifetime(window) {}
+        }
+        try require(try ImageToolsUI.png(textImages[0]) == ImageToolsUI.png(textImages[1]), "Text size still changes with annotation line width")
+        let largerText = ImageToolsCanvas(image: source)
+        largerText.annotationFontSize = 40
+        largerText.verificationWriteText("Patch", at: CGPoint(x: 30, y: 30))
+        let textSmallBounds = try inkBounds(textImages[0])
+        let textLargeBounds = try inkBounds(largerText.renderedImage())
+        try require(textLargeBounds.width > textSmallBounds.width * 1.7 && textLargeBounds.height > textSmallBounds.height * 1.7,
+                    "Changing font size did not scale actual text pixels")
+        print("PASS: text font size is independent of line width and retained per annotation")
+
+        var numberImages: [CGImage] = []
+        for width: CGFloat in [3, 18] {
+            let canvas = ImageToolsCanvas(image: source)
+            let window = canvasWindow(canvas)
+            canvas.tool = .number
+            canvas.annotationWidth = width
+            canvas.annotationNumberSize = 36
+            canvas.mouseDown(with: mouse(.leftMouseDown, on: canvas, at: CGPoint(x: 130, y: 130)))
+            try require(canvas.annotations.last?.numberSize == 36, "Number did not preserve its selected diameter")
+            let image = try canvas.renderedImage()
+            canvas.annotationNumberSize = 72
+            try require(try ImageToolsUI.png(image) == ImageToolsUI.png(canvas.renderedImage()), "Changing current number size resized an existing annotation")
+            numberImages.append(image)
+            withExtendedLifetime(window) {}
+        }
+        try require(try ImageToolsUI.png(numberImages[0]) == ImageToolsUI.png(numberImages[1]), "Number diameter still changes with annotation line width")
+        let largerNumber = ImageToolsCanvas(image: source)
+        let numberWindow = canvasWindow(largerNumber)
+        largerNumber.tool = .number
+        largerNumber.annotationNumberSize = 72
+        largerNumber.mouseDown(with: mouse(.leftMouseDown, on: largerNumber, at: CGPoint(x: 130, y: 130)))
+        let numberSmallBounds = try inkBounds(numberImages[0])
+        let numberLargeBounds = try inkBounds(largerNumber.renderedImage())
+        try require(abs(numberSmallBounds.width - 36) <= 2 && abs(numberLargeBounds.width - 72) <= 2,
+                    "Number size does not control the circle's rendered pixel diameter")
+        withExtendedLifetime(numberWindow) {}
+        print("PASS: sequence-number diameter is independent of line width and retained per annotation")
+
+        guard let context = CGContext(data: nil, width: 128, height: 128, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw ImageToolsVerificationFailure(description: "Cannot allocate mosaic-size fixture")
+        }
+        for y in 0..<128 {
+            for x in 0..<128 {
+                context.setFillColor(CGColor(red: CGFloat(x) / 128, green: CGFloat(y) / 128, blue: 0.3, alpha: 1))
+                context.fill(CGRect(x: x, y: y, width: 1, height: 1))
+            }
+        }
+        guard let gradient = context.makeImage() else { throw ImageToolsVerificationFailure(description: "Cannot make mosaic-size fixture") }
+        var mosaicImages: [CGImage] = []
+        for (width, block): (CGFloat, CGFloat) in [(3, 8), (18, 8), (3, 24)] {
+            let canvas = ImageToolsCanvas(image: gradient)
+            let window = canvasWindow(canvas)
+            canvas.tool = .mosaic
+            canvas.annotationWidth = width
+            canvas.mosaicBlockSize = block
+            canvas.mouseDown(with: mouse(.leftMouseDown, on: canvas, at: CGPoint(x: 16, y: 16)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, on: canvas, at: CGPoint(x: 80, y: 80)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, on: canvas, at: CGPoint(x: 80, y: 80)))
+            mosaicImages.append(try canvas.renderedImage())
+            withExtendedLifetime(window) {}
+        }
+        try require(try ImageToolsUI.png(mosaicImages[0]) == ImageToolsUI.png(mosaicImages[1]), "Mosaic block size still changes with annotation line width")
+        let smallLeft = try rgba(mosaicImages[0], x: 23, y: 20)
+        let smallRight = try rgba(mosaicImages[0], x: 24, y: 20)
+        let largeLeft = try rgba(mosaicImages[2], x: 23, y: 20)
+        let largeRight = try rgba(mosaicImages[2], x: 24, y: 20)
+        try require(!same(smallLeft, smallRight) && same(largeLeft, largeRight), "Mosaic block setting did not move actual raster block boundaries")
+        let largeBoundary = try rgba(mosaicImages[2], x: 40, y: 20)
+        try require(!same(largeRight, largeBoundary), "Large mosaic blocks did not end at the selected size")
+        print("PASS: mosaic block size is independent of line width and changes raster block boundaries")
+    }
+
+    @MainActor private static func gesture(_ canvas: ImageToolsCanvas, points: [CGPoint]) {
+        guard let first = points.first, let last = points.last else { return }
+        canvas.mouseDown(with: mouse(.leftMouseDown, on: canvas, at: first))
+        for point in points.dropFirst() { canvas.mouseDragged(with: mouse(.leftMouseDragged, on: canvas, at: point)) }
+        canvas.mouseUp(with: mouse(.leftMouseUp, on: canvas, at: last))
+    }
+
+    @MainActor private static func select(_ canvas: ImageToolsCanvas, at point: CGPoint) {
+        canvas.deselectAnnotation()
+        gesture(canvas, points: [point])
+    }
+
+    @MainActor private static func replaceInlineText(_ canvas: ImageToolsCanvas, with text: String) throws {
+        guard let input = canvas.subviews.compactMap({ $0 as? NSTextField }).first else {
+            throw ImageToolsVerificationFailure(description: "Expected an inline text editor")
+        }
+        input.stringValue = text
+        input.currentEditor()?.string = text
+        canvas.finishTextEditing()
+    }
+
+    @MainActor private static func verifyObjectEditing() throws {
+        let source = try solidImage()
+        let definitions: [(ImageToolsTool, [CGPoint], CGPoint)] = [
+            (.arrow, [CGPoint(x: 35, y: 60), CGPoint(x: 120, y: 100)], CGPoint(x: 77, y: 80)),
+            (.rectangle, [CGPoint(x: 35, y: 40), CGPoint(x: 110, y: 100)], CGPoint(x: 72, y: 40)),
+            (.ellipse, [CGPoint(x: 35, y: 40), CGPoint(x: 110, y: 100)], CGPoint(x: 72, y: 40)),
+            (.pen, [CGPoint(x: 35, y: 70), CGPoint(x: 65, y: 35), CGPoint(x: 105, y: 90)], CGPoint(x: 65, y: 35))
+        ]
+        for (tool, points, hit) in definitions {
+            let canvas = ImageToolsCanvas(image: source)
+            let window = canvasWindow(canvas)
+            canvas.tool = tool
+            gesture(canvas, points: points)
+            try require(canvas.annotations.count == 1 && canvas.canUndo, "\(tool.rawValue) creation is not undoable")
+            canvas.isDrawingEnabled = false
+            canvas.deselectAnnotation()
+            let original = canvas.annotations[0]
+            let originalImage = try canvas.renderedImage()
+            try require(canvas.annotationContains(hit) && !canvas.annotationContains(CGPoint(x: 235, y: 235)),
+                        "\(tool.rawValue) hit test did not distinguish ink from empty canvas")
+            var selectedStyle: ImageToolsAnnotation?
+            canvas.onAnnotationSelectionChange = { selectedStyle = $0 }
+            canvas.annotationWidth = 99
+            canvas.annotationColor = .green
+            select(canvas, at: hit)
+            try require(selectedStyle?.tool == tool && selectedStyle?.width == original.width,
+                        "Selection callback did not report the object's saved style")
+            try require(canvas.annotationWidth == 99 && canvas.annotationColor.isEqual(NSColor.green),
+                        "Selection unexpectedly modified drawing defaults")
+            let withSelection = try canvas.renderedImage()
+            canvas.deselectAnnotation()
+            try require(try ImageToolsUI.png(withSelection) == ImageToolsUI.png(canvas.renderedImage()),
+                        "Selection decorations leaked into exported pixels")
+            select(canvas, at: hit)
+            gesture(canvas, points: [hit, CGPoint(x: hit.x + 25, y: hit.y + 20)])
+            let moved = canvas.annotations[0]
+            try require(zip(original.points, moved.points).allSatisfy { a, b in abs(b.x - a.x - 25) < 0.01 && abs(b.y - a.y - 20) < 0.01 },
+                        "\(tool.rawValue) object did not move as a whole")
+            try require(try ImageToolsUI.png(originalImage) != ImageToolsUI.png(canvas.renderedImage()), "Moving an object did not change raster pixels")
+            canvas.undoAnnotation()
+            try require(try ImageToolsUI.png(originalImage) == ImageToolsUI.png(canvas.renderedImage()), "Undo did not restore the moved object's pixels")
+            let control = tool == .arrow ? original.points.last! : CGPoint(x: original.rect.maxX, y: original.rect.maxY)
+            try require(canvas.annotationContains(control), "Selected object's control point cannot receive clicks")
+            gesture(canvas, points: [control, CGPoint(x: control.x + 20, y: control.y + 15)])
+            if tool == .arrow {
+                try require(canvas.annotations[0].points.first == original.points.first
+                    && canvas.annotations[0].points.last == CGPoint(x: control.x + 20, y: control.y + 15), "Arrow endpoint control did not adjust only its endpoint")
+            } else {
+                try require(abs(canvas.annotations[0].rect.width - original.rect.width - 20) < 0.01
+                    && abs(canvas.annotations[0].rect.height - original.rect.height - 15) < 0.01, "\(tool.rawValue) corner control did not resize its geometry")
+            }
+            canvas.undoAnnotation()
+            try require(try ImageToolsUI.png(originalImage) == ImageToolsUI.png(canvas.renderedImage()), "Undo did not restore resized geometry")
+            canvas.updateSelectedAnnotation(color: .blue, width: 12)
+            try require(canvas.selectedAnnotation?.width == 12 && canvas.selectedAnnotation?.color.isEqual(NSColor.blue) == true,
+                        "Selected-object style edit was not applied")
+            canvas.undoAnnotation()
+            try require(try ImageToolsUI.png(originalImage) == ImageToolsUI.png(canvas.renderedImage()), "Undo did not restore object styling")
+            let deletion = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: 51)!
+            canvas.keyDown(with: deletion)
+            try require(canvas.annotations.isEmpty && canvas.canUndo, "Delete did not remove the selected object with undo retained")
+            canvas.undoAnnotation()
+            try require(try ImageToolsUI.png(originalImage) == ImageToolsUI.png(canvas.renderedImage()), "Undo did not restore deleted object pixels")
+            try require(canvas.cancelAnnotationEditing() && !canvas.cancelAnnotationEditing(), "Esc priority did not consume selection exactly once")
+            canvas.clearAnnotations()
+            try require(!canvas.canUndo && canvas.selectedAnnotation == nil && !canvas.cancelAnnotationEditing(), "Clearing annotations retained stale history or selection")
+            withExtendedLifetime(window) {}
+        }
+        print("PASS: arrows, rectangles, ellipses and pens support ink hits, move, controls, style edits, Delete and undo")
+
+        let text = ImageToolsCanvas(image: source)
+        let textWindow = canvasWindow(text)
+        text.tool = .text
+        text.mouseDown(with: mouse(.leftMouseDown, on: text, at: CGPoint(x: 30, y: 30)))
+        try replaceInlineText(text, with: "Original")
+        let before = try text.renderedImage()
+        let textOrigin = text.annotations[0].points[0]
+        text.isDrawingEnabled = false
+        select(text, at: CGPoint(x: 50, y: 42))
+        gesture(text, points: [CGPoint(x: 50, y: 42), CGPoint(x: 70, y: 62)])
+        try require(text.annotations[0].points[0] == CGPoint(x: textOrigin.x + 20, y: textOrigin.y + 20), "Text did not move")
+        text.undoAnnotation()
+        text.mouseDown(with: mouse(.leftMouseDown, on: text, at: CGPoint(x: 50, y: 42), clickCount: 2))
+        let editing = text.subviews.compactMap({ $0 as? NSTextField }).first
+        try require(editing?.stringValue == "Original", "Double-click did not load the existing text")
+        try replaceInlineText(text, with: "Edited")
+        try require(text.annotations.count == 1 && text.annotations[0].text == "Edited", "Editing duplicated text instead of replacing it")
+        text.undoAnnotation()
+        try require(try ImageToolsUI.png(before) == ImageToolsUI.png(text.renderedImage()), "Undo did not restore original text")
+        text.updateSelectedAnnotation(fontSize: 48)
+        try require(text.selectedAnnotation?.fontSize == 48, "Existing text font size was not editable")
+        text.undoAnnotation()
+        text.mouseDown(with: mouse(.leftMouseDown, on: text, at: CGPoint(x: 50, y: 42), clickCount: 2))
+        try require(text.cancelAnnotationEditing() && text.selectedAnnotation != nil, "Esc did not cancel text editing before object selection")
+        try require(try ImageToolsUI.png(before) == ImageToolsUI.png(text.renderedImage()), "Cancelled text editing changed exported pixels")
+        text.deleteSelectedAnnotation()
+        text.undoAnnotation()
+        try require(try ImageToolsUI.png(before) == ImageToolsUI.png(text.renderedImage()), "Text deletion was not reversible")
+        withExtendedLifetime(textWindow) {}
+
+        let number = ImageToolsCanvas(image: source)
+        let numberWindow = canvasWindow(number)
+        number.tool = .number
+        gesture(number, points: [CGPoint(x: 130, y: 130)])
+        let numberBefore = try number.renderedImage()
+        number.isDrawingEnabled = false
+        select(number, at: CGPoint(x: 130, y: 130))
+        gesture(number, points: [CGPoint(x: 130, y: 130), CGPoint(x: 150, y: 145)])
+        try require(number.annotations[0].points[0] == CGPoint(x: 150, y: 145), "Sequence number did not move")
+        number.undoAnnotation()
+        number.updateSelectedAnnotation(numberSize: 72)
+        try require(number.selectedAnnotation?.numberSize == 72, "Existing sequence-number size was not editable")
+        number.undoAnnotation()
+        try require(try ImageToolsUI.png(numberBefore) == ImageToolsUI.png(number.renderedImage()), "Undo did not restore sequence-number pixels")
+        withExtendedLifetime(numberWindow) {}
+        print("PASS: text supports double-click editing and cancellation; text and numbers support move and size-edit undo")
+    }
+
+    @MainActor private static func verifyMosaicEditing() throws {
+        let source = try solidImage()
+        let canvas = ImageToolsCanvas(image: source)
+        let window = canvasWindow(canvas)
+        var failures = 0
+        canvas.onError = { _ in failures += 1 }
+        canvas.tool = .pen
+        canvas.annotationWidth = 12
+        canvas.annotationColor = .red
+        gesture(canvas, points: [CGPoint(x: 15, y: 50), CGPoint(x: 100, y: 50)])
+        canvas.deselectAnnotation()
+        canvas.tool = .mosaic
+        canvas.mosaicBlockSize = 8
+        gesture(canvas, points: [CGPoint(x: 30, y: 30), CGPoint(x: 110, y: 80)])
+        try require(canvas.annotations.count == 2 && canvas.annotations[1].mosaicBlockSize == 8, "Mosaic creation did not retain its block size")
+        let original = try canvas.renderedImage()
+        let red = try rgba(original, x: 50, y: 50)
+        try require(red[0] > 0.9 && red[1] < 0.2, "Mosaic did not sample the lower red stroke")
+        canvas.isDrawingEnabled = false
+        select(canvas, at: CGPoint(x: 20, y: 50))
+        canvas.updateSelectedAnnotation(color: .blue)
+        let blueImage = try canvas.renderedImage()
+        let blue = try rgba(blueImage, x: 50, y: 50)
+        try require(blue[2] > 0.9 && blue[0] < 0.2, "Editing a lower annotation left a stale mosaic patch")
+        gesture(canvas, points: [CGPoint(x: 24, y: 50), CGPoint(x: 34, y: 90)])
+        let uncovered = try rgba(canvas.renderedImage(), x: 50, y: 50)
+        try require(uncovered[0] > 0.95 && uncovered[1] > 0.95 && uncovered[2] > 0.95, "Moving a lower annotation did not update the upper mosaic")
+        canvas.undoAnnotation()
+        try require(try ImageToolsUI.png(blueImage) == ImageToolsUI.png(canvas.renderedImage()), "Undo of lower movement did not rebuild mosaic consistently")
+        canvas.undoAnnotation()
+        try require(try ImageToolsUI.png(original) == ImageToolsUI.png(canvas.renderedImage()), "Undo of lower style did not rebuild mosaic consistently")
+
+        select(canvas, at: CGPoint(x: 60, y: 65))
+        gesture(canvas, points: [CGPoint(x: 60, y: 65), CGPoint(x: 75, y: 85)])
+        try require(canvas.selectedAnnotation?.rect == CGRect(x: 45, y: 50, width: 80, height: 50), "Mosaic could not move as an object")
+        let moved = try canvas.renderedImage()
+        canvas.updateSelectedAnnotation(mosaicBlockSize: 32)
+        let largerBlocks = try canvas.renderedImage()
+        let lower = ImageToolsCanvas(image: source)
+        try lower.verificationAdd(canvas.annotations[0])
+        let lowerBitmap = NSBitmapImageRep(cgImage: try lower.renderedImage())
+        var average = [CGFloat](repeating: 0, count: 4)
+        for y in 50..<82 {
+            for x in 45..<77 {
+                guard let c = lowerBitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                for (index, channel) in [c.redComponent, c.greenComponent, c.blueComponent, c.alphaComponent].enumerated() {
+                    average[index] += channel / 1024
+                }
+            }
+        }
+        let actual = try rgba(largerBlocks, x: 50, y: 60)
+        try require(same(average, actual) && actual[3] > 0.99, "Moved mosaic block does not average its current source and lower layers opaquely")
+        gesture(canvas, points: [CGPoint(x: 125, y: 100), CGPoint(x: 145, y: 115)])
+        try require(canvas.selectedAnnotation?.rect == CGRect(x: 45, y: 50, width: 100, height: 65), "Mosaic bounding control did not resize its area")
+        canvas.undoAnnotation()
+        try require(try ImageToolsUI.png(largerBlocks) == ImageToolsUI.png(canvas.renderedImage()), "Undo did not restore mosaic resize")
+        canvas.undoAnnotation()
+        try require(try ImageToolsUI.png(moved) == ImageToolsUI.png(canvas.renderedImage()), "Undo did not restore mosaic block size")
+        canvas.undoAnnotation()
+        try require(try ImageToolsUI.png(original) == ImageToolsUI.png(canvas.renderedImage()), "Undo did not restore mosaic position")
+        canvas.updateSelectedAnnotation(mosaicBlockSize: .nan)
+        try require(failures == 1 && canvas.selectedAnnotation?.mosaicBlockSize == 8
+            && (try ImageToolsUI.png(original) == ImageToolsUI.png(canvas.renderedImage())), "Failed mosaic edit lost the previous valid raster")
+        select(canvas, at: CGPoint(x: 20, y: 50))
+        canvas.deleteSelectedAnnotation()
+        let removedLower = try rgba(canvas.renderedImage(), x: 50, y: 50)
+        try require(removedLower[0] > 0.95 && removedLower[1] > 0.95, "Deleting a lower object left stale mosaic pixels")
+        canvas.undoAnnotation()
+        try require(try ImageToolsUI.png(original) == ImageToolsUI.png(canvas.renderedImage()), "Undo of lower deletion did not restore protected pixels")
+        try require(!canvas.verificationHistoryRetainsRaster, "Undo history retained raster patches")
+        withExtendedLifetime(window) {}
+        print("PASS: mosaic move, resize, block edits, lower-layer edits/deletion and undo rebuild opaque patches transactionally")
+    }
+
+    @MainActor private static func verifyLegacyEditorBinding() throws {
+        let source = try solidImage()
+        let editor = ImageToolsEditorController(image: source, preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+        editor.window?.contentView?.layoutSubtreeIfNeeded()
+        let canvas = editor.verificationCanvas
+        canvas.annotationColor = .systemRed
+        canvas.tool = .rectangle
+        gesture(canvas, points: [CGPoint(x: 40, y: 40), CGPoint(x: 140, y: 120)])
+        let originalWidth = canvas.annotations[0].width
+        let original = try canvas.renderedImage()
+        editor.verificationChangeTool(.ellipse)
+        editor.verificationChangeColor(.systemBlue)
+        select(canvas, at: CGPoint(x: 90, y: 40))
+        try require(editor.verificationToolTitle == "方框" && editor.verificationColor.isEqual(NSColor.systemRed)
+            && editor.verificationWidthIndex == 1,
+            "Legacy editor did not synchronize controls and drawing defaults to the selected object")
+        editor.verificationChangeColor(.systemBlue)
+        try require(canvas.selectedAnnotation?.color.isEqual(NSColor.systemBlue) == true && editor.verificationUndoEnabled,
+                    "Legacy color action did not edit the selected object with undo enabled")
+        editor.verificationUndo()
+        try require(try ImageToolsUI.png(original) == ImageToolsUI.png(canvas.renderedImage()), "Legacy color undo did not restore object pixels")
+        try require(editor.verificationColor.isEqual(NSColor.systemRed), "Legacy controls did not follow undo restoration")
+        editor.verificationChangeWidth(2)
+        try require(canvas.selectedAnnotation?.width == 5 / editor.verificationMagnification && editor.verificationWidthIndex == 2,
+                    "Legacy width action did not update the selected vector object")
+        editor.verificationUndo()
+        try require(canvas.selectedAnnotation?.width == originalWidth && editor.verificationWidthIndex == 1,
+                    "Legacy width undo did not synchronize restored controls")
+        editor.verificationChangeTool(.pen)
+        try require(canvas.selectedAnnotation == nil && canvas.tool == .pen && canvas.isDrawingEnabled,
+                    "Changing legacy tools did not deselect the old object and enable new drawing")
+        try require(try ImageToolsUI.png(original) == ImageToolsUI.png(canvas.renderedImage()), "Changing tools mutated the existing object")
+
+        for tool in [ImageToolsTool.text, .number, .mosaic] {
+            let controller = ImageToolsEditorController(image: source, preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+            controller.window?.contentView?.layoutSubtreeIfNeeded()
+            let objectCanvas = controller.verificationCanvas
+            controller.verificationChangeTool(tool)
+            if tool == .text {
+                objectCanvas.mouseDown(with: mouse(.leftMouseDown, on: objectCanvas, at: CGPoint(x: 30, y: 30)))
+                try replaceInlineText(objectCanvas, with: "Legacy")
+            } else if tool == .number {
+                gesture(objectCanvas, points: [CGPoint(x: 130, y: 130)])
+            } else {
+                gesture(objectCanvas, points: [CGPoint(x: 40, y: 40), CGPoint(x: 130, y: 120)])
+            }
+            let before = objectCanvas.selectedAnnotation!
+            let beforeImage = try objectCanvas.renderedImage()
+            controller.verificationChangeWidth(3)
+            let after = objectCanvas.selectedAnnotation!
+            switch tool {
+            case .text:
+                try require(after.fontSize == 32 / controller.verificationMagnification && after.width == before.width, "Legacy text menu changed line width instead of font size")
+            case .number:
+                try require(after.numberSize == 40 / controller.verificationMagnification && after.width == before.width, "Legacy sequence menu changed line width instead of circle size")
+            case .mosaic:
+                try require(after.mosaicBlockSize == 20 / controller.verificationMagnification && after.width == before.width, "Legacy mosaic menu changed line width instead of blocks")
+            default: break
+            }
+            try require(controller.verificationWidthIndex == 3 && controller.verificationToolTitle == tool.rawValue,
+                        "Legacy combination menu did not reflect \(tool.rawValue)'s selected size")
+            controller.verificationUndo()
+            try require(controller.verificationWidthIndex == (tool == .mosaic ? 2 : 1)
+                && (try ImageToolsUI.png(beforeImage) == ImageToolsUI.png(objectCanvas.renderedImage())),
+                "Legacy \(tool.rawValue) size undo did not restore pixels and controls")
+            withExtendedLifetime(controller) {}
+        }
+        print("PASS: shared editor controls synchronize selection; tool-specific style actions edit objects and undo")
+    }
+
+    @MainActor private static func allButtons(_ view: NSView) -> [NSButton] {
+        ((view as? NSButton).map { [$0] } ?? []) + view.subviews.flatMap(allButtons)
+    }
+
+    @MainActor private static func cachePreview(_ view: NSView, output: URL) throws {
+        view.layoutSubtreeIfNeeded()
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            throw ImageToolsVerificationFailure(description: "Cannot allocate fixture-view preview")
+        }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            throw ImageToolsVerificationFailure(description: "Cannot encode fixture-view preview")
+        }
+        try data.write(to: output, options: .atomic)
+    }
+
+    @MainActor private static func verifyImagePinContentBounds(outputDirectory: URL) throws {
+        let preferences = PreferencesStore(storage: MemoryPreferencesStorage())
+        for (width, height) in [(260, 180), (16, 12)] {
+            let source = try solidImage(width: width, height: height)
+            let pin = ImageToolsPinController(image: source, preferences: preferences)
+            defer { pin.close() }
+            guard let content = pin.window?.contentView else {
+                throw ImageToolsVerificationFailure(description: "Missing image-pin content")
+            }
+            try require(pin.window?.hasShadow == false,
+                        "Opaque image pin still adds a WindowServer shadow outside its content bounds")
+            for scale: CGFloat in [1, 0.2, 1.25, 2] {
+                pin.verificationScale(scale)
+                for selected in [false, true] {
+                    if selected { pin.verificationSelect() } else { pin.verificationDeselect() }
+                    content.layoutSubtreeIfNeeded()
+                    try require(pin.window?.hasShadow == false,
+                                "Selection or zoom restores an external image-pin shadow")
+                    guard let frame = pin.verificationImageContentFrame else {
+                        throw ImageToolsVerificationFailure(description: "Missing displayed image frame")
+                    }
+                    let viewport = pin.verificationImageViewport
+                    try require(abs(content.bounds.width - frame.width) < 0.5
+                                && abs(content.bounds.height - frame.height) < 0.5
+                                && abs(frame.minX) < 0.5 && abs(frame.minY) < 0.5
+                                && abs(viewport.width - content.bounds.width) < 0.5
+                                && abs(viewport.height - content.bounds.height) < 0.5,
+                                "Image pin adds space beyond its source: source=\(width)×\(height) scale=\(scale) selected=\(selected) window=\(content.bounds) image=\(frame) viewport=\(viewport)")
+                }
+            }
+            try require(pin.verificationImage === source, "Fitting the image changed its original raster")
+            pin.verificationScale(1)
+            pin.verificationDeselect()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+            try cachePreview(content, output: outputDirectory.appendingPathComponent("image-pin-content-bounds-\(width).png"))
+        }
+        guard let context = CGContext(data: nil, width: 80, height: 60, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw ImageToolsVerificationFailure(description: "Cannot create transparent pin fixture")
+        }
+        context.clear(CGRect(x: 0, y: 0, width: 80, height: 60))
+        context.setFillColor(CGColor(red: 0.1, green: 0.4, blue: 0.8, alpha: 1))
+        context.fill(CGRect(x: 20, y: 12, width: 40, height: 36))
+        let transparent = context.makeImage()!
+        let transparentPin = ImageToolsPinController(image: transparent, preferences: preferences)
+        defer { transparentPin.close() }
+        guard let transparentWindow = transparentPin.window, let content = transparentWindow.contentView else {
+            throw ImageToolsVerificationFailure(description: "Missing transparent pin window")
+        }
+        try require(!transparentWindow.hasShadow && content.bounds.size == CGSize(width: 80, height: 60),
+                    "Transparent image acquired an external frame, a rectangular shadow or cropped source canvas")
+        for selected in [false, true] {
+            if selected { transparentPin.verificationSelect() } else { transparentPin.verificationDeselect() }
+            let url = outputDirectory.appendingPathComponent("transparent-pin-content-\(selected ? "selected" : "idle").png")
+            try cachePreview(content, output: url)
+            let bitmap = NSBitmapImageRep(data: try Data(contentsOf: url))!
+            func pixel(_ x: CGFloat, _ y: CGFloat) -> NSColor {
+                bitmap.colorAt(x: Int(x / content.bounds.width * CGFloat(bitmap.pixelsWide)),
+                               y: Int(y / content.bounds.height * CGFloat(bitmap.pixelsHigh)))!
+            }
+            try require(pixel(8, 8).alphaComponent < 0.01 && pixel(40, 30).alphaComponent > 0.99,
+                        "Pin decoration fills a transparent source region or hides opaque content")
+            if selected {
+                try require(pixel(0.75, 30).alphaComponent > 0.95,
+                            "Transparent selected pin has no visible inset outline")
+            }
+        }
+        try require(transparentPin.verificationImage === transparent
+                    && ImageToolsUI.png(transparentPin.verificationImage!) == ImageToolsUI.png(transparent),
+                    "Removing the pin frame changed the source PNG")
+        print("PASS: image-pin bounds follow source content at normal, small and zoomed sizes without an external frame")
+        print("PASS: transparent pins retain their source canvas and interior alpha with only a temporary inset selection outline")
+    }
+
+    @MainActor private static func verifyImagePinSelection(outputDirectory: URL) throws {
+        for (name, width, height) in [("normal", 260, 180), ("scrollable", 700, 18000)] {
+            let source = try solidImage(width: width, height: height)
+            let sourcePNG = try ImageToolsUI.png(source)
+            let pin = ImageToolsPinController(image: source)
+            defer { pin.close() }
+            if name == "scrollable" { pin.verificationScale(3) }
+            guard let content = pin.window?.contentView else {
+                throw ImageToolsVerificationFailure(description: "Missing selection fixture view")
+            }
+            func snapshot(_ state: String) throws -> NSBitmapImageRep {
+                let url = outputDirectory.appendingPathComponent("image-pin-selection-\(name)-\(state).png")
+                try cachePreview(content, output: url)
+                return NSBitmapImageRep(data: try Data(contentsOf: url))!
+            }
+            func pixel(_ bitmap: NSBitmapImageRep, _ x: CGFloat, _ y: CGFloat) -> NSColor {
+                bitmap.colorAt(x: min(bitmap.pixelsWide - 1, Int(x / content.bounds.width * CGFloat(bitmap.pixelsWide))),
+                               y: min(bitmap.pixelsHigh - 1, Int(y / content.bounds.height * CGFloat(bitmap.pixelsHigh))))!
+                    .usingColorSpace(.deviceRGB)!
+            }
+            pin.verificationSelect()
+            if name == "scrollable" { pin.verificationScrollImage() }
+            try require(pin.verificationOutlineFrame == content.bounds,
+                        "Selection outline follows the offscreen image instead of the visible viewport")
+            let selected = try snapshot("selected")
+            let edges = [CGPoint(x: 0.75, y: content.bounds.midY),
+                         CGPoint(x: content.bounds.maxX - 0.75, y: content.bounds.midY),
+                         CGPoint(x: content.bounds.midX, y: 0.75),
+                         CGPoint(x: content.bounds.midX, y: content.bounds.maxY - 0.75)]
+            for point in edges {
+                let color = pixel(selected, point.x, point.y)
+                try require(color.alphaComponent > 0.99 && color.blueComponent - color.redComponent > 0.12,
+                            "Selected \(name) pin has no visible blue-gray edge at \(point): \(color)")
+                try require(pin.verificationContentReceivesHit(at: point), "Selection outline intercepts image edge interaction")
+            }
+            let center = pixel(selected, content.bounds.midX, content.bounds.midY)
+            try require(center.redComponent > 0.99 && center.greenComponent > 0.99,
+                        "Selection highlight tints image content")
+            pin.verificationDeselect()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+            let idle = try snapshot("idle")
+            for point in edges {
+                try require(pixel(idle, point.x, point.y).redComponent > 0.99,
+                            "Deselected image retains its selection outline")
+            }
+            pin.verificationSelect()
+            pin.verificationDeselect()
+            pin.verificationSelect()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+            let reselected = try snapshot("reselected")
+            try require(pixel(reselected, 0.75, content.bounds.midY).redComponent < 0.7,
+                        "An old fade hides the newly selected pin")
+            try require(pin.verificationImage === source && ImageToolsUI.png(pin.verificationImage!) == sourcePNG,
+                        "Selection decoration modifies copied or exported source pixels")
+        }
+        print("PASS: selected image pins show passive inset blue-gray edges; deselection restores pixels and rapid reselection cancels fading")
+        print("PASS: scrollable image selection stays on all four visible viewport edges without tinting source content")
+    }
+
+    @MainActor private static func verifyTextPinContentBounds(outputDirectory: URL) throws {
+        let text = "固定宽度文字贴图，保留中文和 English mixed text。This line wraps at a fixed width and must keep the same layout while zooming.\n第二段仍可编辑、选中和复制。"
+        let pin = ImageToolsPinController(text: text)
+        defer { pin.close() }
+        guard let window = pin.window, let content = window.contentView else {
+            throw ImageToolsVerificationFailure(description: "Missing text-pin content")
+        }
+        window.appearance = NSAppearance(named: .aqua)
+        let original = try pin.verificationTextLayout()
+        let originalSize = pin.verificationTextDocumentSize
+        let selection = NSRange(location: 0, length: 8)
+        pin.verificationSelectText(selection)
+        try require(original.containerWidth == 416 && original.lineEnds.count >= 3
+                    && pin.verificationTextRemainsEditable,
+                    "Text fixture lost its editable fixed-width container or internal text padding")
+        for factor: CGFloat in [0.2, 1, 1.25, 2, 4] {
+            pin.verificationScale(factor)
+            for selected in [false, true] {
+                if selected { pin.verificationSelect() }
+                else {
+                    pin.verificationDeselect()
+                    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+                }
+                try verifyTextPinViewport(pin, selected: selected)
+                try require(try pin.verificationTextLayout() == original
+                            && pin.verificationTextSelection == selection,
+                            "Text content, wrapping or selected text changed at \(factor)x, selected=\(selected)")
+            }
+        }
+        pin.verificationScale(1)
+        pin.verificationDeselect()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        try cachePreview(content, output: outputDirectory.appendingPathComponent("text-pin-content-idle.png"))
+        pin.verificationSelect()
+        try cachePreview(content, output: outputDirectory.appendingPathComponent("text-pin-content-selected.png"))
+        print("PASS: text pins have opaque content edges, no external window shadow and passive inner selection at 0.2x, 1x, 1.25x, 2x and 4x")
+
+        let edited = text + String(repeating: "\n新增的可编辑段落：原有固定宽度继续换行，内容无需转换为图片。", count: 18)
+        try pin.verificationEditPinText(edited)
+        let editedLayout = try pin.verificationTextLayout()
+        let editedSize = pin.verificationTextDocumentSize
+        try require(editedSize.height > originalSize.height + 100 && editedSize.width == originalSize.width
+                    && editedLayout.containerWidth == original.containerWidth
+                    && editedLayout.text == edited && editedLayout.lineEnds.count > original.lineEnds.count,
+                    "Editing text lost content, changed the fixed width or did not grow its document: original=\(originalSize), edited=\(editedSize)")
+        try verifyTextPinViewport(pin, selected: true)
+        for factor: CGFloat in [0.2, 1, 1.25, 2, 4] {
+            pin.verificationScale(factor)
+            try require(try pin.verificationTextLayout() == editedLayout,
+                        "Edited text rewrapped at \(factor)x")
+            try verifyTextPinViewport(pin, selected: true)
+        }
+        let shorter = "恢复短文字。\nStill editable."
+        try pin.verificationEditPinText(shorter)
+        pin.verificationScale(1)
+        let shortened = try pin.verificationTextLayout()
+        try require(shortened.text == shorter && shortened.containerWidth == original.containerWidth
+                    && pin.verificationTextDocumentSize.height < editedSize.height
+                    && pin.verificationTextDocumentSize.width == originalSize.width,
+                    "Shortening text did not shrink its document or changed the fixed text width")
+        pin.verificationSelectText(NSRange(location: 0, length: 4))
+        try require(pin.verificationTextSelection == NSRange(location: 0, length: 4)
+                    && pin.verificationTextRemainsEditable,
+                    "Text editing or selection stopped working after resizing")
+        try verifyTextPinViewport(pin, selected: true)
+        print("PASS: editing and shortening text resize the document while preserving fixed-width wrapping, internal padding and text selection")
+
+        let longText = String(repeating: "长文字贴图仍是可编辑文本。Scrollable text keeps its fixed-width wrapping.\n", count: 250)
+        let longPin = ImageToolsPinController(text: longText)
+        defer { longPin.close() }
+        longPin.window?.appearance = NSAppearance(named: .aqua)
+        let longLayout = try longPin.verificationTextLayout()
+        longPin.verificationScale(2)
+        longPin.verificationSelect()
+        guard let longContent = longPin.window?.contentView else {
+            throw ImageToolsVerificationFailure(description: "Missing scrollable text-pin content")
+        }
+        try require(longPin.verificationTextDocumentSize.height * longPin.verificationZoom > longContent.bounds.height + 100,
+                    "Long text fixture does not exercise a clipped scrollable document")
+        longPin.verificationScrollImage()
+        try verifyTextPinViewport(longPin, selected: true)
+        try require(try longPin.verificationTextLayout() == longLayout,
+                    "Scrolling long text changed its content or wrapping")
+        try cachePreview(longContent, output: outputDirectory.appendingPathComponent("text-pin-scrollable-selected.png"))
+        longPin.verificationDeselect()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        try verifyTextPinViewport(longPin, selected: false)
+        try cachePreview(longContent, output: outputDirectory.appendingPathComponent("text-pin-scrollable-idle.png"))
+        print("PASS: long text keeps its outline on the visible scroll viewport, preserves wrapping and passes hit testing through to editable text")
+    }
+
+    @MainActor private static func verifyTextPinViewport(_ pin: ImageToolsPinController, selected: Bool) throws {
+        guard let window = pin.window, let content = window.contentView else {
+            throw ImageToolsVerificationFailure(description: "Missing text-pin viewport")
+        }
+        content.layoutSubtreeIfNeeded()
+        try require(!window.hasShadow, "Text pin still adds a WindowServer shadow outside its content")
+        let viewport = pin.verificationPinViewportFrame
+        try require(abs(viewport.minX - content.bounds.minX) < 0.5
+                    && abs(viewport.minY - content.bounds.minY) < 0.5
+                    && abs(viewport.width - content.bounds.width) < 0.5
+                    && abs(viewport.height - content.bounds.height) < 0.5
+                    && pin.verificationOutlineFrame == content.bounds,
+                    "Text viewport or selection outline retains an external gutter: window=\(content.bounds), viewport=\(viewport), outline=\(pin.verificationOutlineFrame)")
+        try require(pin.verificationTextReceivesHit(), "Text selection is blocked by the outline or an outer decoration")
+        guard let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else {
+            throw ImageToolsVerificationFailure(description: "Cannot allocate text-pin pixel fixture")
+        }
+        content.cacheDisplay(in: content.bounds, to: bitmap)
+        func pixel(_ point: CGPoint) throws -> NSColor {
+            let x = min(bitmap.pixelsWide - 1, Int(point.x / content.bounds.width * CGFloat(bitmap.pixelsWide)))
+            let y = min(bitmap.pixelsHigh - 1, Int(point.y / content.bounds.height * CGFloat(bitmap.pixelsHigh)))
+            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+                throw ImageToolsVerificationFailure(description: "Cannot read text-pin edge pixels")
+            }
+            return color
+        }
+        for point in [CGPoint(x: 0.25, y: 0.25), CGPoint(x: content.bounds.maxX - 0.25, y: 0.25),
+                      CGPoint(x: 0.25, y: content.bounds.maxY - 0.25),
+                      CGPoint(x: content.bounds.maxX - 0.25, y: content.bounds.maxY - 0.25)] {
+            try require(try pixel(point).alphaComponent > 0.99,
+                        "Text pin retains a transparent or partially transparent external corner")
+        }
+        for point in [CGPoint(x: 0.75, y: content.bounds.midY),
+                      CGPoint(x: content.bounds.maxX - 0.75, y: content.bounds.midY),
+                      CGPoint(x: content.bounds.midX, y: 0.75),
+                      CGPoint(x: content.bounds.midX, y: content.bounds.maxY - 0.75)] {
+            let color = try pixel(point)
+            try require(color.alphaComponent > 0.99 && pin.verificationContentReceivesHit(at: point),
+                        "Text edge is translucent or intercepts its original mouse target")
+            if selected {
+                try require(color.blueComponent - color.redComponent > 0.12 && color.redComponent < 0.7,
+                            "Selected text pin has no visible inset blue-gray outline")
+            } else {
+                try require(abs(color.blueComponent - color.redComponent) < 0.03,
+                            "Inactive text pin retains an accent outline")
+            }
+        }
+    }
+
+    @MainActor private static func verifyInlineWorkflows(outputDirectory: URL) throws {
+        let pin = ImageToolsPinController(text: "原色AB选中色CD原色")
+        defer { pin.close() }
+        let text = pin.verificationTextView!
+        try require(text.isMoving && !text.isEditable && !text.isSelectable, "Text pin does not default to moving")
+        let frame = pin.window!.frame
+        try pin.verificationDrag(dx: 12, dy: -12, option: false)
+        try require(abs(pin.window!.frame.minX - frame.minX - 12) < 0.1,
+                    "Plain trackpad-style drag still selects text instead of moving")
+        text.onBeginEditing?()
+        try require(!text.isMoving && text.isEditable && text.isSelectable, "Double-click editing callback does not enable selection")
+        let range = NSRange(location: 4, length: 3)
+        text.setSelectedRange(range)
+        let before = NSAttributedString(attributedString: text.attributedString())
+        text.undoManager?.beginUndoGrouping()
+        pin.verificationTextColor(.systemRed)
+        text.undoManager?.endUndoGrouping()
+        try require((text.textStorage!.attribute(.foregroundColor, at: 4, effectiveRange: nil) as? NSColor)?.isEqual(NSColor.systemRed) == true,
+                    "Selected text did not change color")
+        try require(text.attributedString().attributedSubstring(from: NSRange(location: 0, length: 4))
+            .isEqual(to: before.attributedSubstring(from: NSRange(location: 0, length: 4))), "Color edit changed unselected text")
+        text.undoManager?.undo()
+        try require(text.attributedString().isEqual(to: before), "Color change cannot be undone exactly")
+        text.undoManager?.redo()
+        try require((text.textStorage!.attribute(.foregroundColor, at: 4, effectiveRange: nil) as? NSColor)?.isEqual(NSColor.systemRed) == true,
+                    "Color change cannot be redone")
+        pin.verificationEditing(false)
+        try require(text.isMoving && !text.isEditable && text.selectedRange().length == 0,
+                    "Finishing text editing did not restore moving")
+        pin.verificationEditing(true)
+        try require((text.textStorage!.attribute(.foregroundColor, at: 4, effectiveRange: nil) as? NSColor)?.isEqual(NSColor.systemRed) == true,
+                    "Switching modes lost text colors")
+        try cachePreview(pin.window!.contentView!, output: outputDirectory.appendingPathComponent("text-colors-preview.png"))
+        print("PASS: text pins default to ordinary dragging; editing enables selection and range colors support undo, redo and mode changes")
+
+        let source = try solidImage(width: 700, height: 6000)
+        let imagePin = ImageToolsPinController(image: source)
+        defer { imagePin.close() }
+        let originalWindow = imagePin.window
+        let originalFrame = originalWindow!.frame
+        let editor = imagePin.verificationPrepareEditor()!
+        try require(editor.window === originalWindow && editor.scroll.magnification > 0.5,
+                    "Long image opens separately or fits its full height into an unreadable strip")
+        editor.setZoom(1.5)
+        editor.scroll.contentView.scroll(to: CGPoint(x: 0, y: 2900))
+        editor.canvas.tool = .rectangle
+        gesture(editor.canvas, points: [CGPoint(x: 100, y: 3000), CGPoint(x: 300, y: 3200)])
+        let rendered = try editor.canvas.renderedImage()
+        try require(rendered.width == 700 && rendered.height == 6000, "Zoom changed export resolution")
+        let marked = try rgba(rendered, x: 100, y: 3100)
+        try require(marked[0] > 0.8 && marked[1] < 0.6, "Scrolled/zoomed annotation has wrong image coordinates")
+        editor.canvas.undoAnnotation()
+        try require(editor.canvas.annotations.isEmpty, "Inline annotation cannot undo")
+        try cachePreview(editor, output: outputDirectory.appendingPathComponent("long-inline-preview.png"))
+        editor.onCancel?()
+        try require(imagePin.window === originalWindow && imagePin.verificationImage === source
+                    && !imagePin.verificationHasEditor && originalWindow!.frame == originalFrame,
+                    "Cancelling inline editing changed source pixels, lost the pin, or changed its frame")
+        print("PASS: inline long-image editing reuses its pin, fits width, scrolls and zooms in image coordinates, retains export resolution and cancels without loss")
+    }
+
+    @MainActor private static func verifyPinsAndOCRPresentation(outputDirectory: URL) throws {
+        let source = try solidImage()
+        let preferences = PreferencesStore(storage: MemoryPreferencesStorage())
+        let imagePin = ImageToolsPinController(image: source, preferences: preferences)
+        guard let pinWindow = imagePin.window, let imageContent = pinWindow.contentView else {
+            throw ImageToolsVerificationFailure(description: "Image pin did not initialize")
+        }
+        try require(pinWindow.styleMask.rawValue == NSWindow.StyleMask.borderless.rawValue && allButtons(imageContent).isEmpty,
+                    "Image pin retains normal window chrome or an always-visible control bar")
+        try require(!imagePin.verificationSelected && imagePin.verificationHUD?.isVisible == false && !pinWindow.hasShadow,
+                    "A new image pin has persistent selection controls or an external native shadow")
+        try require(imagePin.verificationImageViewport.width >= CGFloat(source.width)
+                    && imagePin.verificationImageViewport.height >= CGFloat(source.height),
+                    "Initial image viewport cropped the source")
+        let beforeDrag = pinWindow.frame
+        try imagePin.verificationDrag(dx: 45, dy: 30)
+        try require(imagePin.verificationSelected && abs(pinWindow.frame.minX - beforeDrag.minX - 45) < 0.1
+                    && abs(pinWindow.frame.minY - beforeDrag.minY - 30) < 0.1,
+                    "Image first-click mouseDown/Dragged/Up did not select and move the pin")
+        guard let imageHUD = imagePin.verificationHUD else {
+            throw ImageToolsVerificationFailure(description: "Image pin has no floating action HUD")
+        }
+        try require(imageHUD.styleMask.contains(.nonactivatingPanel) && !imageHUD.canBecomeKey && !imageHUD.canBecomeMain
+                    && !imageHUD.frame.intersects(pinWindow.frame),
+                    "Pin action HUD can steal key focus or overlays the image")
+        try require(imagePin.verificationHUDTitles == ["标注", "提取文字", "复制图片", "保存 PNG", "关闭贴图"],
+                    "Image selection HUD lacks the requested actions")
+        var hudOCRSource: CGImage?
+        imagePin.onOCR = { hudOCRSource = $0 }
+        imagePin.verificationHUDOCR()
+        try require(hudOCRSource === source && imagePin.verificationSelected,
+                    "HUD action lost pin selection or passed a decorated image to OCR")
+        let beforeHandleDrag = pinWindow.frame
+        try imagePin.verificationDrag(dx: 20, dy: -15, useHUD: true)
+        try require(abs(pinWindow.frame.minX - beforeHandleDrag.minX - 20) < 0.1
+                    && abs(pinWindow.frame.minY - beforeHandleDrag.minY + 15) < 0.1
+                    && !imageHUD.frame.intersects(pinWindow.frame),
+                    "Floating HUD handle did not move its pin or follow the new position")
+        let imageMenu = imagePin.verificationMenuTitles
+        for title in ["标注", "提取文字", "复制图片", "保存 PNG", "恢复大小", "关闭贴图"] {
+            try require(imageMenu.contains(title), "Image pin is missing context action \(title)")
+        }
+        try imagePin.verificationWheel(2, precise: false)
+        try require(imagePin.verificationZoom > 1, "Mouse wheel did not enlarge image pin")
+        let wheelZoom = imagePin.verificationZoom
+        try imagePin.verificationWheel(8, precise: true)
+        try require(imagePin.verificationZoom == wheelZoom, "Trackpad scrolling unexpectedly changed image zoom")
+        imagePin.verificationPinch(1.2)
+        try require(imagePin.verificationZoom > wheelZoom, "Pinch callback did not enlarge image pin")
+        try require(!imageHUD.frame.intersects(pinWindow.frame), "Zoom moved the pin under its floating action HUD")
+        try require(try ImageToolsUI.png(imagePin.verificationImage!) == ImageToolsUI.png(source), "Zoom changed the source raster")
+        let longSource = try solidImage(width: 700, height: 18000)
+        try verifyFirstSelectionDrag(image: longSource, preferences: preferences)
+        let longPin = ImageToolsPinController(image: longSource, preferences: preferences)
+        try longPin.verificationWheel(2, precise: false)
+        longPin.verificationPinch(1000)
+        longPin.verificationSelect()
+        guard let longWindow = longPin.window else { throw ImageToolsVerificationFailure(description: "Long pin window is missing") }
+        let visible = longWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
+            ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
+        try require(longWindow.frame.width >= 700 && visible.contains(longWindow.frame),
+                    "Long image cannot zoom to readable width inside the display")
+        try require(longPin.verificationImage === longSource, "Long-image zoom copied or replaced the source bitmap")
+        try require(!imagePin.verificationSelected && longPin.verificationSelected
+                    && longPin.verificationHUD.map { visible.contains($0.frame) && !$0.frame.intersects(longWindow.frame) } == true,
+                    "Selecting another pin did not hide previous controls or keep its HUD outside a long image")
+        longPin.verificationDeactivate()
+        try require(!longPin.verificationSelected, "Application deactivation did not clear pin selection")
+        imagePin.verificationSelect()
+        guard let edit = imagePin.verificationPrepareEditor() else {
+            throw ImageToolsVerificationFailure(description: "Pin edit controller did not initialize")
+        }
+        let editorContent = edit
+        try require(edit.window === pinWindow && allButtons(edit).contains { $0.title == "完成" }, "Pin editing is not hosted by its original window")
+        let canvas = edit.canvas
+        canvas.tool = .rectangle
+        gesture(canvas, points: [CGPoint(x: 40, y: 40), CGPoint(x: 100, y: 100)])
+        try cachePreview(editorContent, output: outputDirectory.appendingPathComponent("editor-preview.png"))
+        edit.complete()
+        try require(imagePin.window === pinWindow && !imagePin.verificationHasEditor,
+                    "Applying markup replaced the pin window or left its editor active")
+        try require(!pinWindow.hasShadow, "Applying markup restores an external image-pin shadow")
+        let marked = try rgba(imagePin.verificationImage!, x: 40, y: 60)
+        try require(marked[0] > 0.8 && marked[1] < 0.6, "Applied markup did not reach the original image pin")
+        let pinPreview = outputDirectory.appendingPathComponent("image-pin-preview.png")
+        try cachePreview(imageContent, output: pinPreview)
+        guard let previewBitmap = NSBitmapImageRep(data: try Data(contentsOf: pinPreview)) else {
+            throw ImageToolsVerificationFailure(description: "Cannot decode rendered pin content")
+        }
+        let backingScaleX = CGFloat(previewBitmap.pixelsWide) / imageContent.bounds.width
+        let backingScaleY = CGFloat(previewBitmap.pixelsHigh) / imageContent.bounds.height
+        for point in [CGPoint(x: 1, y: 1), CGPoint(x: imageContent.bounds.maxX - 1, y: 1),
+                      CGPoint(x: 1, y: imageContent.bounds.maxY - 1),
+                      CGPoint(x: imageContent.bounds.maxX - 1, y: imageContent.bounds.maxY - 1)] {
+            guard let pixel = previewBitmap.colorAt(x: Int(point.x * backingScaleX), y: Int(point.y * backingScaleY)) else {
+                throw ImageToolsVerificationFailure(description: "Cannot inspect image-pin edges")
+            }
+            try require(pixel.alphaComponent > 0.99, "Opaque image does not reach its pin's content edges")
+        }
+        if let hudContent = imageHUD.contentView {
+            try cachePreview(hudContent, output: outputDirectory.appendingPathComponent("image-pin-hud-preview.png"))
+        }
+        let textPin = ImageToolsPinController(text: "固定宽度换行的文字贴图。\nEditable text pin.", preferences: preferences)
+        guard let textWindow = textPin.window, let textContent = textWindow.contentView else {
+            throw ImageToolsVerificationFailure(description: "Text pin did not initialize")
+        }
+        try require(textWindow.styleMask.rawValue == NSWindow.StyleMask.borderless.rawValue && allButtons(textContent).isEmpty,
+                    "Text pin retains normal window chrome or an always-visible control bar")
+        try require(textPin.verificationMenuTitles.contains("编辑文字") && textPin.verificationMenuTitles.contains("复制文字"),
+                    "Borderless text pin has no reachable move/copy controls")
+        let textBefore = try textPin.verificationTextLayout()
+        textWindow.setFrameOrigin(CGPoint(x: visible.midX - textWindow.frame.width / 2,
+                                         y: visible.midY - textWindow.frame.height / 2))
+        let textFrame = textWindow.frame
+        try textPin.verificationDrag(dx: -30, dy: 25)
+        try require(textPin.verificationSelected && !imagePin.verificationSelected
+                    && abs(textWindow.frame.minX - textFrame.minX + 30) < 0.1
+                    && abs(textWindow.frame.minY - textFrame.minY - 25) < 0.1,
+                    "Option-drag on a text pin did not move and select its window: before=\(textFrame) after=\(textWindow.frame) textSelected=\(textPin.verificationSelected) imageSelected=\(imagePin.verificationSelected)")
+        try require(textPin.verificationHUDTitles == ["编辑文字", "复制文字", "关闭贴图"], "Text selection HUD contains image-only actions")
+        try textPin.verificationWheel(2, precise: false)
+        textPin.verificationPinch(1.2)
+        try require(try textPin.verificationTextLayout() == textBefore, "Text zoom rewrapped the fixed-width document")
+        try cachePreview(textContent, output: outputDirectory.appendingPathComponent("text-pin-preview.png"))
+        var clipboardAttempts = 0
+        var clipboardSucceeds = false
+        var copiedText: String?
+        var ocrCloseCount = 0
+        let ocr = ImageToolsOCRController(writeClipboard: { text in
+            clipboardAttempts += 1
+            if clipboardSucceeds { copiedText = text }
+            return clipboardSucceeds
+        })
+        ocr.onClose = { ocrCloseCount += 1 }
+        guard let ocrContent = ocr.window?.contentView else { throw ImageToolsVerificationFailure(description: "OCR view is missing") }
+        try require(ocr.window?.styleMask.contains([.titled, .resizable, .miniaturizable]) == true
+                    && ocr.window?.collectionBehavior.contains(.fullScreenPrimary) == true
+                    && ocr.window?.standardWindowButton(.zoomButton) != nil,
+                    "OCR window is missing native fullscreen eligibility or its standard green button")
+        try require(allButtons(ocrContent).map(\.title) == ["复制并关闭"] && !ocr.verificationCopyEnabled,
+                    "OCR loading view has extra actions or enabled copying")
+        ocr.verificationCopy()
+        try require(clipboardAttempts == 0 && ocrCloseCount == 0, "OCR loading state copied or closed its window")
+        ocr.complete("屏幕文字\nScreen text")
+        try require(ocr.verificationStatusHidden && ocr.verificationCopyEnabled && ocr.verificationText == "屏幕文字\nScreen text",
+                    "OCR completion did not show copyable text without persistent status copy")
+        try cachePreview(ocrContent, output: outputDirectory.appendingPathComponent("ocr-result-preview.png"))
+        ocr.verificationCopy()
+        try require(clipboardAttempts == 1 && ocrCloseCount == 0 && !ocr.verificationStatusHidden
+                    && ocr.verificationCopyEnabled && ocr.verificationText == "屏幕文字\nScreen text",
+                    "Failed clipboard write closed the OCR result or discarded copyable text")
+        ocr.verificationEdit(" \n")
+        ocr.verificationCopy()
+        try require(!ocr.verificationCopyEnabled && clipboardAttempts == 1 && ocrCloseCount == 0,
+                    "Blank edited OCR text copied or closed its result")
+        ocr.fail(ScreenLeafError(message: "请尝试更清晰的文字。"))
+        try require(!ocr.verificationCopyEnabled && !ocr.verificationStatusHidden && ocr.verificationText == "请尝试更清晰的文字。",
+                    "OCR failure did not remain inline with copying disabled")
+        ocr.verificationCopy()
+        try require(clipboardAttempts == 1 && ocrCloseCount == 0, "OCR failure copied its error message or closed")
+        ocr.complete("屏幕文字\nScreen text")
+        clipboardSucceeds = true
+        ocr.verificationCopy()
+        try require(clipboardAttempts == 2 && copiedText == "屏幕文字\nScreen text" && ocrCloseCount == 1,
+                    "Successful OCR copying did not close exactly once with the result text")
+        print("PASS: first-click image/Option-text/HUD movement, detached selection HUD, image content edges, zoom and source-raster preservation")
+        print("PASS: native fullscreen OCR window, copy-and-close success, clipboard failure and blank/loading/error guards")
+    }
+
+    @MainActor private static func verifyFirstSelectionDrag(image: CGImage, preferences: PreferencesStore) throws {
+        let imagePin = ImageToolsPinController(image: image, preferences: preferences)
+        imagePin.verificationPinch(1000)
+        let textPin = ImageToolsPinController(text: String(repeating: "Long text pin fixture.\n", count: 700), preferences: preferences)
+        var failures: [String] = []
+        for (name, pin) in [("long image", imagePin), ("long text Option-drag", textPin)] {
+            guard let window = pin.window else { throw ImageToolsVerificationFailure(description: "Missing \(name) fixture window") }
+            let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
+                ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
+            try require(!pin.verificationSelected && window.frame.height > visible.height * 0.8,
+                        "First-selection drag fixture is selected or does not fill the available height")
+            window.setFrameOrigin(CGPoint(x: visible.midX - window.frame.width / 2, y: visible.minY + 20))
+            let original = window.frame
+            var selectedFrame: CGRect?
+            try pin.verificationDrag(dx: 0, dy: 10, afterMouseDown: { selectedFrame = window.frame })
+            guard let selectedFrame else { throw ImageToolsVerificationFailure(description: "Missing \(name) mouseDown frame") }
+            try require(pin.verificationSelected && selectedFrame.height < original.height,
+                        "First selection did not reserve detached HUD space for \(name)")
+            let delta = window.frame.minY - selectedFrame.minY
+            if abs(delta - 10) > 0.1 {
+                failures.append("\(name): pointer delta=10, actual window delta=\(delta), selection resized height \(original.height)→\(selectedFrame.height)")
+            }
+        }
+        try require(failures.isEmpty, "First-selection drag jumped after HUD layout: " + failures.joined(separator: "; "))
+        print("PASS: unselected full-height image and Option-text pins move by the first pointer delta after reserving HUD space")
+    }
+
+    @MainActor private static func verifyRendering(outputDirectory: URL) throws {
+        let width = 120, height = 100
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw ImageToolsVerificationFailure(description: "Cannot allocate rendering fixture")
+        }
+        for y in 0..<height {
+            for x in 0..<width {
+                context.setFillColor(CGColor(red: CGFloat(x) / 120, green: CGFloat(y) / 100,
+                                            blue: 0.3, alpha: 1))
+                context.fill(CGRect(x: x, y: y, width: 1, height: 1))
+            }
+        }
+        guard let source = context.makeImage() else {
+            throw ImageToolsVerificationFailure(description: "Cannot create rendering fixture")
+        }
+        let canvas = ImageToolsCanvas(image: source)
+        let initial = try canvas.renderedImage()
+        for (x, y) in [(10, 10), (110, 90), (60, 50)] {
+            let sourcePixel = try rgba(source, x: x, y: y)
+            let renderedPixel = try rgba(initial, x: x, y: y)
+            try require(same(sourcePixel, renderedPixel), "Source orientation or color changed at (\(x), \(y))")
+        }
+        print("PASS: source orientation and raster colors")
+        try canvas.verificationAdd(ImageToolsAnnotation(tool: .rectangle,
+            points: [CGPoint(x: 10, y: 10), CGPoint(x: 30, y: 30)], color: .red, width: 4))
+        let annotated = try canvas.renderedImage()
+        let mark = try rgba(annotated, x: 10, y: 15)
+        try require(mark[0] > 0.95 && mark[1] < 0.05, "Annotation pixel coordinates are incorrect")
+        print("PASS: annotation document coordinates match exported pixels")
+        try canvas.verificationMosaic(CGRect(x: 40, y: 10, width: 48, height: 48))
+        let mosaic = try canvas.renderedImage()
+        let outsideBefore = try rgba(annotated, x: 20, y: 80)
+        let outsideAfter = try rgba(mosaic, x: 20, y: 80)
+        try require(same(outsideBefore, outsideAfter), "Mosaic modified pixels outside its region")
+        let blockA = try rgba(mosaic, x: 50, y: 20)
+        let blockB = try rgba(mosaic, x: 51, y: 21)
+        let original = try rgba(annotated, x: 50, y: 20)
+        try require(same(blockA, blockB), "Mosaic did not replace its region with pixel blocks")
+        try require(!same(original, blockA), "Mosaic retained original selected pixels")
+        try require(blockA[3] > 0.99, "Mosaic replacement is transparent")
+        var expectedAverage = [CGFloat](repeating: 0, count: 4)
+        for y in 10..<22 {
+            for x in 40..<52 {
+                let pixel = try rgba(annotated, x: x, y: y)
+                for channel in 0..<4 { expectedAverage[channel] += pixel[channel] / 144 }
+            }
+        }
+        try require(same(expectedAverage, blockA), "Mosaic sampled an incorrect source region")
+        print("PASS: opaque mosaic replaces actual selected pixels and preserves outside pixels")
+        let data = try ImageToolsUI.png(mosaic)
+        guard let decoded = NSBitmapImageRep(data: data) else {
+            throw ImageToolsVerificationFailure(description: "PNG export cannot be decoded")
+        }
+        try require(decoded.pixelsWide == width && decoded.pixelsHigh == height, "PNG export dimensions changed")
+        try data.write(to: outputDirectory.appendingPathComponent("image-render-probe.png"), options: .atomic)
+        print("PASS: PNG export round-trip and exact image dimensions")
+        canvas.undoAnnotation()
+        let undone = try rgba(canvas.renderedImage(), x: 50, y: 20)
+        try require(same(undone, original), "Undo did not restore pre-mosaic pixels")
+        print("PASS: undo restores the source pixels")
+        let editor = ImageToolsEditorController(image: source, preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+        editor.window?.contentView?.layoutSubtreeIfNeeded()
+        try require(editor.window != nil, "Editor window failed to initialize")
+        print("PASS: editor initializes without capture or accessibility permissions")
+    }
+
+    @MainActor private static func verifyRegionRendering() throws {
+        let width = 420, height = 310
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        for y in 0..<height {
+            context.setFillColor(CGColor(red: CGFloat(y % 43) / 43, green: CGFloat(y) / CGFloat(height),
+                blue: 0.4, alpha: y < 90 ? 0.35 : 1))
+            context.fill(CGRect(x: 0, y: y, width: width, height: 1))
+        }
+        let source = context.makeImage()!
+        let fixtures: [ImageToolsAnnotation?] = [nil,
+            ImageToolsAnnotation(tool: .arrow, points: [CGPoint(x: 10,y: 20), CGPoint(x: 190,y: 160)], color: .red, width: 8),
+            ImageToolsAnnotation(tool: .rectangle, points: [CGPoint(x: 20,y: 20), CGPoint(x: 180,y: 140)], color: .blue, width: 9),
+            ImageToolsAnnotation(tool: .ellipse, points: [CGPoint(x: 20,y: 20), CGPoint(x: 180,y: 140)], color: .red, width: 4),
+            ImageToolsAnnotation(tool: .pen, points: [CGPoint(x: 12,y: 24), CGPoint(x: 150,y: 98), CGPoint(x: 220,y: 140)], color: .green, width: 7),
+            ImageToolsAnnotation(tool: .text, points: [CGPoint(x: 20,y: 35)], color: .black, width: 3, text: "Patch 中英文字", fontSize: 30),
+            ImageToolsAnnotation(tool: .number, points: [CGPoint(x: 42,y: 42)], color: .red, width: 3, number: 12),
+            ImageToolsAnnotation(tool: .sticker, points: [CGPoint(x: 42,y: 42)], color: .red, width: 3, text: "🌼", fontSize: 64),
+            ImageToolsAnnotation(tool: .mosaic, points: [CGPoint(x: 20,y: 20), CGPoint(x: 180,y: 140)], color: .red, width: 3)]
+        let crops = [CGRect(x: 35,y: 29,width: 100,height: 80),
+                     CGRect(x: 0,y: 0,width: 65,height: 54),
+                     CGRect(x: 390,y: 280,width: 30,height: 30),
+                     CGRect(x: -5.3,y: 10.2,width: 80.7,height: 50.4)]
+        func bytes(_ image: CGImage) -> Data {
+            let copy = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            copy.draw(image, in: CGRect(x: 0,y: 0,width: image.width,height: image.height))
+            return Data(bytes: copy.data!, count: image.width * image.height * 4)
+        }
+        for (index, annotation) in fixtures.enumerated() {
+            let canvas = ImageToolsCanvas(image: source)
+            if let annotation { try canvas.verificationAdd(annotation) }
+            let full = try canvas.renderedImage()
+            for crop in crops {
+                let expected = full.cropping(to: crop.integral.intersection(CGRect(x: 0,y: 0,width: width,height: height)))!
+                let actual = try canvas.renderedImage(croppingTo: crop)
+                try require(actual.width == expected.width && actual.height == expected.height,
+                            "Region export dimensions changed for fixture \(index)")
+                let actualBytes = bytes(actual), expectedBytes = bytes(expected)
+                if actualBytes != expectedBytes {
+                    let deltas = zip(actualBytes, expectedBytes).map { abs(Int($0) - Int($1)) }
+                    print("REGION DIFF fixture=\(index) changedBytes=\(deltas.filter { $0 != 0 }.count) maxDelta=\(deltas.max() ?? 0)")
+                    let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/private/tmp")
+                    try ImageToolsUI.png(actual).write(to: output.appendingPathComponent("region-actual.png"))
+                    try ImageToolsUI.png(expected).write(to: output.appendingPathComponent("region-expected.png"))
+                }
+                try require(actualBytes == expectedBytes, "Region export pixels differ from full-image crop for fixture \(index), crop \(crop)")
+                try require(actual.bytesPerRow <= actual.width * 4 + 64,
+                            "Small exported region still uses a full-image row stride")
+                let decoded = NSBitmapImageRep(data: try ImageToolsUI.png(actual))!.cgImage!
+                try require(bytes(decoded) == bytes(actual), "Region PNG changed pixels or alpha")
+            }
+        }
+        let canvas = ImageToolsCanvas(image: source)
+        for crop in [CGRect.zero, CGRect(x: 900,y: 900,width: 20,height: 20),
+                     CGRect(x: CGFloat.nan,y: 0,width: 20,height: 20)] {
+            do {
+                _ = try canvas.renderedImage(croppingTo: crop)
+                throw ImageToolsVerificationFailure(description: "Invalid region was accepted")
+            } catch is ScreenLeafError { }
+        }
+        print("PASS: region-sized rendering matches full-image crops for all eight annotation tools, alpha, edge clipping and PNG export; invalid regions rejected")
+    }
+
+    @MainActor private static func verifyTextLayout() throws {
+        let text = "第一行中英文 mixed text. This line should wrap at a fixed width and remain stable during zoom.\n第二行"
+        let pin = ImageToolsPinController(text: text)
+        pin.window?.contentView?.layoutSubtreeIfNeeded()
+        let initial = try pin.verificationTextLayout()
+        try require(initial.text == text && initial.lineEnds.count >= 3,
+                    "Text fixture did not preserve text or exercise wrapped lines")
+        for factor: CGFloat in [0.2, 2, 4] {
+            pin.verificationScale(factor)
+            let scaled = try pin.verificationTextLayout()
+            try require(scaled == initial, "Text wrapping or content changed at \(factor)x magnification")
+        }
+        pin.window?.setContentSize(CGSize(width: 220, height: 160))
+        pin.window?.contentView?.layoutSubtreeIfNeeded()
+        let resized = try pin.verificationTextLayout()
+        try require(resized == initial, "Text wrapping or content changed when resizing the pin window")
+        print("PASS: editable text keeps its content and line breaks at 0.2x, 2x, 4x and on window resize")
+    }
+
+    private static func verifyOCRLanguages() throws {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        let supported = try request.supportedRecognitionLanguages()
+        try require(supported.contains("en-US") && supported.contains("zh-Hans") && supported.contains("zh-Hant"),
+                    "Runtime OCR does not provide the requested English and Chinese languages: \(supported)")
+        print("PASS: runtime Vision supports en-US, zh-Hans and zh-Hant")
+    }
+
+    @MainActor private static func verifyOCR(outputDirectory: URL) throws {
+        guard let context = CGContext(data: nil, width: 900, height: 300, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw ImageToolsVerificationFailure(description: "Cannot allocate OCR fixture")
+        }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 900, height: 300))
+        context.translateBy(x: 0, y: 300)
+        context.scaleBy(x: 1, y: -1)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        NSAttributedString(string: "Patch", attributes: [
+            .font: NSFont.systemFont(ofSize: 80, weight: .semibold), .foregroundColor: NSColor.black
+        ]).draw(at: CGPoint(x: 35, y: 35))
+        NSAttributedString(string: "屏幕截图 文字提取", attributes: [
+            .font: NSFont.systemFont(ofSize: 56, weight: .medium), .foregroundColor: NSColor.black
+        ]).draw(at: CGPoint(x: 35, y: 160))
+        NSGraphicsContext.restoreGraphicsState()
+        guard let fixture = context.makeImage() else {
+            throw ImageToolsVerificationFailure(description: "Cannot create OCR fixture")
+        }
+        try ImageToolsUI.png(fixture).write(to: outputDirectory.appendingPathComponent("ocr-probe.png"), options: .atomic)
+        let recognized = try ImageToolsOCRWorker.read(fixture)
+        let normalized = recognized.lowercased().filter { $0.isLetter }
+        try require(normalized.contains("patch"), "End-to-end OCR did not recognize the generated English fixture")
+        try require(recognized.contains("屏幕截图") && recognized.contains("文字提取"),
+                    "End-to-end OCR did not recognize the generated Chinese fixture")
+        print("PASS: local end-to-end OCR recognized English and Chinese text")
+    }
+
+    @MainActor private static func verifyOCRAngles(outputDirectory: URL) throws {
+        let lines = ["ScreenLeaf OCR 2026", "屏幕截图 中文识别", "繁體中文 截圖文字辨識", "Automatic orientation test"]
+        let expected = lines.joined()
+        guard let context = CGContext(data: nil, width: 1000, height: 450, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw ImageToolsVerificationFailure(description: "Cannot allocate angle fixture")
+        }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 1000, height: 450))
+        context.translateBy(x: 0, y: 450); context.scaleBy(x: 1, y: -1)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        for (index, line) in lines.enumerated() {
+            NSAttributedString(string: line, attributes: [
+                .font: NSFont.systemFont(ofSize: index == lines.count - 1 ? 48 : 56, weight: .medium), .foregroundColor: NSColor.black
+            ]).draw(at: CGPoint(x: 40, y: 35 + index * 95))
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        guard let source = context.makeImage() else { throw ImageToolsVerificationFailure(description: "Cannot make angle fixture") }
+        for angle in [0.0, 90, 180, 270, -5, 5, -12, 12] {
+            let image = try rotatedFixture(source, degrees: angle)
+            try ImageToolsUI.png(image).write(to: outputDirectory.appendingPathComponent("ocr-angle-\(Int(angle)).png"), options: .atomic)
+            // Exercise the actual product worker, including its native result order and one-pass configuration.
+            let result = try ImageToolsOCRWorker.read(image)
+            let order = orderedCharacterRecall(expected: expected, actual: result)
+            let english = unorderedCharacterRecall(expected: expected, actual: result, chinese: false)
+            let chinese = unorderedCharacterRecall(expected: expected, actual: result, chinese: true)
+            try require(order >= 0.95 && english >= 0.95 && chinese >= 0.95,
+                        "Generated angle \(Int(angle)) OCR lost text or reading order (no recognized content logged)")
+            print("PASS: generated English/Chinese OCR angle \(Int(angle))°")
+        }
+    }
+
+    private static func rotatedFixture(_ image: CGImage, degrees: Double) throws -> CGImage {
+        let angle = degrees * .pi / 180
+        let width = Double(image.width), height = Double(image.height)
+        let newWidth = Int(ceil(abs(width * cos(angle)) + abs(height * sin(angle)) - 0.00001))
+        let newHeight = Int(ceil(abs(height * cos(angle)) + abs(width * sin(angle)) - 0.00001))
+        guard let context = CGContext(data: nil, width: newWidth, height: newHeight, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw ImageToolsVerificationFailure(description: "Cannot rotate generated fixture")
+        }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
+        context.translateBy(x: Double(newWidth) / 2, y: Double(newHeight) / 2)
+        context.rotate(by: angle)
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: -width / 2, y: -height / 2, width: width, height: height))
+        guard let result = context.makeImage() else { throw ImageToolsVerificationFailure(description: "Cannot create rotated fixture") }
+        return result
+    }
+    private static func normalizedCharacters(_ text: String) -> [Character] {
+        Array(text.lowercased().filter { $0.isLetter || $0.isNumber })
+    }
+    private static func orderedCharacterRecall(expected: String, actual: String) -> Double {
+        let reference = normalizedCharacters(expected), recognized = normalizedCharacters(actual)
+        var previous = [Int](repeating: 0, count: recognized.count + 1)
+        for a in reference {
+            var next = [Int](repeating: 0, count: recognized.count + 1)
+            for (index, b) in recognized.enumerated() {
+                next[index + 1] = a == b ? previous[index] + 1 : max(previous[index + 1], next[index])
+            }
+            previous = next
+        }
+        return Double(previous.last ?? 0) / Double(max(1, reference.count))
+    }
+    private static func unorderedCharacterRecall(expected: String, actual: String, chinese: Bool) -> Double {
+        func included(_ character: Character) -> Bool { chinese == character.unicodeScalars.contains { $0.value > 0x7f } }
+        let reference = normalizedCharacters(expected).filter(included)
+        var counts: [Character: Int] = [:]
+        for character in normalizedCharacters(actual).filter(included) { counts[character, default: 0] += 1 }
+        var matched = 0
+        for character in reference where counts[character, default: 0] > 0 {
+            matched += 1; counts[character, default: 0] -= 1
+        }
+        return Double(matched) / Double(max(1, reference.count))
+    }
+}
