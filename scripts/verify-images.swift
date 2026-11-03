@@ -191,6 +191,10 @@ extension ImageToolsPinController {
     }
 }
 
+extension ImageToolsCoordinator {
+    fileprivate var verificationPins: [ImageToolsPinController] { Array(pins.values) }
+}
+
 extension ImageToolsOCRController {
     fileprivate var verificationCopyButton: NSButton { copyButton }
     fileprivate var verificationCopyEnabled: Bool { copyButton.isEnabled }
@@ -216,6 +220,8 @@ private struct ImageToolsVerification {
     @MainActor static func main() {
         do {
             _ = NSApplication.shared
+            try verifyCapturePinSize()
+            try verifyClipboardPinSize()
             let outputDirectory = CommandLine.arguments.dropFirst().first ?? "/private/tmp"
             try verifyPinOutsideAnnotations()
             try verifyPinAnnotationViewport(outputDirectory: URL(fileURLWithPath: outputDirectory))
@@ -279,6 +285,63 @@ private struct ImageToolsVerification {
             throw ImageToolsVerificationFailure(description: "Cannot make solid image")
         }
         return image
+    }
+
+    @MainActor private static func verifyCapturePinSize() throws {
+        let source = try solidImage(width: 400, height: 240)
+        let pin = ImageToolsPinController(image: source, pixelScale: 2)
+        defer { pin.close() }
+        try require(pin.verificationImageContentFrame?.size == CGSize(width: 200, height: 120),
+                    "Retina capture pin must match its 200 × 120 point screen selection, not its 400 × 240 pixels")
+        try require(pin.verificationImage === source, "Pin sizing must retain original export pixels")
+        pin.verificationScale(1.5)
+        try require(pin.verificationImageContentFrame?.size == CGSize(width: 300, height: 180), "Capture pin zoom changed its base scale")
+        pin.verificationScale(1)
+        try require(pin.verificationImageContentFrame?.size == CGSize(width: 200, height: 120), "Reset must restore the original screen size")
+        let large = try solidImage(width: 1600, height: 1200)
+        let largePin = ImageToolsPinController(image: large, pixelScale: 2)
+        let standardPin = ImageToolsPinController(image: source, pixelScale: 1)
+        defer { largePin.close(); standardPin.close() }
+        try require(largePin.verificationImageContentFrame?.size == CGSize(width: 800, height: 600),
+                    "Large captures must not inherit the arbitrary 560 × 500 preview limit")
+        try require(standardPin.verificationImageContentFrame?.size == CGSize(width: 400, height: 240),
+                    "Standard-density captures must retain their screen size")
+        print("PASS: 1x/2x capture pin size, large capture size, original export pixels, zoom and reset")
+    }
+
+    @MainActor private static func verifyClipboardPinSize() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let source = try solidImage(width: 400, height: 240)
+        for sourceScale: CGFloat in [1, 2] {
+            // Both ordinary captures and trimmed subject images share the completion/copy route.
+            for image in [source, source.cropping(to: CGRect(x: 20, y: 20, width: 120, height: 80))!] {
+                try ImageToolsUI.copyPNG(image, pixelScale: sourceScale, to: board)
+                let coordinator = ImageToolsCoordinator()
+                coordinator.pinClipboard(from: board)
+                defer { coordinator.closeAll() }
+                let pin = coordinator.verificationPins.first
+                let expected = CGSize(width: CGFloat(image.width) / sourceScale, height: CGFloat(image.height) / sourceScale)
+                try require(pin?.verificationImageContentFrame?.size == expected,
+                            "Complete screenshot → clipboard → pin lost the original screen size at \(sourceScale)x")
+                try require(pin?.verificationImage?.width == image.width && pin?.verificationImage?.height == image.height,
+                            "Clipboard pin must retain full-resolution export pixels")
+                guard let png = board.data(forType: .png), let decoded = NSImage(data: png) else {
+                    throw ImageToolsVerificationFailure(description: "Clipboard PNG is unreadable")
+                }
+                try require(abs(decoded.size.width - expected.width) < 0.1 && abs(decoded.size.height - expected.height) < 0.1,
+                            "PNG must retain logical size for other apps")
+            }
+        }
+        // External screenshot apps provide PNG resolution metadata without our private pasteboard type.
+        board.clearContents()
+        board.setData(try ImageToolsUI.png(source, pixelScale: 2), forType: .png)
+        let external = ImageToolsCoordinator()
+        defer { external.closeAll() }
+        external.pinClipboard(from: board)
+        try require(external.verificationPins.first?.verificationImageContentFrame?.size == CGSize(width: 200, height: 120),
+                    "Clipboard pin ignored an external image's logical size")
+        print("PASS: complete screenshot/trimmed subject → isolated clipboard → pin at 1x/2x, full export pixels and external PNG metadata")
     }
 
     @MainActor private static func verifyPinOutsideAnnotations() throws {

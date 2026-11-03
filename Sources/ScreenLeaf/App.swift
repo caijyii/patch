@@ -243,9 +243,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         guard let image else { return }
         do {
             switch action {
-            case .copy: try ImageToolsUI.copyPNG(image)
-            case .pin: imageTools.pinImage(image)
-            case .cutout: imageTools.showSubjectSelection(image)
+            case .copy: try ImageToolsUI.copyPNG(image, pixelScale: region.scale)
+            case .pin: imageTools.pinImage(image, pixelScale: region.scale)
+            case .cutout: imageTools.showSubjectSelection(image, pixelScale: region.scale)
             case .ocr: imageTools.recognize(image)
             case .save, .scroll, .record: break
             }

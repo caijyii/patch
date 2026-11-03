@@ -22,10 +22,10 @@ final class ImageToolsCoordinator {
 
     deinit { ocrJobs.values.forEach { $0.cancel() } }
 
-    func showEditor(_ image: CGImage) {
+    func showEditor(_ image: CGImage, pixelScale: CGFloat? = nil) {
         let id = UUID()
         let controller = ImageToolsEditorController(image: image)
-        controller.onPin = { [weak self] in self?.pinImage($0) }
+        controller.onPin = { [weak self] in self?.pinImage($0, pixelScale: pixelScale) }
         controller.onOCR = { [weak self] in self?.recognize($0) }
         controller.onClose = { [weak self] in self?.windows.removeValue(forKey: id) }
         windows[id] = controller
@@ -34,16 +34,16 @@ final class ImageToolsCoordinator {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func pinImage(_ image: CGImage) {
-        let controller = ImageToolsPinController(image: image)
+    func pinImage(_ image: CGImage, pixelScale: CGFloat? = nil) {
+        let controller = ImageToolsPinController(image: image, pixelScale: pixelScale)
         controller.onOCR = { [weak self] image in self?.recognize(image) }
         addPin(controller)
     }
 
-    func showSubjectSelection(_ image: CGImage) {
+    func showSubjectSelection(_ image: CGImage, pixelScale: CGFloat? = nil) {
         let id = UUID()
         let controller = SubjectSelectionController(image: image)
-        controller.onPin = { [weak self] in self?.pinImage($0) }
+        controller.onPin = { [weak self] in self?.pinImage($0, pixelScale: pixelScale) }
         controller.onClose = { [weak self] in self?.windows.removeValue(forKey: id) }
         windows[id] = controller
         controller.showWindow(nil)
@@ -66,11 +66,13 @@ final class ImageToolsCoordinator {
         addPin(ImageToolsPinController(text: text))
     }
 
-    func pinClipboard() {
-        let pasteboard = NSPasteboard.general
+    func pinClipboard(from pasteboard: NSPasteboard = .general) {
         if let image = NSImage(pasteboard: pasteboard),
            let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-            pinImage(cgImage)
+            let savedScale = pasteboard.string(forType: ImageToolsUI.pixelScalePasteboardType).flatMap(Double.init)
+            let metadataScale = image.size.width > 0 ? CGFloat(cgImage.width) / image.size.width : nil
+            let pixelScale = savedScale.map { CGFloat($0) } ?? metadataScale
+            pinImage(cgImage, pixelScale: pixelScale)
         } else if let text = pasteboard.string(forType: .string), !text.isEmpty {
             pinText(text)
         } else {
@@ -1554,10 +1556,12 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     private let preferences: PreferencesStore?
     private var baseSize = CGSize(width: 440, height: 240)
     private var scale: CGFloat = 1
+    private var imagePixelScale: CGFloat?
 
-    convenience init(image: CGImage, preferences: PreferencesStore? = nil) {
+    convenience init(image: CGImage, pixelScale: CGFloat? = nil, preferences: PreferencesStore? = nil) {
         self.init(title: "小贴 · 图片贴图", preferences: preferences)
-        let size = Self.initialImageSize(image)
+        imagePixelScale = pixelScale
+        let size = Self.initialImageSize(image, pixelScale: pixelScale)
         baseSize = size
         let view = ImageToolsPinImageView(image: image, size: size)
         imageView = view
@@ -1668,7 +1672,12 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    private static func initialImageSize(_ image: CGImage) -> CGSize {
+    private static func initialImageSize(_ image: CGImage, pixelScale: CGFloat? = nil) -> CGSize {
+        // Captures keep native pixels for export, but occupy their original screen points.
+        // Use the source display scale, even if the pin opens on another display.
+        if let pixelScale, pixelScale.isFinite, pixelScale > 0 {
+            return CGSize(width: CGFloat(image.width) / pixelScale, height: CGFloat(image.height) / pixelScale)
+        }
         let factor = min(1, min(560 / CGFloat(image.width), 500 / CGFloat(image.height)))
         return CGSize(width: CGFloat(image.width) * factor, height: CGFloat(image.height) * factor)
     }
@@ -1966,14 +1975,14 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     private func replaceImage(_ image: CGImage) {
         imageView?.image = image
         window?.hasShadow = false
-        baseSize = Self.initialImageSize(image)
+        baseSize = Self.initialImageSize(image, pixelScale: imagePixelScale)
         updateScale()
         if window?.isVisible == true { window?.orderFrontRegardless() }
     }
     @objc private func ocrImage() { if let imageView { onOCR?(imageView.image) } }
     @objc private func copyContent() {
         do {
-            if let imageView { try ImageToolsUI.copyPNG(imageView.image) }
+            if let imageView { try ImageToolsUI.copyPNG(imageView.image, pixelScale: imagePixelScale) }
             else if let textView {
                 let range = textView.selectedRange()
                 let text = range.length > 0 ? (textView.string as NSString).substring(with: range) : textView.string
@@ -2320,17 +2329,27 @@ enum ImageToolsUI {
         button.bezelStyle = .rounded
         return button
     }
-    static func png(_ image: CGImage) throws -> Data {
-        guard let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+    static let pixelScalePasteboardType = NSPasteboard.PasteboardType("dev.screenleaf.image-pixel-scale")
+
+    static func png(_ image: CGImage, pixelScale: CGFloat? = nil) throws -> Data {
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        if let pixelScale, pixelScale.isFinite, pixelScale > 0 {
+            bitmap.size = CGSize(width: CGFloat(image.width) / pixelScale, height: CGFloat(image.height) / pixelScale)
+        }
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
             throw ScreenLeafError(message: "无法编码 PNG 图片。")
         }
         return data
     }
-    static func copyPNG(_ image: CGImage) throws {
-        let data = try png(image)
-        NSPasteboard.general.clearContents()
-        guard NSPasteboard.general.setData(data, forType: .png) else {
+    static func copyPNG(_ image: CGImage, pixelScale: CGFloat? = nil, to pasteboard: NSPasteboard = .general) throws {
+        let data = try png(image, pixelScale: pixelScale)
+        pasteboard.clearContents()
+        guard pasteboard.setData(data, forType: .png) else {
             throw ScreenLeafError(message: "无法将图片写入剪贴板。")
+        }
+        if let pixelScale, pixelScale.isFinite, pixelScale > 0 {
+            // PNG resolution metadata may round; keep the exact capture scale for our own round-trip.
+            pasteboard.setString(String(Double(pixelScale)), forType: pixelScalePasteboardType)
         }
     }
     static func timestamp() -> String {
