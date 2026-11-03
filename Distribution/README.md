@@ -12,7 +12,7 @@
 
 ## GitHub 预览包
 
-运行 `bash scripts/package-preview.sh v0.1.0-preview.2`，从干净 Git 工作区构建 Apple Silicon 沙盒预览包，输出至 `dist/v0.1.0-preview.2/`。已有输出目录时拒绝覆盖。
+运行 `bash scripts/package-preview.sh v0.1.0-preview.3`，从干净 Git 工作区构建 Apple Silicon 沙盒预览包，输出至 `dist/v0.1.0-preview.3/`。已有输出目录时拒绝覆盖。
 
 发布附件包括 `Patch-…-macOS-arm64.dmg`、`Patch-…-macOS-arm64.zip`、`INSTALL.md`、`release-manifest.json` 和 `SHA256SUMS.txt`。清单记录源码提交、架构、版本和签名状态；不包含本地日志或验收素材。应用使用源码既有标识 `dev.screenleaf.app`，与本机 Sandbox / Development 包分开，但不应同时运行。
 
