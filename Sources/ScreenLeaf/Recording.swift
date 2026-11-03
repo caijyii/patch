@@ -42,8 +42,6 @@ final class RecordingCoordinator: NSObject {
     private lazy var settingsButton = SelectionButton("打开系统设置", symbol: "gearshape") { [weak self] in self?.settingsPressed() }
     private let audioToolbar = SelectionToolbar()
     private let actionToolbar = SelectionToolbar()
-    private var audioToolbarHeight: NSLayoutConstraint?
-    private var actionToolbarHeight: NSLayoutConstraint?
     private let durationLabel = NSTextField(labelWithString: "00:00")
     private let regionLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
@@ -70,10 +68,10 @@ final class RecordingCoordinator: NSObject {
             self.region = region
             let width = Int((region.rect.width * region.scale).rounded())
             let height = Int((region.rect.height * region.scale).rounded())
-            regionLabel.stringValue = "已选区域：\(width) × \(height) 像素 · MP4 · 30 fps"
+            regionLabel.stringValue = "\(width) × \(height) · MP4 · 30 fps"
             if panel == nil {
                 buildPanel()
-                setStatus("选择需要录制的声音，开始时可选择保存位置。")
+                setStatus("")
             }
         }
         updateControls()
@@ -105,7 +103,7 @@ final class RecordingCoordinator: NSObject {
 
     private func buildPanel() {
         let window = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 340),
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 180),
             styleMask: [.titled, .closable, .utilityWindow],
             backing: .buffered,
             defer: false
@@ -120,38 +118,19 @@ final class RecordingCoordinator: NSObject {
 
         let content = NSView()
         window.contentView = content
-        let stack = NSStackView(views: [regionLabel, audioToolbar, durationLabel, statusLabel,
-                                      fileLabel, actionToolbar])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
+        for view in [regionLabel, audioToolbar, durationLabel, statusLabel, fileLabel, actionToolbar] {
+            content.addSubview(view)
+        }
         durationLabel.font = .monospacedDigitSystemFont(ofSize: 26, weight: .medium)
         regionLabel.textColor = .secondaryLabelColor
         regionLabel.font = .systemFont(ofSize: 12)
         fileLabel.font = .systemFont(ofSize: 11)
         fileLabel.textColor = .secondaryLabelColor
         fileLabel.lineBreakMode = .byTruncatingMiddle
-        fileLabel.maximumNumberOfLines = 2
+        fileLabel.maximumNumberOfLines = 1
         statusLabel.maximumNumberOfLines = 3
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         fileLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        audioToolbar.translatesAutoresizingMaskIntoConstraints = false
-        actionToolbar.translatesAutoresizingMaskIntoConstraints = false
-        audioToolbarHeight = audioToolbar.heightAnchor.constraint(equalToConstant: 40)
-        actionToolbarHeight = actionToolbar.heightAnchor.constraint(equalToConstant: 40)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -20),
-            audioToolbar.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            actionToolbar.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            audioToolbarHeight!, actionToolbarHeight!,
-            statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            fileLabel.widthAnchor.constraint(equalTo: stack.widthAnchor)
-        ])
         panel = window
         updateControls()
         window.center()
@@ -174,18 +153,59 @@ final class RecordingCoordinator: NSObject {
         revealButton.isHidden = revealURL == nil
         revealButton.isEnabled = idle && revealURL != nil
         settingsButton.isHidden = failure == nil
-        let width = max(40, (panel?.contentView?.bounds.width ?? 500) - 40)
         audioToolbar.rows = [[systemAudioToggle, microphoneToggle]]
-        actionToolbar.rows = [[startButton, stopButton]
-            + (revealURL == nil ? [] : [revealButton])
-            + (failure == nil ? [] : [settingsButton])]
-        audioToolbarHeight?.constant = audioToolbar.arrange(maxWidth: width).height
-        actionToolbarHeight?.constant = actionToolbar.arrange(maxWidth: width).height
+        actionToolbar.rows = idle
+            ? [[startButton] + (revealURL == nil ? [] : [revealButton]) + (failure == nil ? [] : [settingsButton])]
+            : [[stopButton]]
+        layoutControls()
+    }
+
+    private func layoutControls() {
+        guard let panel, let content = panel.contentView else { return }
+        let idle = phase == .idle
+        regionLabel.isHidden = !idle
+        audioToolbar.isHidden = !idle
+        durationLabel.isHidden = phase == .idle || phase == .preparing
+        statusLabel.isHidden = statusLabel.stringValue.isEmpty || (phase == .recording && failure == nil)
+        fileLabel.isHidden = !idle || fileLabel.stringValue.isEmpty
+        fileLabel.toolTip = fileLabel.stringValue
+        statusLabel.toolTip = statusLabel.stringValue
+        let padding: CGFloat = 12
+        let gap: CGFloat = 8
+        let maximumWidth: CGFloat = 336
+        let audioSize = audioToolbar.arrange(maxWidth: maximumWidth)
+        let actionSize = actionToolbar.arrange(maxWidth: maximumWidth)
+        let minimumWidth: CGFloat = idle ? 256 : 132
+        let statusWidth: CGFloat = failure == nil && !statusLabel.isHidden
+            ? ceil((statusLabel.stringValue as NSString).size(withAttributes: [.font: statusLabel.font ?? NSFont.systemFont(ofSize: 13)]).width) + 4 : 0
+        let width = max(minimumWidth, max(statusWidth, max(idle ? audioSize.width : 0, actionSize.width)))
+        let views: [NSView] = [regionLabel, audioToolbar, durationLabel, statusLabel, fileLabel, actionToolbar]
+        var rows: [(NSView, CGFloat)] = []
+        for view in views where !view.isHidden {
+            let height: CGFloat
+            if view === audioToolbar { height = audioSize.height }
+            else if view === actionToolbar { height = actionSize.height }
+            else if let label = view as? NSTextField {
+                height = ceil(label.cell?.cellSize(forBounds: CGRect(x: 0, y: 0, width: width, height: 200)).height ?? 20)
+            } else { height = 20 }
+            rows.append((view, height))
+        }
+        let height = padding * 2 + rows.reduce(0) { $0 + $1.1 } + CGFloat(max(0, rows.count - 1)) * gap
+        let oldTop = panel.frame.maxY
+        panel.setContentSize(CGSize(width: width + padding * 2, height: height))
+        panel.setFrameOrigin(CGPoint(x: panel.frame.minX, y: oldTop - panel.frame.height))
+        var y = content.bounds.height - padding
+        for (view, height) in rows {
+            y -= height
+            view.frame = CGRect(x: padding, y: y, width: width, height: height)
+            y -= gap
+        }
     }
 
     private func setStatus(_ text: String, isError: Bool = false) {
         statusLabel.stringValue = text
         statusLabel.textColor = isError ? .systemRed : .labelColor
+        layoutControls()
     }
 
     @objc private func startPressed() {
@@ -204,7 +224,7 @@ final class RecordingCoordinator: NSObject {
         durationLabel.stringValue = "00:00"
         fileLabel.stringValue = ""
         phase = .preparing
-        setStatus("请选择 MP4 的保存位置。")
+        setStatus("选择 MP4 保存位置")
         updateControls()
 
         preparationTask = Task { [weak self] in
@@ -396,7 +416,7 @@ final class RecordingCoordinator: NSObject {
             if streamHasStarted { requestStreamStop() }
         } else {
             phase = .recording
-            setStatus("正在录制。停止后会保存到所选位置。")
+            setStatus("")
             timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.updateDuration() }
             }

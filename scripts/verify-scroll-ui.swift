@@ -76,6 +76,11 @@ extension ScrollCaptureCoordinator {
 
 }
 
+private final class AnnotationPinchEvent: NSEvent {
+    override var magnification: CGFloat { 0.25 }
+    override var locationInWindow: NSPoint { CGPoint(x: 200, y: 180) }
+}
+
 @main
 private struct ScrollUIVerification {
     @MainActor static func main() {
@@ -105,6 +110,8 @@ private struct ScrollUIVerification {
         await run("stationary automatic capture yields to manual; hard pauses stop sampling") { try await verifyRecoveryBoundaries() }
         await run("completion choices deliver the entire assembled image exactly once and close") { try await verifyCompletionChoices() }
         await run("failed completion preserves the long image for retry or annotation") { try await verifyCompletionFailure() }
+        await run("long screenshot workspace centers the image and exports outside annotations on white") { try await verifyOutsideAnnotations() }
+        await run("annotation centers pixels, fits its toolbar and handles native pinch events without resizing exports") { try verifyAnnotationViewport() }
         await run("inline annotation cancels safely and retries failed completion without losing marks") { try await verifyInlineAnnotationLifecycle() }
         await run("cancelled completion cannot deliver stale pixels or close a new session") { try await verifyCancelledCompletion() }
         await run("five 4K capture cycles release old processors and preview buffers on cancel") {
@@ -184,6 +191,17 @@ private struct ScrollUIVerification {
             let hit = toolbar.hitTest(toolbar.convert(point, to: toolbar.superview))
             try require(hit === action || hit?.isDescendant(of: action) == true, "\(action.title) does not receive view hit testing")
         }
+        let finish = try button("完成", in: coordinator) as! SelectionButton
+        let originalAction = finish.actionBlock
+        let originallyEnabled = finish.isEnabled
+        var copyClicks = 0
+        finish.actionBlock = { copyClicks += 1 }; finish.isEnabled = true
+        for _ in 0..<3 {
+            finish.performClick(nil)
+            try require(finish.state == .off, "Long screenshot copy completion retained selected state")
+        }
+        finish.actionBlock = originalAction; finish.isEnabled = originallyEnabled
+        try require(copyClicks == 3, "Long screenshot copy completion did not fire each time")
         let pause = try button("暂停自动", in: coordinator)
         let runningTooltip = pause.toolTip
         let runningIcon = pause.image
@@ -507,6 +525,111 @@ private struct ScrollUIVerification {
         }
     }
 
+    @MainActor private static func verifyOutsideAnnotations() async throws {
+        let coordinator = fixture(syntheticRegion())
+        defer { coordinator.cancel() }
+        coordinator.verificationSetRunning()
+        let source = image(top: 0)
+        await coordinator.verificationAccept(source)
+        try button("标注", in: coordinator).performClick(nil)
+        await coordinator.verificationWaitForCompletion()
+        guard let editor = coordinator.verificationEditor else { throw ScrollUIFailure(description: "Missing workspace") }
+        let canvas = editor.canvas
+        let original = CGRect(x: 0, y: 0, width: source.width, height: source.height)
+        try require(canvas.bounds.minX < 0 && canvas.bounds.minY < 0,
+                    "Annotation workspace must include blank space above and beside the image")
+        let center = canvas.convert(CGPoint(x: original.midX, y: original.midY), to: editor.scroll.contentView)
+        try require(abs(center.x - editor.scroll.contentView.bounds.midX) < 1
+                    && abs(center.y - editor.scroll.contentView.bounds.midY) < 1, "Image is not vertically and horizontally centered on entry")
+        let unmarked = try canvas.renderedImage()
+        try require(unmarked.width == source.width && unmarked.height == source.height, "Blank workspace was included without outside marks")
+        func stroke(_ tool: ImageToolsTool, from start: CGPoint, to end: CGPoint) throws {
+            editor.controls.choose(tool: tool)
+            canvas.tool = tool; canvas.isDrawingEnabled = true
+            let location = canvas.convert(start, to: editor)
+            try require(editor.hitTest(location) === canvas, "Outside image space does not route input to the canvas")
+            func event(_ type: NSEvent.EventType, _ point: CGPoint) -> NSEvent {
+                NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                    windowNumber: canvas.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            }
+            canvas.mouseDown(with: event(.leftMouseDown, start))
+            canvas.mouseDragged(with: event(.leftMouseDragged, end))
+            canvas.mouseUp(with: event(.leftMouseUp, end))
+        }
+        try stroke(.rectangle, from: CGPoint(x: -38, y: -30), to: CGPoint(x: -14, y: -10))
+        try require(canvas.annotations.first?.points.first?.x == -38, "Outside annotation was clamped to the image edge")
+        let expanded = try canvas.renderedImage()
+        try require(expanded.width > source.width && expanded.height > source.height, "Outside annotation was cropped on export")
+        let bitmap = NSBitmapImageRep(cgImage: expanded)
+        let white = bitmap.colorAt(x: 0, y: 0)?.usingColorSpace(.deviceRGB)
+        try require((white?.redComponent ?? 0) > 0.99 && (white?.greenComponent ?? 0) > 0.99
+                    && (white?.blueComponent ?? 0) > 0.99 && (white?.alphaComponent ?? 0) > 0.99, "Expanded background is not opaque white")
+        let dimensions = CGSize(width: expanded.width, height: expanded.height)
+        editor.setZoom(0.5)
+        let zoomed = try canvas.renderedImage()
+        try require(zoomed.width == Int(dimensions.width) && zoomed.height == Int(dimensions.height), "Zoom changed outside mark export bounds")
+        canvas.undoAnnotation()
+        let restored = try canvas.renderedImage()
+        try require(restored.width == source.width && restored.height == source.height, "Undoing the last outside mark did not restore original size")
+        try stroke(.mosaic, from: CGPoint(x: -32, y: -26), to: CGPoint(x: 20, y: 20))
+        try require(canvas.annotations.count == 1 && canvas.annotations[0].mosaic != nil, "Mosaic crossing the image edge failed")
+        _ = try canvas.renderedImage()
+        let tallContext = CGContext(data: nil, width: 160, height: 1800, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        tallContext.setFillColor(NSColor.systemBlue.cgColor)
+        tallContext.fill(CGRect(x: 0, y: 0, width: 160, height: 1800))
+        let tall = InlineAnnotationView(image: tallContext.makeImage()!, completionHint: "完成", allowsOutsideAnnotations: true)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 650), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = tall
+        defer { window.close() }
+        tall.fitImage()
+        let rect = tall.canvas.convert(CGRect(x: 0, y: 0, width: 160, height: 1800), to: tall.scroll)
+        try require(abs(rect.midX - tall.scroll.bounds.midX) < 1 && abs(rect.midY - tall.scroll.bounds.midY) < 1,
+                    "Tall image did not open in the vertical center")
+        try require(tall.scroll.bounds.contains(rect), "Initial fitting clips the tall image")
+        if let bitmap = tall.bitmapImageRepForCachingDisplay(in: tall.bounds) {
+            tall.cacheDisplay(in: tall.bounds, to: bitmap)
+            let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent(".build/verification/scroll-ui/outside-workspace-preview.png")
+            try bitmap.representation(using: .png, properties: [:])?.write(to: url)
+        }
+    }
+
+    @MainActor private static func verifyAnnotationViewport() throws {
+        let source = image(top: 0)
+        let editor = InlineAnnotationView(image: source, completionHint: "完成长截图，复制并关闭", showsCopyAction: false,
+                                          cancellationHint: "取消长截图并关闭")
+        let maximum = CGSize(width: 1400, height: 800)
+        let size = editor.preferredWindowSize(maximum: maximum)
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = editor
+        defer { window.close() }
+        editor.layoutSubtreeIfNeeded()
+        guard let toolbar = editor.subviews.compactMap({ $0 as? SelectionToolbar }).first else {
+            throw ScrollUIFailure(description: "Missing annotation toolbar")
+        }
+        try require(abs(size.width - toolbar.frame.width - 16) < 1, "Annotation window is wider than its toolbar")
+        let actions = toolbar.rows.flatMap { $0 }.compactMap { $0 as? NSButton }
+        try require(!actions.contains { $0.title == "复制" }, "Long screenshot annotation retains redundant copy button")
+        try require(actions.filter { ["取消", "完成"].contains($0.title) }.map(\.title) == ["取消", "完成"], "Annotation action order changed")
+        editor.setZoom(0.5)
+        let clip = editor.scroll.contentView
+        try require(abs(clip.bounds.midX - editor.canvas.frame.midX) < 1
+                    && abs(clip.bounds.midY - editor.canvas.frame.midY) < 1, "Small annotation image is not centered")
+        let before = editor.scroll.magnification
+        editor.canvas.magnify(with: AnnotationPinchEvent())
+        try require(abs(editor.scroll.magnification - before * 1.25) < 0.001, "Canvas did not route native pinch to zoom")
+        let exported = try editor.canvas.renderedImage()
+        try require(exported.width == source.width && exported.height == source.height, "Viewport zoom changed exported pixels")
+        if let bitmap = editor.bitmapImageRepForCachingDisplay(in: editor.bounds) {
+            editor.cacheDisplay(in: editor.bounds, to: bitmap)
+            let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent(".build/verification/scroll-ui/annotation-feedback.png")
+            try bitmap.representation(using: .png, properties: [:])?.write(to: url)
+        }
+    }
+
     @MainActor private static func verifyInlineAnnotationLifecycle() async throws {
         var attempts = 0
         let coordinator = fixture(syntheticRegion()) { _, action in
@@ -518,22 +641,30 @@ private struct ScrollUIVerification {
         coordinator.verificationSetRunning()
         await coordinator.verificationAccept(image(top: 0))
         await coordinator.verificationAccept(image(top: 27))
-        let panel = coordinator.verificationPanel
         try button("标注", in: coordinator).performClick(nil)
         await coordinator.verificationWaitForCompletion()
         coordinator.verificationEditor?.onCancel?()
-        try require(coordinator.verificationEditor == nil && coordinator.isActive
-                    && coordinator.verificationPanel === panel && panel?.canBecomeKey == false
-                    && coordinator.verificationHeight == 117, "Cancelling annotation lost the captured long image or panel")
+        try require(coordinator.verificationEditor == nil && !coordinator.isActive
+                    && coordinator.verificationPanel == nil, "Cancelling annotation must end the entire capture")
+        coordinator.verificationPresent(syntheticRegion())
+        coordinator.verificationSetRunning()
+        await coordinator.verificationAccept(image(top: 0))
+        await coordinator.verificationAccept(image(top: 27))
         try button("标注", in: coordinator).performClick(nil)
         await coordinator.verificationWaitForCompletion()
         guard let editor = coordinator.verificationEditor else { throw ScrollUIFailure(description: "No inline workspace") }
         var errors = 0
         editor.onError = { _ in errors += 1 }
-        editor.complete()
+        guard let finish = editor.subviews.compactMap({ $0 as? SelectionToolbar }).flatMap({ $0.rows.flatMap { $0 } })
+            .compactMap({ $0 as? SelectionButton }).first(where: { $0.title == "完成" }) else {
+            throw ScrollUIFailure(description: "Missing annotation completion button")
+        }
+        finish.performClick(nil)
+        try require(finish.state == .off, "Failed annotation copying retained selected state")
         try require(attempts == 1 && errors == 1 && coordinator.isActive && coordinator.verificationEditor === editor,
                     "Failed copy discarded the inline editor or failed to report the error")
-        editor.complete()
+        finish.performClick(nil)
+        try require(finish.state == .off, "Successful annotation copying retained selected state")
         try require(attempts == 2 && !coordinator.isActive, "Inline completion cannot retry or close")
     }
 

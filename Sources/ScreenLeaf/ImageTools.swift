@@ -186,7 +186,31 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
                       height: max(ceil(annotation.fontSize * 1.3), ceil(measured.height)))
     }
 
+    override func magnify(with event: NSEvent) {
+        enclosingScrollView?.magnify(with: event)
+    }
+
     private(set) var source: CGImage
+    var allowsOutsideAnnotations = false
+    private var sourceRect: CGRect {
+        allowsOutsideAnnotations ? CGRect(x: 0, y: 0, width: source.width, height: source.height) : bounds
+    }
+
+    private func exportBounds(for items: [ImageToolsAnnotation]) -> CGRect {
+        let image = CGRect(x: 0, y: 0, width: source.width, height: source.height)
+        guard allowsOutsideAnnotations else { return image }
+        return items.reduce(image) { $0.union(annotationFrame($1).insetBy(dx: -1, dy: -1)) }.integral
+    }
+
+    func workspaceBounds(viewport: CGSize, magnification: CGFloat) -> CGRect {
+        let image = sourceRect
+        let content = exportBounds(for: annotations)
+        let scale = max(0.0001, magnification)
+        let padding = 48 / scale
+        let halfWidth = max(viewport.width / scale / 2, max(image.midX - content.minX, content.maxX - image.midX) + padding)
+        let halfHeight = max(viewport.height / scale / 2, max(image.midY - content.minY, content.maxY - image.midY) + padding)
+        return CGRect(x: image.midX - halfWidth, y: image.midY - halfHeight, width: halfWidth * 2, height: halfHeight * 2).integral
+    }
     var tool: ImageToolsTool = .arrow
     var annotationColor = NSColor.systemRed
     var annotationWidth: CGFloat = 6
@@ -253,8 +277,9 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
     }
 
     private func drawContents(includeDraft: Bool) {
-        NSImage(cgImage: source, size: bounds.size).draw(
-            in: bounds, from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: nil)
+        if allowsOutsideAnnotations { NSColor.white.setFill(); bounds.fill() }
+        NSImage(cgImage: source, size: sourceRect.size).draw(
+            in: sourceRect, from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: nil)
         for (index, annotation) in annotations.enumerated() where index != editingTextIndex {
             drawAnnotation(annotation)
         }
@@ -561,27 +586,31 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
                   pixelRect.width > 0, pixelRect.height > 0 else {
                 throw ScreenLeafError(message: "无法读取选区，请重新选取。")
             }
-            region = pixelRect.integral.intersection(imageBounds)
+            region = pixelRect.integral.intersection(allowsOutsideAnnotations ? bounds : imageBounds)
             guard !region.isNull, !region.isEmpty else {
                 throw ScreenLeafError(message: "无法读取选区，请重新选取。")
             }
-        } else { region = imageBounds }
+        } else { region = exportBounds(for: items) }
         // CoreGraphics can round stroke coverage differently when the bitmap's
         // clipping bounds change. Keep the original bounds for annotations so
         // edge antialiasing remains pixel-identical to the full-image export.
-        let renderRegion = items.isEmpty ? region : imageBounds
+        let renderRegion = items.isEmpty ? region : exportBounds(for: items).union(region)
         guard let context = CGContext(data: nil, width: Int(renderRegion.width), height: Int(renderRegion.height),
                 bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
             throw ScreenLeafError(message: "图片过大，无法分配导出内存。")
         }
-        // Preserve the canvas's top-left document coordinates.
+        if allowsOutsideAnnotations {
+            context.setFillColor(NSColor.white.cgColor)
+            context.fill(CGRect(origin: .zero, size: renderRegion.size))
+        }
+        // Preserve image-pixel coordinates even when the workspace includes negative positions.
         context.translateBy(x: -renderRegion.minX, y: renderRegion.maxY)
         context.scaleBy(x: 1, y: -1)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-        NSImage(cgImage: source, size: bounds.size).draw(
-            in: bounds, from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: nil)
+        NSImage(cgImage: source, size: sourceRect.size).draw(
+            in: sourceRect, from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: nil)
         items.forEach(drawAnnotation)
         NSGraphicsContext.restoreGraphicsState()
         if renderRegion != region {
@@ -591,7 +620,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
                 let input = context.data, let output = cropped.data else {
                 throw ScreenLeafError(message: "图片过大，无法分配导出内存。")
             }
-            let offset = Int(region.minY) * context.bytesPerRow + Int(region.minX) * 4
+            let offset = Int(region.minY - renderRegion.minY) * context.bytesPerRow + Int(region.minX - renderRegion.minX) * 4
             for row in 0..<Int(region.height) {
                 output.advanced(by: row * cropped.bytesPerRow).copyMemory(
                     from: input.advanced(by: offset + row * context.bytesPerRow), byteCount: Int(region.width) * 4)
@@ -607,13 +636,10 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
         return result
     }
 
-    private func mosaicPatch(in rect: CGRect, blockSize: CGFloat, baseImage: CGImage? = nil) throws -> CGImage {
+    private func mosaicPatch(_ crop: CGImage, blockSize: CGFloat) throws -> CGImage {
         // Work on a copied 8-bit raster so exports contain only the replacement pixels.
         guard blockSize.isFinite, blockSize >= 2, blockSize <= CGFloat(Int.max / 2) else {
             throw ScreenLeafError(message: "马赛克块大小无效，请选择有效大小。")
-        }
-        guard let crop = try (baseImage ?? rasterized(annotations)).cropping(to: rect) else {
-            throw ScreenLeafError(message: "无法读取马赛克选区。")
         }
         let bitmap = NSBitmapImageRep(cgImage: crop)
         guard let bytes = bitmap.bitmapData, bitmap.bitsPerSample == 8,
@@ -754,8 +780,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
                     throw ScreenLeafError(message: "马赛克区域太小或不在图片中，请调整选区。")
                 }
                 annotation.points = [rect.origin, CGPoint(x: rect.maxX, y: rect.maxY)]
-                annotation.mosaic = try mosaicPatch(in: rect, blockSize: annotation.mosaicBlockSize,
-                                                   baseImage: rasterized(result))
+                annotation.mosaic = try mosaicPatch(rasterized(result, croppingTo: rect), blockSize: annotation.mosaicBlockSize)
             }
             result.append(annotation)
         }
@@ -1104,7 +1129,8 @@ private final class ImageToolsEditorController: NSWindowController, NSWindowDele
         zoomLabel.textColor = ToolbarPalette.secondaryInk
         actions += [minus, zoomLabel, plus]
         if appliesToPin {
-            actions.append(SelectionButton("应用到贴图", symbol: "checkmark") { [weak self] in self?.applyImage() })
+            actions.append(SelectionButton.confirmation("应用到贴图", toolTip: "完成标注，应用到贴图") { [weak self] in self?.applyImage() })
+            toolbar.trailingActions = [actions.last!]
         }
         controls.onUpdate = { [weak self] in self?.layoutEditor() }
         canvas.onChange = { [weak self] in self?.controls.refresh(); self?.layoutEditor() }
@@ -1153,12 +1179,34 @@ private final class ImageToolsEditorController: NSWindowController, NSWindowDele
     func windowWillClose(_ notification: Notification) { onClose?() }
 }
 
+/// Center images smaller than the viewport while preserving native scrolling for large images.
+private final class AnnotationClipView: NSClipView {
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var rect = super.constrainBoundsRect(proposedBounds)
+        if let document = documentView {
+            if document.frame.width < rect.width { rect.origin.x = (document.frame.width - rect.width) / 2 }
+            if document.frame.height < rect.height { rect.origin.y = (document.frame.height - rect.height) / 2 }
+        }
+        return rect
+    }
+}
+
+private final class AnnotationScrollView: NSScrollView {
+    var onZoom: (() -> Void)?
+    override func magnify(with event: NSEvent) {
+        guard allowsMagnification, let document = documentView else { return }
+        let anchor = document.convert(event.locationInWindow, from: nil)
+        setMagnification(min(maxMagnification, max(minMagnification, magnification * (1 + event.magnification))), centeredAt: anchor)
+        onZoom?()
+    }
+}
+
 /// A document-sized canvas hosted by the existing pin or capture panel.
 /// Scrolling/magnification affect the viewport, never the exported pixel dimensions.
 @MainActor
 final class InlineAnnotationView: NSView {
     let canvas: ImageToolsCanvas
-    let scroll = NSScrollView()
+    let scroll: NSScrollView = AnnotationScrollView()
     private let toolbar = SelectionToolbar()
     private(set) var controls: AnnotationControls!
     private let zoomLabel = NSTextField(labelWithString: "100%")
@@ -1170,18 +1218,23 @@ final class InlineAnnotationView: NSView {
     var onError: (Error) -> Void = { showError($0) }
 
     init(image: CGImage, preferences: PreferencesStore? = nil, moveHandle: NSView? = nil,
-         completionHint: String) {
+         completionHint: String, showsCopyAction: Bool = true, allowsOutsideAnnotations: Bool = false,
+         cancellationHint: String = "退出标注，保留原图") {
         canvas = ImageToolsCanvas(image: image)
+        canvas.allowsOutsideAnnotations = allowsOutsideAnnotations
         super.init(frame: .zero)
         appearance = NSAppearance(named: .aqua)
         wantsLayer = true; layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true; scroll.allowsMagnification = true
         scroll.minMagnification = 0.02; scroll.maxMagnification = 8
+        scroll.contentView = AnnotationClipView()
+        scroll.backgroundColor = .white
         scroll.documentView = canvas
+        (scroll as? AnnotationScrollView)?.onZoom = { [weak self] in self?.zoomChanged() }
         addSubview(scroll); addSubview(toolbar)
         controls = AnnotationControls(canvas: canvas, preferences: preferences, scale: { [weak self] in
-            1 / max(0.02, self?.scroll.magnification ?? 1)
+            1 / max(0.0001, self?.scroll.magnification ?? 1)
         })
         func icon(_ title: String, _ symbol: String, _ action: @escaping () -> Void) -> NSButton {
             let button = SelectionButton(title, symbol: symbol, action: action)
@@ -1193,11 +1246,12 @@ final class InlineAnnotationView: NSView {
         actions += [icon("缩小", "minus.magnifyingglass") { [weak self] in self?.zoom(by: 1 / 1.25) },
                     zoomLabel, icon("放大", "plus.magnifyingglass") { [weak self] in self?.zoom(by: 1.25) },
                     SelectionButton("适合宽度") { [weak self] in self?.fitWidth() },
-                    SelectionButton("100%") { [weak self] in self?.setZoom(1) },
-                    icon("复制", "doc.on.doc") { [weak self] in self?.copyImage() },
-                    icon("保存 PNG", "square.and.arrow.down") { [weak self] in self?.saveImage() },
-                    SelectionButton.cancellation(toolTip: "退出标注，保留原图") { [weak self] in self?.onCancel?() },
+                    SelectionButton("100%") { [weak self] in self?.setZoom(1) }]
+        if showsCopyAction { actions.append(icon("复制", "doc.on.doc") { [weak self] in self?.copyImage() }) }
+        actions += [icon("保存 PNG", "square.and.arrow.down") { [weak self] in self?.saveImage() },
+                    SelectionButton.cancellation(toolTip: cancellationHint) { [weak self] in self?.onCancel?() },
                     SelectionButton.confirmation(toolTip: completionHint) { [weak self] in self?.complete() }]
+        toolbar.trailingActions = Array(actions.suffix(2))
         controls.onUpdate = { [weak self] in self?.refresh() }
         canvas.onChange = { [weak self] in self?.controls.refresh(); self?.refresh() }
         canvas.onCancel = { [weak self] in self?.onCancel?() }
@@ -1215,14 +1269,48 @@ final class InlineAnnotationView: NSView {
         let size = toolbar.arrange(maxWidth: max(40, bounds.width - 16))
         toolbar.frame = CGRect(x: 8, y: max(0, bounds.height - size.height - 8), width: size.width, height: size.height)
         scroll.frame = CGRect(x: 0, y: 0, width: bounds.width, height: max(1, toolbar.frame.minY - 8))
+        updateWorkspace()
+    }
+    private func scrollTo(_ point: CGPoint) {
+        let clip = scroll.contentView
+        let center = canvas.convert(point, to: clip)
+        clip.scroll(to: CGPoint(x: center.x - clip.bounds.width / 2, y: center.y - clip.bounds.height / 2))
+        scroll.reflectScrolledClipView(clip)
+    }
+    private func updateWorkspace() {
+        guard canvas.allowsOutsideAnnotations else { return }
+        let center = CGPoint(x: canvas.visibleRect.midX, y: canvas.visibleRect.midY)
+        let area = canvas.workspaceBounds(viewport: scroll.contentSize, magnification: scroll.magnification)
+        guard canvas.bounds != area else { return }
+        canvas.setFrameSize(area.size)
+        canvas.bounds = area
+        scrollTo(center)
+        canvas.needsDisplay = true
+    }
+    func fitImage() {
+        refresh()
+        let zoom = min(1, min(max(1, scroll.contentSize.width - 96) / CGFloat(canvas.source.width),
+                              max(1, scroll.contentSize.height - 96) / CGFloat(canvas.source.height)))
+        scroll.minMagnification = min(0.02, zoom)
+        setZoom(zoom)
+        scrollTo(CGPoint(x: CGFloat(canvas.source.width) / 2, y: CGFloat(canvas.source.height) / 2))
+    }
+    func preferredWindowSize(maximum: CGSize) -> CGSize {
+        toolbar.rows = controls.rows(appendingActions: actions)
+        let toolbarSize = toolbar.arrange(maxWidth: max(40, maximum.width - 16))
+        return CGSize(width: min(maximum.width, toolbarSize.width + 16),
+                      height: min(maximum.height, max(320, toolbarSize.height + 32 + min(600, CGFloat(canvas.source.height)))))
     }
     func fitWidth() {
         refresh()
-        setZoom(min(1, max(1, scroll.contentSize.width - 16) / CGFloat(canvas.source.width)))
+        setZoom(min(1, max(1, scroll.contentSize.width - (canvas.allowsOutsideAnnotations ? 96 : 16)) / CGFloat(canvas.source.width)))
+        if canvas.allowsOutsideAnnotations {
+            scrollTo(CGPoint(x: CGFloat(canvas.source.width) / 2, y: CGFloat(canvas.source.height) / 2))
+        }
     }
     func setZoom(_ value: CGFloat) {
         let center = CGPoint(x: canvas.visibleRect.midX, y: canvas.visibleRect.midY)
-        scroll.setMagnification(min(8, max(0.02, value)), centeredAt: center)
+        scroll.setMagnification(min(scroll.maxMagnification, max(scroll.minMagnification, value)), centeredAt: center)
         zoomChanged()
     }
     private func zoom(by factor: CGFloat) { setZoom(scroll.magnification * factor) }
@@ -1597,12 +1685,16 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             return button
         }
         var row: [NSView] = [handle]
+        var textCompletion: SelectionButton?
         textColorButtons = []
         if let textView {
-            row.append(button(textView.isMoving ? "编辑文字" : "完成编辑", textView.isMoving ? "pencil" : "checkmark") {
-                [weak self] in guard let self, let textView = self.textView else { return }
-                self.setTextEditing(textView.isMoving)
-            })
+            if textView.isMoving {
+                row.append(button("编辑文字", SelectionButton.annotationSymbol) { [weak self] in self?.setTextEditing(true) })
+            } else {
+                textCompletion = SelectionButton.confirmation("完成编辑", toolTip: "完成文字编辑，返回贴图") {
+                    [weak self] in self?.setTextEditing(false)
+                }
+            }
             if !textView.isMoving {
                 for (title, color) in [("默认颜色", NSColor.labelColor), ("红色", .systemRed), ("橙色", .systemOrange),
                                        ("绿色", .systemGreen), ("蓝色", .systemBlue)] {
@@ -1614,7 +1706,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             }
         }
         if imageView != nil {
-            row.append(button("标注", "pencil.tip") { [weak self] in self?.annotateImage() })
+            row.append(button("标注", SelectionButton.annotationSymbol) { [weak self] in self?.annotateImage() })
             row.append(button("提取文字", "text.viewfinder") { [weak self] in self?.ocrImage() })
         }
         row.append(button(imageView != nil ? "复制图片" : "复制文字", "doc.on.doc") { [weak self] in self?.copyContent() })
@@ -1624,6 +1716,8 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             row.append(save)
         }
         row.append(button("关闭贴图", "xmark") { [weak self] in self?.closePin() })
+        if let textCompletion { row.append(textCompletion) }
+        toolbar.trailingActions = textCompletion == nil ? [] : Array(row.suffix(2))
         toolbar.rows = [row]
         if hud != nil { layoutHUD(); return }
         let panel = ImageToolsPinHUDPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
@@ -1714,11 +1808,11 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             return item
         }
         if imageView != nil {
-            _ = add("标注", symbol: "pencil.tip", action: #selector(annotateImage))
+            _ = add("标注", symbol: SelectionButton.annotationSymbol, action: #selector(annotateImage))
             _ = add("提取文字", symbol: "text.viewfinder", action: #selector(ocrImage))
             _ = add("保存 PNG", symbol: "square.and.arrow.down", action: #selector(saveImage))
         } else {
-            _ = add(textView?.isMoving == true ? "编辑文字" : "完成编辑", symbol: "pencil", action: #selector(toggleMoveMode))
+            _ = add(textView?.isMoving == true ? "编辑文字" : "完成编辑", symbol: textView?.isMoving == true ? SelectionButton.annotationSymbol : "checkmark", action: #selector(toggleMoveMode))
         }
         _ = add(imageView != nil ? "复制图片" : "复制文字", symbol: "doc.on.doc", action: #selector(copyContent))
         menu.addItem(.separator())
@@ -1832,26 +1926,35 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         handle.onMouseDragged = { [weak self] in self?.continueMoving(with: $0) }
         handle.onMouseUp = { [weak self] in self?.endMoving(with: $0) }
         let editor = InlineAnnotationView(image: imageView.image, preferences: preferences, moveHandle: handle,
-                                          completionHint: "完成标注，返回贴图")
+                                          completionHint: "完成标注，返回贴图", allowsOutsideAnnotations: true)
         inlineEditor = editor
         editor.onComplete = { [weak self] image in self?.endInlineEditing(image: image) }
         editor.onCancel = { [weak self] in self?.endInlineEditing(image: nil) }
         hud?.orderOut(nil); scroll.isHidden = true; selectionOutline.isHidden = true
         let visible = visibleArea().insetBy(dx: 20, dy: 20)
-        let size = CGSize(width: min(visible.width, max(740, window.frame.width)),
+        let preferredWidth = editor.preferredWindowSize(maximum: visible.size).width
+        let size = CGSize(width: min(visible.width, max(preferredWidth, max(740, window.frame.width))),
                           height: min(visible.height, max(480, window.frame.height)))
         window.setFrame(Self.frameFittingVisibleArea(CGRect(x: window.frame.minX, y: window.frame.maxY - size.height,
             width: size.width, height: size.height), in: visible), display: true)
         inlineWindowFrame = window.frame
         editor.frame = surface.bounds; editor.autoresizingMask = [.width, .height]
-        surface.addSubview(editor); editor.fitWidth()
-        editor.scroll.contentView.scroll(to: .zero)
+        surface.addSubview(editor); editor.fitImage()
         selectPin(); window.makeFirstResponder(editor.canvas)
     }
     private func endInlineEditing(image: CGImage?) {
         inlineEditor?.removeFromSuperview(); inlineEditor = nil
         scroll.isHidden = false; selectionOutline.isHidden = false
-        if let image { imageView?.image = image; imageView?.needsDisplay = true }
+        if let image, let imageView {
+            // Keep the original image's pixel-to-point scale when outside marks
+            // expand the document, rather than stretching it into the old frame.
+            if image.width != imageView.image.width || image.height != imageView.image.height {
+                baseSize = CGSize(width: baseSize.width * CGFloat(image.width) / CGFloat(imageView.image.width),
+                                  height: baseSize.height * CGFloat(image.height) / CGFloat(imageView.image.height))
+            }
+            imageView.image = image
+            imageView.needsDisplay = true
+        }
         if let frame = beforeEditingFrame, let start = inlineWindowFrame, let window {
             let restored = frame.offsetBy(dx: window.frame.minX - start.minX, dy: window.frame.minY - start.minY)
             window.setFrame(Self.frameFittingVisibleArea(restored, in: visibleArea()), display: true)

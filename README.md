@@ -21,7 +21,7 @@
 
 需要 **macOS 15+、Apple Silicon（M 系列芯片）**。
 
-- **直接下载**：[GitHub 预览版](https://github.com/caijyii/patch/releases/tag/v0.1.0-preview.1)，提供 **DMG / ZIP**，打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。无需开发工具。
+- **直接下载**：[GitHub 预览版](https://github.com/caijyii/patch/releases/tag/v0.1.0-preview.2)，提供 **DMG / ZIP**，打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。无需开发工具。
 - **让 Agent 安装**：把下面这句话交给自己的 Agent。
 
 > 请从 https://github.com/caijyii/patch 的 GitHub Releases 下载适合我的 Mac 的 Patch 安装包并安装。

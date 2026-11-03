@@ -13,6 +13,7 @@ private struct ImageToolsTextLayoutSnapshot: Equatable {
 }
 
 extension ImageToolsCanvas {
+    fileprivate var verificationExportBounds: CGRect { exportBounds(for: annotations) }
     fileprivate var verificationHistoryRetainsRaster: Bool {
         history.contains { $0.annotations.contains { $0.mosaic != nil } }
     }
@@ -34,6 +35,7 @@ extension ImageToolsCanvas {
 }
 
 extension ImageToolsEditorController {
+    fileprivate var verificationCopyButtons: [SelectionButton] { actions.compactMap { $0 as? SelectionButton }.filter { $0.title == "复制" } }
     fileprivate var verificationCanvas: ImageToolsCanvas { canvas }
     fileprivate var verificationMagnification: CGFloat { scroll.magnification }
     fileprivate var verificationToolTitle: String? { controls.activeTool?.rawValue }
@@ -70,6 +72,8 @@ extension ImageToolsEditorController {
 }
 
 extension ImageToolsPinController {
+    fileprivate var verificationHUDButtons: [SelectionButton] { toolbar.rows.flatMap { $0 }.compactMap { $0 as? SelectionButton } }
+    fileprivate var verificationCopyButtons: [SelectionButton] { toolbar.rows.flatMap { $0 }.compactMap { $0 as? SelectionButton }.filter { $0.title.hasPrefix("复制") } }
     fileprivate var verificationImage: CGImage? { imageView?.image }
     fileprivate var verificationTextView: ImageToolsPinTextView? { textView }
     fileprivate func verificationEditing(_ value: Bool) { setTextEditing(value) }
@@ -188,6 +192,7 @@ extension ImageToolsPinController {
 }
 
 extension ImageToolsOCRController {
+    fileprivate var verificationCopyButton: NSButton { copyButton }
     fileprivate var verificationCopyEnabled: Bool { copyButton.isEnabled }
     fileprivate var verificationStatusHidden: Bool { status.isHidden }
     fileprivate var verificationText: String { textView.string }
@@ -198,12 +203,24 @@ extension ImageToolsOCRController {
     }
 }
 
+private final class PinAnnotationMagnifyEvent: NSEvent {
+    var amount: CGFloat = 0.25
+    var point = CGPoint.zero
+    override var magnification: CGFloat { amount }
+    override var locationInWindow: NSPoint { point }
+    override var type: NSEvent.EventType { .magnify }
+}
+
 @main
 private struct ImageToolsVerification {
     @MainActor static func main() {
         do {
             _ = NSApplication.shared
             let outputDirectory = CommandLine.arguments.dropFirst().first ?? "/private/tmp"
+            try verifyPinOutsideAnnotations()
+            try verifyPinAnnotationViewport(outputDirectory: URL(fileURLWithPath: outputDirectory))
+            try verifyAnnotationToolbarConsistency()
+            try verifyCopyButtonStates()
             try verifyArrowTips(outputDirectory: URL(fileURLWithPath: outputDirectory))
             try verifyIndependentToolSizes()
             try verifyObjectEditing()
@@ -216,6 +233,7 @@ private struct ImageToolsVerification {
             try verifyInlineWorkflows(outputDirectory: URL(fileURLWithPath: outputDirectory))
             try verifyRendering(outputDirectory: URL(fileURLWithPath: outputDirectory))
             try verifyRegionRendering()
+            try verifyOutsideRendering(outputDirectory: URL(fileURLWithPath: outputDirectory))
             try verifyTextLayout()
             try verifyOCRLanguages()
             if CommandLine.arguments.contains("--ocr") {
@@ -261,6 +279,199 @@ private struct ImageToolsVerification {
             throw ImageToolsVerificationFailure(description: "Cannot make solid image")
         }
         return image
+    }
+
+    @MainActor private static func verifyPinOutsideAnnotations() throws {
+        let source = try solidImage(width: 260, height: 180)
+        let pin = ImageToolsPinController(image: source, preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+        defer { pin.close() }
+        guard let editor = pin.verificationPrepareEditor(), let root = pin.window?.contentView else {
+            throw ImageToolsVerificationFailure(description: "Missing pin annotation workspace")
+        }
+        let canvas = editor.canvas
+        let blank = CGPoint(x: -40, y: -40)
+        try require(root.hitTest(root.convert(blank, from: canvas)) === canvas,
+                    "Blank pin annotation space must receive drawing input")
+        let original = try canvas.renderedImage()
+        try require(original.width == source.width && original.height == source.height, "Blank margins must not enlarge unmarked exports")
+        func drawOutside() {
+            if editor.controls.activeTool != .rectangle { editor.controls.choose(tool: .rectangle) }
+            canvas.tool = .rectangle; canvas.isDrawingEnabled = true
+            canvas.annotationColor = .systemRed; canvas.annotationWidth = 4
+            gesture(canvas, points: [blank, CGPoint(x: -15, y: -15)])
+        }
+        drawOutside()
+        try require(canvas.annotations.first?.points.first == blank, "Pin annotation was clamped to the image")
+        let expanded = try canvas.renderedImage()
+        try require(expanded.width > source.width && expanded.height > source.height, "Pin outside marks were cropped on export")
+        try require(same(rgba(expanded, x: 0, y: 0), [1, 1, 1, 1]), "Expanded pin margins must be opaque white")
+        editor.setZoom(0.6)
+        let zoomed = try canvas.renderedImage()
+        try require(zoomed.width == expanded.width && zoomed.height == expanded.height, "Pinch must not change export bounds")
+        canvas.undoAnnotation()
+        let undone = try canvas.renderedImage()
+        try require(undone.width == source.width && undone.height == source.height, "Undo must remove empty export margins")
+        drawOutside()
+        let appliedExport = try canvas.renderedImage()
+        editor.complete()
+        try require(!pin.verificationHasEditor && pin.verificationImage?.width == appliedExport.width
+                    && pin.verificationImage?.height == appliedExport.height, "Completing must apply the entire expanded image to the pin")
+        guard let frame = pin.verificationImageContentFrame else {
+            throw ImageToolsVerificationFailure(description: "Completed pin has no image view")
+        }
+        try require(abs(frame.width / frame.height - CGFloat(appliedExport.width) / CGFloat(appliedExport.height)) < 0.01,
+                    "Completed expanded pin is stretched into its old aspect ratio")
+        let applied = pin.verificationImage!
+        let reopened = pin.verificationPrepareEditor()!
+        reopened.canvas.tool = .rectangle
+        gesture(reopened.canvas, points: [CGPoint(x: -50, y: -50), CGPoint(x: -20, y: -20)])
+        reopened.onCancel?()
+        try require(pin.verificationImage === applied && !pin.verificationHasEditor, "Cancel must discard new outside marks and preserve the previous pin")
+        print("PASS: actual pin blank-space annotation supports white auto-expansion, zoom, undo, apply with correct aspect ratio and cancel")
+    }
+
+    @MainActor private static func verifyPinAnnotationViewport(outputDirectory: URL) throws {
+        var issues: [String] = []
+        for (width, height) in [(260, 180), (1200, 240), (700, 6000)] {
+            let source = try solidImage(width: width, height: height)
+            let pin = ImageToolsPinController(image: source)
+            defer { pin.close() }
+            let originalFrame = pin.window!.frame
+            guard let editor = pin.verificationPrepareEditor(), let root = pin.window?.contentView else {
+                throw ImageToolsVerificationFailure(description: "Missing actual pin annotation workspace")
+            }
+            let original = CGRect(x: 0, y: 0, width: width, height: height)
+            let visibleImage = editor.canvas.convert(original, to: editor.scroll)
+            if abs(visibleImage.midX - editor.scroll.bounds.midX) > 1 || abs(visibleImage.midY - editor.scroll.bounds.midY) > 1 {
+                issues.append("\(width)x\(height) does not open in the horizontal and vertical center")
+            }
+            if !editor.scroll.bounds.insetBy(dx: -1, dy: -1).contains(visibleImage) {
+                issues.append("\(width)x\(height) initial fitting clips the image")
+            }
+            let event = PinAnnotationMagnifyEvent()
+            let imageCenter = CGPoint(x: original.midX, y: original.midY)
+            if root.hitTest(root.convert(imageCenter, from: editor.canvas)) !== editor.canvas {
+                issues.append("Pin annotation image center does not route input to the canvas")
+            }
+            event.point = editor.canvas.convert(imageCenter, to: nil)
+            let before = editor.scroll.magnification
+            editor.canvas.magnify(with: event)
+            if abs(editor.scroll.magnification - before * 1.25) > 0.001 { issues.append("Pin annotation canvas does not accept pinch-out") }
+            event.amount = -0.2
+            editor.canvas.magnify(with: event)
+            if abs(editor.scroll.magnification - before) > 0.001 { issues.append("Pin annotation canvas does not accept pinch-in") }
+            let blank = CGPoint(x: editor.scroll.bounds.minX + 10, y: editor.scroll.bounds.minY + 10)
+            let rootPoint = root.convert(blank, from: editor.scroll)
+            guard let receiver = root.hitTest(rootPoint) else { throw ImageToolsVerificationFailure(description: "Blank viewport has no input receiver") }
+            event.amount = 0.25; event.point = editor.scroll.convert(blank, to: nil)
+            receiver.magnify(with: event)
+            if abs(editor.scroll.magnification - before * 1.25) > 0.001 { issues.append("Pin annotation blank space does not accept pinch-out") }
+            let exported = try editor.canvas.renderedImage()
+            try require(exported.width == width && exported.height == height, "Pinch changed original export dimensions")
+            editor.fitImage()
+            if height == 6000 { try cachePreview(editor, output: outputDirectory.appendingPathComponent("pin-annotation-centered-preview.png")) }
+            editor.onCancel?()
+            try require(pin.window?.frame == originalFrame && pin.verificationImage === source,
+                        "Cancel must restore the original pin after pinch")
+        }
+        try require(issues.isEmpty, issues.joined(separator: "; "))
+        print("PASS: actual pin annotation windows center small, wide and tall images; image and blank-space pinch-in/out preserve export size and cancel restoration")
+    }
+
+    @MainActor private static func verifyAnnotationToolbarConsistency() throws {
+        let imagePin = ImageToolsPinController(image: try solidImage())
+        let textPin = ImageToolsPinController(text: "颜色与标注测试")
+        defer { imagePin.close(); textPin.close() }
+        guard let imageEntry = imagePin.verificationHUDButtons.first(where: { $0.title == "标注" }),
+              let textEntry = textPin.verificationHUDButtons.first(where: { $0.title == "编辑文字" }) else {
+            throw ImageToolsVerificationFailure(description: "Missing annotation entry")
+        }
+        try require(imageEntry.image?.tiffRepresentation == textEntry.image?.tiffRepresentation,
+                    "Image and text pin annotation entries use different glyphs")
+        textPin.verificationEditing(true)
+        let textActions = textPin.verificationHUDButtons
+        try require(Array(textActions.suffix(2)).map(\.title) == ["关闭贴图", "完成编辑"],
+                    "Text pin completion must follow other actions at the right end")
+        try require(textActions.last?.isPrimaryAction == true && textActions.last?.imagePosition == .imageOnly,
+                    "Text editing completion must share the emphasized icon style")
+        guard let editor = imagePin.verificationPrepareEditor(),
+              let toolbar = editor.subviews.compactMap({ $0 as? SelectionToolbar }).first else {
+            throw ImageToolsVerificationFailure(description: "Missing pin annotation toolbar")
+        }
+        let actions = toolbar.rows.first?.compactMap { $0 as? SelectionButton } ?? []
+        try require(Array(actions.suffix(2)).map(\.title) == ["取消", "完成"] && actions.last?.isPrimaryAction == true,
+                    "Image pin annotation completion must follow cancel at the right end")
+        try require(actions.allSatisfy { abs($0.frame.midY - (actions.first?.frame.midY ?? 0)) < 0.5 },
+                    "Default pin annotation width must fit the main actions without wrapping")
+        for width in [CGFloat(320), 740, 1100] {
+            editor.frame.size.width = width
+            editor.needsLayout = true; editor.layoutSubtreeIfNeeded()
+            guard let cancel = actions.dropLast().last, let finish = actions.last else {
+                throw ImageToolsVerificationFailure(description: "Missing completion pair")
+            }
+            try require(abs(cancel.frame.midY - finish.frame.midY) < 0.5
+                        && abs(finish.frame.maxX - toolbar.frame.width + 8) < 0.5
+                        && abs(finish.frame.maxY - (actions.first?.frame.maxY ?? 0)) < 0.5,
+                        "Cancel and completion split or moved away from the right edge at width \(width)")
+        }
+        print("PASS: image/text pin annotation entries share glyphs and keep emphasized completion together at the right end, including narrow toolbars")
+    }
+
+    @MainActor private static func verifyCopyButtonStates() throws {
+        let source = try solidImage()
+        let imagePin = ImageToolsPinController(image: source)
+        let textPin = ImageToolsPinController(text: "合成文字贴图")
+        let editor = ImageToolsEditorController(image: source)
+        let subject = SubjectSelectionController(image: source)
+        let inline = InlineAnnotationView(image: source, completionHint: "完成标注")
+        // Arrange a standalone inline workspace so its toolbar exposes the actual actions.
+        inline.frame = CGRect(x: 0, y: 0, width: 900, height: 600); inline.layoutSubtreeIfNeeded()
+        let inlineButtons = inline.subviews.compactMap { $0 as? SelectionToolbar }.flatMap { $0.rows.flatMap { $0 } }
+            .compactMap { $0 as? SelectionButton }.filter { $0.title == "复制" }
+        defer { imagePin.close(); textPin.close(); editor.close(); subject.close() }
+        var contexts: [(String, [SelectionButton])] = [
+            ("image pin", imagePin.verificationCopyButtons), ("text pin moving", textPin.verificationCopyButtons),
+            ("standalone image editor", editor.verificationCopyButtons), ("inline annotation", inlineButtons),
+            ("subject extraction preview", subject.window?.contentView.map { allButtons($0).compactMap { $0 as? SelectionButton }.filter { $0.title == "复制" } } ?? []),
+            ("copy-and-close confirmation", [SelectionButton.confirmation(toolTip: "复制并关闭", action: {})])
+        ]
+        textPin.verificationEditing(true)
+        contexts.append(("text pin editing", textPin.verificationCopyButtons))
+        var failures: [String] = []
+        for (name, buttons) in contexts {
+            try require(buttons.count == 1, "Missing unique copy action in \(name)")
+            let button = buttons[0]
+            let originalAction = button.actionBlock
+            let originallyEnabled = button.isEnabled
+            button.isEnabled = true
+            var clicks = 0
+            // Exercise native button tracking without changing the user's clipboard.
+            button.actionBlock = { clicks += 1 }
+            for click in 1...3 {
+                button.performClick(nil)
+                if button.state != .off { failures.append("\(name) click \(click) retained state=\(button.state.rawValue)") }
+            }
+            button.actionBlock = originalAction
+            button.isEnabled = originallyEnabled
+            try require(clicks == 3, "Copy action must fire on every click in \(name)")
+        }
+        var writes = 0
+        let ocr = ImageToolsOCRController(writeClipboard: { _ in writes += 1; return writes > 1 })
+        defer { ocr.close() }
+        ocr.complete("合成识别结果")
+        ocr.verificationCopyButton.performClick(nil)
+        if ocr.verificationCopyButton.state != .off { failures.append("OCR copy failure retained selected state") }
+        ocr.verificationCopyButton.performClick(nil)
+        if ocr.verificationCopyButton.state != .off { failures.append("OCR copy success retained selected state") }
+        try require(writes == 2, "OCR copy must retry after clipboard failure")
+        try require(failures.isEmpty, "Copy actions behave like toggles: " + failures.joined(separator: "; "))
+        let toggle = SelectionButton("系统声音", symbol: "speaker.wave.2", action: {})
+        toggle.setButtonType(.pushOnPushOff)
+        toggle.performClick(nil)
+        try require(toggle.state == .on, "Explicit toggle no longer retains selection")
+        toggle.performClick(nil)
+        try require(toggle.state == .off, "Explicit toggle no longer switches off")
+        print("PASS: repeated copy stays momentary for image/text pins, text editing, both annotation editors, subject preview, confirmation and OCR failure/retry; explicit toggles still work")
     }
 
     @MainActor private static func verifyArrowTips(outputDirectory: URL) throws {
@@ -1056,8 +1267,8 @@ private struct ImageToolsVerification {
         let originalWindow = imagePin.window
         let originalFrame = originalWindow!.frame
         let editor = imagePin.verificationPrepareEditor()!
-        try require(editor.window === originalWindow && editor.scroll.magnification > 0.5,
-                    "Long image opens separately or fits its full height into an unreadable strip")
+        try require(editor.window === originalWindow && editor.scroll.magnification > 0 && editor.scroll.magnification < 0.5,
+                    "Long image must open centered and fitted inside the existing pin window")
         editor.setZoom(1.5)
         editor.scroll.contentView.scroll(to: CGPoint(x: 0, y: 2900))
         editor.canvas.tool = .rectangle
@@ -1073,7 +1284,7 @@ private struct ImageToolsVerification {
         try require(imagePin.window === originalWindow && imagePin.verificationImage === source
                     && !imagePin.verificationHasEditor && originalWindow!.frame == originalFrame,
                     "Cancelling inline editing changed source pixels, lost the pin, or changed its frame")
-        print("PASS: inline long-image editing reuses its pin, fits width, scrolls and zooms in image coordinates, retains export resolution and cancels without loss")
+        print("PASS: inline long-image editing reuses its pin, initially fits the image, scrolls and zooms in image coordinates, retains export resolution and cancels without loss")
     }
 
     @MainActor private static func verifyPinsAndOCRPresentation(outputDirectory: URL) throws {
@@ -1270,6 +1481,55 @@ private struct ImageToolsVerification {
         }
         try require(failures.isEmpty, "First-selection drag jumped after HUD layout: " + failures.joined(separator: "; "))
         print("PASS: unselected full-height image and Option-text pins move by the first pointer delta after reserving HUD space")
+    }
+
+    @MainActor private static func verifyOutsideRendering(outputDirectory: URL) throws {
+        let context = CGContext(data: nil, width: 80, height: 60, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(NSColor.systemBlue.cgColor); context.fill(CGRect(x: 0, y: 0, width: 80, height: 60))
+        context.setFillColor(NSColor.systemYellow.cgColor); context.fill(CGRect(x: 4, y: 6, width: 8, height: 10))
+        let source = context.makeImage()!
+        for tool in ImageToolsTool.allCases {
+            let canvas = ImageToolsCanvas(image: source)
+            canvas.allowsOutsideAnnotations = true
+            canvas.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+            canvas.bounds = CGRect(x: -160, y: -120, width: 400, height: 300)
+            let annotation = ImageToolsAnnotation(tool: tool,
+                points: tool == .text || tool == .number || tool == .sticker ? [CGPoint(x: -65, y: -65)]
+                    : [CGPoint(x: -65, y: -65), CGPoint(x: -25, y: -25)],
+                color: .red, width: 4, text: tool == .sticker ? StickerCatalog.defaultIdentifier : "外部标注", fontSize: 18)
+            if tool == .text { canvas.verificationWriteText("外部标注", at: CGPoint(x: -65, y: -65)) }
+            else { try canvas.verificationAdd(annotation) }
+            let exported = try canvas.renderedImage()
+            let region = canvas.verificationExportBounds
+            try require(exported.width == Int(region.width) && exported.height == Int(region.height)
+                        && region.minX < 0 && region.minY < 0, "\(tool) outside bounds are cropped")
+            for (x, y) in [(5, 5), (8, 48), (50, 30)] {
+                try require(same(rgba(source, x: x, y: y), rgba(exported, x: x - Int(region.minX), y: y - Int(region.minY))),
+                            "\(tool) expansion moved or changed original pixels")
+            }
+            try require(same(rgba(exported, x: 0, y: 0), [1, 1, 1, 1]), "\(tool) expansion is not opaque white")
+            if tool != .mosaic {
+                let bitmap = NSBitmapImageRep(cgImage: exported)
+                var marked = false
+                for y in 1..<Int(-region.minY) {
+                    for x in 1..<Int(-region.minX) {
+                        if let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                           min(c.redComponent, c.greenComponent, c.blueComponent) < 0.8 { marked = true; break }
+                    }
+                    if marked { break }
+                }
+                try require(marked, "\(tool) outside mark disappeared from raster export")
+            }
+            let cropped = try canvas.renderedImage(croppingTo: CGRect(x: -80, y: -80, width: 120, height: 120))
+            try require(cropped.width == 120 && cropped.height == 120, "\(tool) crop with negative coordinates failed")
+            if tool == .text { try ImageToolsUI.png(exported).write(to: outputDirectory.appendingPathComponent("outside-text-export.png")) }
+            canvas.undoAnnotation()
+            let restored = try canvas.renderedImage()
+            try require(restored.width == source.width && restored.height == source.height,
+                        "\(tool) undo retained empty export margins")
+        }
+        print("PASS: all eight tools annotate outside the image; white expansion, original pixel positions, negative crops and undo preserve document coordinates")
     }
 
     @MainActor private static func verifyRendering(outputDirectory: URL) throws {

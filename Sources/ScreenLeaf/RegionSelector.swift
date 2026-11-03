@@ -430,6 +430,7 @@ private final class SelectionView: NSView {
         self.toolbarArea = toolbarArea ?? CGRect(origin: .zero, size: size)
         super.init(frame: CGRect(origin: .zero, size: size))
         if purpose == .text || purpose == .record { selectionMode = .automatic }
+        if purpose == .record { screenshotMode = .window }
         for drawingCanvas in [rectangleCanvas, subjectCanvas] {
             drawingCanvas.frame = bounds
             drawingCanvas.bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
@@ -506,9 +507,21 @@ private final class SelectionView: NSView {
         confirmButton = SelectionButton.confirmation("确认", toolTip: "确认选区，进入下一步（Enter / 双击空白）") {
             [weak self] in _ = self?.confirmSelection()
         }
-        if purpose == .scroll {
+        if purpose != .screenshot {
             cancelButton.imagePosition = .imageLeading
             confirmButton.imagePosition = .imageLeading
+        }
+        if purpose == .record {
+            freeButton.title = "框选"
+            freeButton.setAccessibilityLabel("框选")
+            freeButton.toolTip = "拖动框选录制区域（R）"
+            windowButton.title = "窗口"
+            windowButton.setAccessibilityLabel("窗口")
+            windowButton.toolTip = "悬停高亮窗口，单击选择或直接拖动框选（W）"
+            for button in [freeButton!, windowButton!, screenButton!] {
+                button.imagePosition = .noImage
+                button.setButtonType(.pushOnPushOff)
+            }
         }
         guard purpose.supportsAnnotations else { return }
         rectangleButton = SelectionButton("框选", symbol: "rectangle.dashed") { [weak self] in self?.requestMode(.rectangle) }
@@ -577,11 +590,14 @@ private final class SelectionView: NSView {
             let controlRows = visibleControls.rows(appendingActions: Array(imageActions.dropFirst()) + [cancelButton!, imageActions[0]])
             toolbar.rows = [modes + [modeSeparator] + (controlRows.first ?? [])]
                 + Array(controlRows.dropFirst())
+        } else if purpose == .record {
+            toolbar.rows = [[freeButton, windowButton, screenButton, cancelButton] + (selection == nil ? [] : [confirmButton!])]
         } else if selection == nil {
             toolbar.rows = purpose.supportsFullScreen ? [[screenButton, cancelButton]] : []
         } else {
             toolbar.rows = [selectionActions + [cancelButton, confirmButton]]
         }
+        toolbar.trailingActions = purpose == .screenshot ? [cancelButton, imageActions[0]] : [cancelButton, confirmButton]
         toolbar.isHidden = toolbar.rows.isEmpty
         let clipped = toolbarArea.intersection(bounds)
         let available = clipped.isNull || clipped.isEmpty ? bounds : clipped
@@ -725,6 +741,12 @@ private final class SelectionView: NSView {
         dragStartingPendingModeChange = pendingModeChange
         creationPreview = nil
         if choosingSubjects {
+            if event.clickCount >= 2, !subjects.containsSubject(at: point) {
+                drag = nil
+                if subjects.canExport { _ = confirmSelection() }
+                else if !subjects.isAnalyzing && !subjects.isRendering { onCancel?() }
+                return
+            }
             creatingSelection = false
             drag = .create(anchor: point, clickedWindow: nil, preserveSelection: hasSelection)
             return
@@ -798,10 +820,10 @@ private final class SelectionView: NSView {
                                      width: abs(point.x - anchor.x), height: abs(point.y - anchor.y)).intersection(bounds)
         case .move(let rect, let anchor):
             selection = SelectionGeometry.move(rect, by: CGSize(width: point.x - anchor.x, height: point.y - anchor.y), within: bounds)
-            if purpose == .screenshot, selection != rect { screenshotMode = .rectangle; committedMode = .rectangle; selectionMode = .free }
+            if purpose == .screenshot || purpose == .record, selection != rect { screenshotMode = .rectangle; committedMode = .rectangle; selectionMode = .free }
         case .resize(let rect, let handle):
             selection = SelectionGeometry.resize(rect, handle: handle, to: point, within: bounds)
-            if purpose == .screenshot, selection != rect { screenshotMode = .rectangle; committedMode = .rectangle; selectionMode = .free }
+            if purpose == .screenshot || purpose == .record, selection != rect { screenshotMode = .rectangle; committedMode = .rectangle; selectionMode = .free }
         }
         updateSelection()
     }
@@ -824,7 +846,7 @@ private final class SelectionView: NSView {
             return
         }
         if case .create(_, let clicked, let preserveSelection) = operation, !creatingSelection, !preserveSelection, let clicked {
-            commitRectangle(clicked, mode: purpose == .screenshot ? .window : .rectangle)
+            commitRectangle(clicked, mode: purpose == .screenshot || purpose == .record ? .window : .rectangle)
         } else if case .create = operation, creatingSelection {
             if let rect = creationPreview, rect.width >= 16, rect.height >= 16 {
                 commitRectangle(rect, mode: .rectangle)
@@ -858,6 +880,7 @@ private final class SelectionView: NSView {
         }
         canvas.clearAnnotations()
         selectionMode = mode
+        if purpose == .record { screenshotMode = mode == .window ? .window : .rectangle }
         selection = nil
         activeTool = nil
         canvas.isDrawingEnabled = false
@@ -871,7 +894,7 @@ private final class SelectionView: NSView {
 
     private func selectScreen() {
         guard purpose.supportsFullScreen else { return }
-        if purpose == .screenshot { screenshotMode = .screen }
+        if purpose == .screenshot || purpose == .record { screenshotMode = .screen }
         commitRectangle(bounds, mode: .screen)
         drag = nil; creatingSelection = false; creationPreview = nil
         updateSelection()
@@ -882,7 +905,7 @@ private final class SelectionView: NSView {
         guard rect.width >= 16, rect.height >= 16 else { return }
         onActivate?()
         committedMode = mode
-        if purpose == .screenshot {
+        if purpose == .screenshot || purpose == .record {
             screenshotMode = mode
             selectionMode = mode == .window ? .automatic : .free
         }
@@ -958,8 +981,8 @@ private final class SelectionView: NSView {
         chrome.needsDisplay = true
         rectangleCanvas.interactionBounds = selection.map { SelectionGeometry.pixelRect($0, in: bounds, imageSize: chrome.imageSize) }
         subjectCanvas.interactionBounds = subjectCanvas.bounds
-        arrangeToolbar()
         updateButtons()
+        arrangeToolbar()
         window?.invalidateCursorRects(for: self)
     }
 
@@ -989,6 +1012,17 @@ private final class SelectionView: NSView {
             visibleControls.undoButton.isEnabled = !pendingModeChange
                 && (undoingSubjects ? subjects.canUndo : canAnnotate && canvas.canUndo)
             visibleControls.undoButton.toolTip = undoingSubjects ? "撤销主体选择（⌘Z）" : "撤销标注（⌘Z）"
+        }
+        if purpose == .screenshot {
+            let position: NSControl.ImagePosition = .imageOnly
+            cancelButton.imagePosition = position
+            imageActionButtons.first(where: { $0.0 == .copy })?.1.imagePosition = position
+        } else if purpose == .record {
+            for (button, selected) in [(freeButton!, screenshotMode == .rectangle),
+                                       (windowButton!, screenshotMode == .window),
+                                       (screenButton!, screenshotMode == .screen)] {
+                button.state = selected ? .on : .off
+            }
         }
         chrome.annotationSelected = canvas.selectedAnnotation != nil
         chrome.needsDisplay = true

@@ -227,6 +227,29 @@ private struct OCRQueueProbe {
             try failureAndSuccessor()
             try windowLifecycle()
             if CommandLine.arguments.contains("--ocr") {
+                let coordinator = ImageToolsCoordinator()
+                coordinator.recognize(DemoImage.make())
+                try spin(until: { coordinator.probeJobCount == 0 }, seconds: 20)
+                try expect(coordinator.probeOCRController?.probeHasResult == true, "real background OCR delivers recognized fixture to its result window")
+                coordinator.closeAll()
+                let context = CGContext(data: nil, width: 158, height: 90, bitsPerComponent: 8, bytesPerRow: 0,
+                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                context.setFillColor(NSColor.white.cgColor)
+                context.fill(CGRect(x: 0, y: 0, width: 158, height: 90))
+                let blank = context.makeImage()!
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+                NSAttributedString(string: "Patch", attributes: [.font: NSFont.systemFont(ofSize: 24), .foregroundColor: NSColor.black])
+                    .draw(at: CGPoint(x: 15, y: 32))
+                NSGraphicsContext.restoreGraphicsState()
+                coordinator.recognize(context.makeImage()!)
+                try spin(until: { coordinator.probeJobCount == 0 }, seconds: 20)
+                try expect(coordinator.probeOCRController?.probeHasResult == true, "158x90 background OCR completes with text")
+                coordinator.closeAll()
+                coordinator.recognize(blank)
+                try spin(until: { coordinator.probeJobCount == 0 }, seconds: 20)
+                try expect(coordinator.probeOCRController?.probeHasResult == false, "158x90 blank background OCR completes with an empty-result error")
+                coordinator.closeAll()
                 let text = try ImageToolsOCRWorker.read(DemoImage.make())
                 try expect(text.contains("Patch"), "unchanged synchronous OCR API recognizes generated DemoImage")
             }

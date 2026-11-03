@@ -12,13 +12,13 @@
 
 ## GitHub 预览包
 
-运行 `bash scripts/package-preview.sh v0.1.0-preview.1`，从干净 Git 工作区构建 Apple Silicon 沙盒预览包，输出至 `dist/v0.1.0-preview.1/`。已有输出目录时拒绝覆盖。
+运行 `bash scripts/package-preview.sh v0.1.0-preview.2`，从干净 Git 工作区构建 Apple Silicon 沙盒预览包，输出至 `dist/v0.1.0-preview.2/`。已有输出目录时拒绝覆盖。
 
 发布附件包括 `Patch-…-macOS-arm64.dmg`、`Patch-…-macOS-arm64.zip`、`INSTALL.md`、`release-manifest.json` 和 `SHA256SUMS.txt`。清单记录源码提交、架构、版本和签名状态；不包含本地日志或验收素材。应用使用源码既有标识 `dev.screenleaf.app`，与本机 Sandbox / Development 包分开，但不应同时运行。
 
 预览版采用 ad-hoc 签名，启用 `Patch.entitlements` 沙盒权限，尚无 Developer ID 签名和 Apple 公证。必须标为 GitHub prerelease，并明确提示首次启动的系统确认与权限限制；不能把本机运行成功视为干净系统安装验收。后续正式直接分发需加入 Developer ID 签名、公证和下载隔离场景验收。
 
-`package-dmg.sh` 也可将已有的 `Patch.app` 封装成 DMG，不重新编译或签名。磁盘映像包含应用和指向 `/Applications` 的快捷入口。对 `v0.1.0-preview.1`，后补 DMG 使用独立的 `dmg-manifest.json` 和 `SHA256SUMS-DMG.txt`，保留原 ZIP 与原校验附件不变；它们封装的是相同应用。
+`package-dmg.sh` 也可将已有的 `Patch.app` 封装成 DMG，不重新编译或签名。磁盘映像包含应用、指向 `/Applications` 的快捷入口和可转发给试用者的 `安装说明.txt`。对 `v0.1.0-preview.1`，后补 DMG 使用独立的 `dmg-manifest.json` 和 `SHA256SUMS-DMG.txt`，保留原 ZIP 与原校验附件不变；它们封装的是相同应用。
 
 ## 转为正式直接分发前
 

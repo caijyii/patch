@@ -112,6 +112,7 @@ private final class PorcelainPreview: NSView {
             ("Chinese action captions retain their native text-cell size after wrapping", captionGeometry),
             ("selected captions, glyphs and parameter samples render darker than ordinary content", toolbarAppearance),
             ("all toolbar surfaces are pure white without blur, gradients or backdrop dependence", reducedTransparency),
+            ("color swatches remain visible under hover, press and selection", colorSwatchHover),
             ("hover waits for dwell and gentle scale feedback respects reduced motion", motion),
             ("all four mode captions keep selection distinct from hover and refresh state immediately", modeFeedback),
             ("vector sticker library is complete and its compact picker remains usable", stickerLibrary),
@@ -454,6 +455,41 @@ private final class PorcelainPreview: NSView {
         button.isEnabled = false; button.performClick(nil)
         try require(fired == 1, "Disabled button still invokes action")
         try require(button.accessibilityLabel() == "复制", "Accessible action label was lost")
+    }
+
+    @MainActor private static func colorSwatchHover() throws {
+        let event = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)!
+        for appearance in ["aqua", "darkAqua"] {
+            for color in [NSColor.systemRed, .systemOrange, .systemGreen, .systemBlue] {
+                for selected in [false, true] {
+                    let button = SelectionOptionButton(sample: .color(color), label: "颜色") {}
+                    button.appearance = NSAppearance(named: NSAppearance.Name(appearance))
+                    button.frame = CGRect(origin: .zero, size: button.intrinsicContentSize)
+                    button.state = selected ? .on : .off
+                    let expected = color.usingColorSpace(.sRGB)!
+                    func coloredPixels(_ bitmap: NSBitmapImageRep) -> Int {
+                        var count = 0
+                        for y in 0..<bitmap.pixelsHigh {
+                            for x in 0..<bitmap.pixelsWide {
+                                if distance(bitmap.colorAt(x: x, y: y)!, expected) < 0.12 { count += 1 }
+                            }
+                        }
+                        return count
+                    }
+                    let idle = coloredPixels(try render(button))
+                    try require(idle > 20, "Idle swatch has no visible color")
+                    button.mouseEntered(with: event)
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.40))
+                    let hovered = coloredPixels(try render(button))
+                    try require(hovered >= idle * 4 / 5, "Hover erased the color swatch: idle=\(idle), hover=\(hovered), selected=\(selected), appearance=\(appearance)")
+                    button.highlight(true)
+                    let pressed = coloredPixels(try render(button))
+                    try require(pressed >= idle * 4 / 5, "Press erased the color swatch")
+                    button.highlight(false); button.mouseExited(with: event)
+                }
+            }
+        }
     }
 
     @MainActor private static func motion() throws {

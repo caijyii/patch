@@ -21,6 +21,7 @@ stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/patch-dmg.XXXXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
 COPYFILE_DISABLE=1 ditto --norsrc --noextattr "$app_path" "$stage_dir/Patch.app"
 ln -s /Applications "$stage_dir/Applications"
+cp "$(dirname "$0")/../Distribution/INSTALL-preview.txt" "$stage_dir/安装说明.txt"
 hdiutil create -srcfolder "$stage_dir" -volname Patch -fs HFS+ -format UDZO "$output_path"
 hdiutil verify "$output_path"
 printf 'DMG: %s\n' "$output_path"

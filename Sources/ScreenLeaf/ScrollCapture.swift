@@ -400,9 +400,10 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         pauseButton = SelectionButton("暂停自动", symbol: "pause.fill") { [weak self] in self?.pauseOrResume() }
         previewButton = SelectionButton("预览", symbol: "photo") { [weak self] in self?.togglePreview() }
         finishButton = SelectionButton.confirmation(toolTip: "完成长截图，复制并关闭") { [weak self] in self?.finish(.copy) }
-        annotateButton = SelectionButton("标注", symbol: "pencil.tip") { [weak self] in self?.finish(.annotate) }
+        annotateButton = SelectionButton("标注", symbol: SelectionButton.annotationSymbol) { [weak self] in self?.finish(.annotate) }
         annotateButton.toolTip = "在当前浮层标注完整长图"
         cancelButton = SelectionButton.cancellation(toolTip: "取消长截图") { [weak self] in self?.cancel() }
+        toolbar.trailingActions = [cancelButton, finishButton]
         for button in [upButton, downButton, pauseButton, previewButton, finishButton, annotateButton, cancelButton] {
             button.imagePosition = .imageOnly
         }
@@ -787,7 +788,8 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
 
     private func presentAnnotation(_ image: CGImage) {
         guard let panel = panel as? ScrollHUDPanel, let region else { return }
-        let editor = InlineAnnotationView(image: image, completionHint: "完成长截图，复制并关闭")
+        let editor = InlineAnnotationView(image: image, completionHint: "完成长截图，复制并关闭",
+                                          showsCopyAction: false, allowsOutsideAnnotations: true, cancellationHint: "取消长截图并关闭")
         inlineEditor = editor
         let token = session
         editor.onComplete = { [weak self] rendered in
@@ -795,24 +797,22 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             try self.onComplete(rendered, .copy)
             self.cancel()
         }
-        editor.onCancel = { [weak self, weak panel] in
-            guard let self, let panel, self.session == token else { return }
-            self.inlineEditor = nil
-            panel.isAnnotating = false
-            panel.contentView = self.hudContent
-            self.state = .paused; self.mode = .manual
-            self.setStatus("已暂停 · 可标注或完成")
-            self.outline?.orderFrontRegardless()
+        editor.onCancel = { [weak self] in
+            guard let self, self.session == token else { return }
+            self.cancel()
         }
         panel.isAnnotating = true
         // Reuse the current floating panel on the capture's display.
         let visible = NSScreen.screens.first { $0.frame == region.screenFrame }?.visibleFrame ?? region.screenFrame
-        let frame = visible.insetBy(dx: 24, dy: 24)
+        let available = visible.insetBy(dx: 24, dy: 24)
+        let size = editor.preferredWindowSize(maximum: available.size)
+        let frame = CGRect(x: available.midX - size.width / 2, y: available.midY - size.height / 2,
+                           width: size.width, height: size.height)
         panel.setFrame(frame, display: false)
         editor.frame = CGRect(origin: .zero, size: frame.size)
         panel.contentView = editor
         outline?.orderOut(nil)
-        editor.fitWidth(); editor.scroll.contentView.scroll(to: .zero)
+        editor.fitImage()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(editor.canvas)
     }

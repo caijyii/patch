@@ -191,6 +191,7 @@ private struct SelectionUIVerification {
         }
         do {
             let image = try fixtureImage()
+            run("preview feedback: subject exit, labeled actions and persistent recording modes") { try verifyPreviewFeedback(image) }
             run("production selection callbacks release views after repeated cancellation") { try verifySelectionLifetime(image) }
             run("production selection callbacks survive deactivation and release after completion") { try verifySelectionCallbackReuse(image) }
             run("each entry exposes only its authorized toolbar actions") { try verifyEntryToolbars(image) }
@@ -308,13 +309,47 @@ private struct SelectionUIVerification {
                     "Reused selection callback changed screen coordinate conversion")
     }
 
+    @MainActor private static func verifyPreviewFeedback(_ image: CGImage) throws {
+        let subject = SelectionUIFixture(source: image)
+        // No Vision request: simulate an active subject mode with no detected result.
+        subject.root.setScreenshotMode(.subject, startAnalysis: false)
+        let point = CGPoint(x: 100, y: 100)
+        try subject.routedGesture(from: point, to: point, clickCount: 2)
+        try require(subject.cancelCount == 1 && subject.actions.isEmpty,
+                    "Double clicking a subject background without a result must cancel")
+        let subjectActions = subject.actionButtons.filter { ["取消", "完成"].contains($0.title) }
+        try require(subjectActions.map(\.title) == ["取消", "完成"]
+                    && subjectActions.allSatisfy { $0.imagePosition == .imageOnly }, "Subject actions must remain compact icons ordered cancel then finish")
+        for purpose in [CaptureSelectionPurpose.screenshot, .text, .scroll, .record] {
+            let fixture = SelectionUIFixture(source: image, purpose: purpose)
+            fixture.root.verificationSelect(CGRect(x: 140, y: 200, width: 440, height: 280))
+            let title = purpose == .screenshot ? "完成" : "确认"
+            let button = try fixture.button(title) as! SelectionButton
+            var clicks = 0
+            button.actionBlock = { clicks += 1 }
+            for _ in 0..<3 {
+                button.performClick(nil)
+                try require(button.state == .off, "\(purpose) completion retained selected state")
+            }
+            try require(clicks == 3, "\(purpose) completion did not fire on every click")
+        }
+        let text = SelectionUIFixture(source: image, purpose: .text)
+        text.gesture(from: CGPoint(x: 100, y: 120), to: CGPoint(x: 500, y: 400))
+        try require(text.actionButtons.map(\.title) == ["取消", "确认"]
+                    && text.actionButtons.allSatisfy { $0.imagePosition == .imageLeading }, "OCR actions must be labeled cancel then confirm")
+        let record = SelectionUIFixture(source: image, purpose: .record)
+        try require(record.actionButtons.map(\.title) == ["框选", "窗口", "整屏", "取消"], "Recording modes must remain explicit before selection")
+        try record.button("整屏").performClick(nil)
+        try require(record.actionButtons.map(\.title) == ["框选", "窗口", "整屏", "取消", "确认"], "Recording modes must remain available after selection")
+    }
+
     @MainActor private static func verifyEntryToolbars(_ image: CGImage) throws {
         let selected = CGRect(x: 140, y: 200, width: 440, height: 280)
         for purpose in [CaptureSelectionPurpose.screenshot, .text, .scroll, .record] {
             let f = SelectionUIFixture(source: image, purpose: purpose)
             let initial = purpose == .screenshot
                 ? ["框选", "主体", "窗口", "整屏"] + ImageToolsTool.allCases.map(\.rawValue) + ["撤销", "保存", "贴图", "文字", "取消", "完成"]
-                : (purpose.supportsFullScreen ? ["整屏", "取消"] : [])
+                : (purpose == .record ? ["框选", "窗口", "整屏", "取消"] : [])
             try require(f.actionButtons.map(\.title) == initial && f.configurations.isEmpty && f.menus.isEmpty,
                         "\(purpose) has incorrect initial toolbar actions")
             if purpose == .screenshot {
@@ -327,7 +362,7 @@ private struct SelectionUIVerification {
             f.root.verificationSelect(selected)
             let expected = purpose == .screenshot
                 ? ImageToolsTool.allCases.map(\.rawValue) + ["撤销", "框选", "主体", "窗口", "整屏", "保存", "贴图", "文字", "取消", "完成"]
-                : (purpose.supportsFullScreen ? ["整屏", "确认", "取消"] : ["取消", "确认"])
+                : (purpose == .record ? ["框选", "窗口", "整屏", "取消", "确认"] : ["取消", "确认"])
             try require(f.actionButtons.map(\.title).sorted() == expected.sorted(),
                         "\(purpose) has incorrect buttons: \(f.actionButtons.map(\.title))")
             try require(f.configurations.isEmpty && f.menus.isEmpty, "\(purpose) exposes configuration without an active annotation tool")
@@ -419,8 +454,8 @@ private struct SelectionUIVerification {
             f.root.verificationSelect(CGRect(x: 140, y: 200, width: 440, height: 280))
             for button in f.actionButtons {
                 let annotation = ImageToolsTool.allCases.contains(where: { $0.rawValue == button.title }) && button.imagePosition == .imageOnly
-                let mode = purpose == .screenshot && ["框选", "主体", "窗口", "整屏"].contains(button.title)
-                let compactAction = (purpose != .scroll && ["取消", "确认", "完成"].contains(button.title))
+                let mode = (purpose == .screenshot || purpose == .record) && ["框选", "主体", "窗口", "整屏"].contains(button.title)
+                let compactAction = (purpose == .screenshot && ["取消", "确认", "完成"].contains(button.title))
                     || (purpose == .screenshot && ["保存", "贴图", "文字"].contains(button.title))
                 if annotation || button.title == "撤销" { try require(button.imagePosition == .imageOnly, "Annotation operations mix text and icon styles") }
                 else if mode { try require(button.imagePosition == .noImage, "Mode selection does not use the compact text group") }
@@ -448,7 +483,7 @@ private struct SelectionUIVerification {
             root.verificationFullScreen()
             defer { window.close() }
             print("INFO: own selection frame=\(window.frame), display=\(screen.frame), visible=\(screen.visibleFrame)")
-            for title in ["自由框选", "窗口框选", "确认", "取消"] {
+            for title in ["框选", "窗口", "整屏", "取消", "确认"] {
                 guard let button = root.verificationToolbar.rows.flatMap({ $0 }).compactMap({ $0 as? NSButton }).first(where: { $0.title == title }) else {
                     throw SelectionUIFailure(description: "Missing full-screen recording button \(title)")
                 }
@@ -470,7 +505,7 @@ private struct SelectionUIVerification {
                 let title = purpose == .record ? "确认" : "完成"
                 let actions = purpose == .screenshot
                     ? ["框选", "主体", "窗口", "整屏", title, "取消"]
-                    : ["自由框选", "窗口框选", title, "取消"]
+                    : ["框选", "窗口", "整屏", "取消", title]
                 try require(safe.contains(f.root.verificationToolbar.frame), "Full-screen toolbar crosses Dock/menu occupied area")
                 let grouped = f.root.verificationToolbar.rows.contains { row in
                     let titles = row.compactMap { ($0 as? NSButton)?.title }
@@ -506,7 +541,7 @@ private struct SelectionUIVerification {
     @MainActor private static func verifyFullScreenModes(_ image: CGImage) throws {
         let candidate = CGRect(x: 140, y: 200, width: 440, height: 280)
         for purpose in [CaptureSelectionPurpose.screenshot, .record] {
-            let choices = purpose == .screenshot ? ["框选", "窗口"] : ["自由框选", "窗口框选"]
+            let choices = ["框选", "窗口"]
             for mode in choices {
                 let f = SelectionUIFixture(source: image, candidates: [candidate], purpose: purpose)
                 try f.button("整屏").performClick(nil)
@@ -515,7 +550,7 @@ private struct SelectionUIVerification {
                     try require(f.actionButtons.contains(where: { $0.title == "整屏" && $0.state == .on }),
                                 "Screenshot full-screen mode disappeared instead of staying selected")
                 } else {
-                    try require(!f.actionButtons.contains(where: { $0.title == "整屏" }), "Recording full-screen button was not replaced by selection modes")
+                    try require(f.actionButtons.contains(where: { $0.title == "整屏" && $0.state == .on }), "Recording full-screen mode must stay visible and selected")
                 }
                 let button = try f.button(mode)
                 try require(isHit(f.hit(at: f.center(of: button)), inside: button), "\(mode) cannot receive hit testing")

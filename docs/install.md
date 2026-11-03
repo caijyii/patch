@@ -4,7 +4,7 @@
 
 ## 直接下载
 
-1. 从 [GitHub Releases](https://github.com/caijyii/patch/releases) 下载 DMG 或 ZIP。`Source code` 是源码，不是安装包。
+1. 如果收到维护者直接提供的 DMG，可从第 2 步开始。GitHub 附件的访问取决于仓库权限。否则，从 [GitHub Releases](https://github.com/caijyii/patch/releases) 下载 DMG 或 ZIP。`Source code` 是源码，不是安装包。
 2. **DMG**：双击打开，将 `Patch.app` 拖到旁边的「Applications」文件夹；安装后推出磁盘映像。**ZIP**：解压后将 `Patch.app` 拖入「应用程序」。先退出其他 Patch 版本；已有安装时先确认是否替换。
 3. 从「应用程序」打开 Patch，按实际使用的功能授权。
 
@@ -37,10 +37,10 @@ Agent 应遵守以下顺序：
 在下载目录运行（文件名以当前发行版为准）：
 
 ```sh
-shasum -a 256 Patch-0.1.0-preview.1-macOS-arm64.zip
+shasum -a 256 Patch-0.1.0-preview.2-macOS-arm64.zip
 ```
 
-将输出与同一发行版的 `SHA256SUMS.txt` 比对。DMG 同样可用 `shasum -a 256 文件名.dmg` 校验；本次补充的 DMG 校验值见 `SHA256SUMS-DMG.txt`。只需下载你选择的格式。
+将输出与同一发行版的 `SHA256SUMS.txt` 比对。DMG 同样可用 `shasum -a 256 文件名.dmg` 校验；当前版本的 DMG 与 ZIP 均记录在 `SHA256SUMS.txt` 中。旧版 `v0.1.0-preview.1` 后补 DMG 的独立校验文件为 `SHA256SUMS-DMG.txt`。只需下载你选择的格式。
 
 ## 更新与卸载
 

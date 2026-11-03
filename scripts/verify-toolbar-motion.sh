@@ -10,7 +10,7 @@ xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     scripts/verify-toolbar-motion.swift -o "$task_work/verify-toolbar-motion"
 "$task_work/verify-toolbar-motion" "$task_work" | tee "$task_work/results.log"
 # Native AppKit may exit early without a nonzero process status in a sandbox.
-if ! grep -Fxq 'COMPLETE: toolbar motion verification: 16 PASS, 0 FAIL' "$task_work/results.log"; then
+if ! grep -Fxq 'COMPLETE: toolbar motion verification: 17 PASS, 0 FAIL' "$task_work/results.log"; then
     echo "Toolbar verification did not complete; native AppKit services are required." >&2
     exit 1
 fi

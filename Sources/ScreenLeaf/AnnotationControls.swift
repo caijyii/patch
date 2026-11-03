@@ -125,6 +125,7 @@ final class ToolbarSeparator: NSView {
 }
 
 class SelectionButton: NSButton {
+    static let annotationSymbol = "pencil.tip"
     static func confirmation(_ title: String = "完成", toolTip: String, action: @escaping () -> Void) -> SelectionButton {
         let button = SelectionButton(title, symbol: "checkmark", action: action)
         button.imagePosition = .imageOnly
@@ -141,6 +142,7 @@ class SelectionButton: NSButton {
     }
 
     var isPrimaryAction = false { didSet { updateInteraction() } }
+    private var retainsSelection = false
     var actionBlock: (() -> Void)?
     private let glyph = PassiveImageView()
     private let caption = PassiveTextField(labelWithString: "")
@@ -162,6 +164,8 @@ class SelectionButton: NSButton {
 
     init(_ title: String, symbol: String? = nil, action: @escaping () -> Void) {
         super.init(frame: .zero)
+        // Commands must not latch; mode and option controls opt into toggling explicitly.
+        setButtonType(.momentaryPushIn)
         self.title = title
         toolTip = title
         setAccessibilityLabel(title)
@@ -206,7 +210,17 @@ class SelectionButton: NSButton {
         }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-    @objc private func invoke() { actionBlock?() }
+    override func setButtonType(_ type: NSButton.ButtonType) {
+        super.setButtonType(type)
+        retainsSelection = [.pushOnPushOff, .toggle, .switch, .radio, .onOff].contains(type)
+    }
+
+    @objc private func invoke() {
+        // AppKit advances state even for momentary buttons. Our custom drawing
+        // reads that state, so clear it before commands run (including failure paths).
+        if !retainsSelection { state = .off }
+        actionBlock?()
+    }
 
     override var intrinsicContentSize: NSSize {
         if imagePosition == .imageOnly || title.isEmpty { return CGSize(width: 32, height: 28) }
@@ -475,7 +489,7 @@ final class AnnotationControls {
         undoButton.imagePosition = .imageOnly
         undoButton.toolTip = "撤销标注（⌘Z）"
         let symbols: [ImageToolsTool: String] = [.arrow: "arrow.up.right", .rectangle: "rectangle", .ellipse: "circle",
-            .text: "textformat", .number: "number.circle", .pen: "pencil.tip", .mosaic: "square.grid.3x3.fill", .sticker: "leaf"]
+            .text: "textformat", .number: "number.circle", .pen: SelectionButton.annotationSymbol, .mosaic: "square.grid.3x3.fill", .sticker: "leaf"]
         for tool in ImageToolsTool.allCases {
             let button = SelectionButton(tool.rawValue, symbol: symbols[tool]) { [weak self] in self?.choose(tool: tool) }
             button.setButtonType(.pushOnPushOff)
@@ -655,6 +669,12 @@ final class SelectionOptionButton: SelectionButton {
         case color(NSColor), line(CGFloat), font(CGFloat), number(CGFloat), mosaic(CGFloat), sticker(String)
     }
     private let sample: Sample
+    private final class SampleView: NSView {
+        weak var owner: SelectionOptionButton?
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func draw(_ dirtyRect: NSRect) { owner?.drawSample() }
+    }
+    private let sampleView = SampleView()
 
     init(sample: Sample, label: String, action: @escaping () -> Void) {
         self.sample = sample
@@ -664,6 +684,11 @@ final class SelectionOptionButton: SelectionButton {
         focusRingType = .none
         setAccessibilityLabel(label)
         toolTip = label.replacingOccurrences(of: ":", with: " · ")
+        // Color and sticker samples must composite above the animated hover layer,
+        // just like the ordinary button's glyph and caption subviews.
+        sampleView.owner = self
+        sampleView.wantsLayer = true
+        addSubview(sampleView)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override var intrinsicContentSize: NSSize {
@@ -674,10 +699,19 @@ final class SelectionOptionButton: SelectionButton {
         }
     }
 
+    override func layout() {
+        super.layout()
+        sampleView.frame = bounds
+    }
+
     override func draw(_ dirtyRect: NSRect) {
+        drawSurface()
+        sampleView.needsDisplay = true
+    }
+
+    private func drawSample() {
         let selected = state == .on || isPrimaryAction
         let neutral: NSColor = usesDarkAppearance ? .white : ToolbarPalette.ink
-        drawSurface()
         let ink = selected ? ToolbarPalette.selectedInk : usesDarkAppearance ? NSColor.labelColor : ToolbarPalette.ink
         switch sample {
         case .color(let color):
@@ -784,6 +818,8 @@ final class StickerPickerController: NSViewController {
 
 final class SelectionToolbar: NSView {
     var rows: [[NSView]] = []
+    /// Reserve the upper-right corner for final actions while other tools wrap below.
+    var trailingActions: [NSView] = []
     private var installedItems: [NSView] = []
     private var surfaces: [ToolbarRowSurface] = []
     private var rowRules: [ToolbarRowRule] = []
@@ -830,21 +866,42 @@ final class SelectionToolbar: NSView {
             rowFrames.removeAll(keepingCapacity: true)
             top = 0; widest = 0
             for row in rows where !row.isEmpty {
+                let groupWidth = trailingActions.reduce(CGFloat(0)) { $0 + itemWidth($1, limit: widthLimit) }
+                    + CGFloat(max(0, trailingActions.count - 1)) * itemGap
+                let pinsActions = !trailingActions.isEmpty && groupWidth <= widthLimit - horizontalInset * 2
+                    && trailingActions.allSatisfy({ action in row.contains { $0 === action } })
+                let items = pinsActions ? row.filter { item in !trailingActions.contains { $0 === item } } : row
+                let naturalWidth = row.reduce(horizontalInset * 2) { $0 + itemWidth($1, limit: widthLimit) }
+                    + CGFloat(max(0, row.count - 1)) * itemGap
+                let rowLimit = pinsActions ? min(widthLimit, naturalWidth) : widthLimit
+                let firstLine = top + spacing.padding
                 var x = horizontalInset
-                var lineTop = top + spacing.padding
-                var rowWidth: CGFloat = 0
-                for (index, item) in row.enumerated() {
+                var lineTop = firstLine
+                var rowWidth: CGFloat = pinsActions ? rowLimit : 0
+                for (index, item) in items.enumerated() {
                     let width = itemWidth(item, limit: widthLimit)
+                    let lineLimit = rowLimit - horizontalInset
+                        - (pinsActions && lineTop == firstLine ? groupWidth + itemGap : 0)
                     if item is ToolbarSeparator {
-                        let nextWidth = row.dropFirst(index + 1).first(where: { !($0 is ToolbarSeparator) })
+                        let nextWidth = items.dropFirst(index + 1).first(where: { !($0 is ToolbarSeparator) })
                             .map { itemWidth($0, limit: widthLimit) }
-                        item.isHidden = x == horizontalInset || nextWidth == nil || x + width + itemGap + (nextWidth ?? 0) > widthLimit - horizontalInset
+                        item.isHidden = x == horizontalInset || nextWidth == nil || x + width + itemGap + (nextWidth ?? 0) > lineLimit
                         if item.isHidden { continue }
                     }
-                    if x > horizontalInset, x + width > widthLimit - horizontalInset { lineTop += spacing.line; x = horizontalInset }
+                    if x + width > lineLimit, x > horizontalInset || (pinsActions && lineTop == firstLine) {
+                        lineTop += spacing.line; x = horizontalInset
+                    }
                     placements.append((item, CGRect(x: x, y: lineTop, width: width, height: 28)))
                     x += width + itemGap
                     rowWidth = max(rowWidth, x - itemGap + horizontalInset)
+                }
+                if pinsActions {
+                    var actionX = rowLimit - horizontalInset - groupWidth
+                    for action in trailingActions {
+                        let width = itemWidth(action, limit: widthLimit)
+                        placements.append((action, CGRect(x: actionX, y: firstLine, width: width, height: 28)))
+                        actionX += width + itemGap
+                    }
                 }
                 let rowHeight = lineTop + 28 + spacing.padding - top
                 rowFrames.append(CGRect(x: 0, y: top, width: min(widthLimit, rowWidth), height: rowHeight))
@@ -856,6 +913,13 @@ final class SelectionToolbar: NSView {
             break
         }
         let size = CGSize(width: min(widthLimit, widest), height: height)
+        let trailingIndices = trailingActions.compactMap { action in placements.firstIndex { $0.0 === action } }
+        if !trailingIndices.isEmpty, trailingIndices.count == trailingActions.count,
+           let last = trailingIndices.last,
+           trailingIndices.allSatisfy({ placements[$0].1.minY == placements[last].1.minY }) {
+            let shift = max(0, size.width - horizontalInset - placements[last].1.maxX)
+            for index in trailingIndices { placements[index].1 = placements[index].1.offsetBy(dx: shift, dy: 0) }
+        }
         let surfaceCount = rowFrames.isEmpty ? 0 : 1
         while surfaces.count > surfaceCount { surfaces.removeLast().removeFromSuperview() }
         while surfaces.count < surfaceCount {

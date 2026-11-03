@@ -19,6 +19,39 @@ extension RecordingCoordinator {
             return coordinator
         }
 
+        func snapshot(_ coordinator: RecordingCoordinator, name: String) throws {
+            guard let content = coordinator.panel?.contentView,
+                  let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return }
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent(".build/verification/recording-lifecycle/\(name).png")
+            try bitmap.representation(using: .png, properties: [:])?.write(to: url)
+        }
+        let compact = fixture()
+        try snapshot(compact, name: "controls-idle")
+        try require((compact.panel?.frame.width ?? 1000) < 400 && (compact.panel?.frame.height ?? 1000) < 260,
+                    "Idle recording controls must fit their content")
+        compact.phase = .preparing
+        compact.setStatus("选择 MP4 保存位置")
+        compact.updateControls()
+        let promptWidth = ceil((compact.statusLabel.stringValue as NSString).size(withAttributes: [.font: compact.statusLabel.font ?? NSFont.systemFont(ofSize: 13)]).width)
+        try require(compact.statusLabel.frame.width >= promptWidth, "Save-location prompt must fit on one line")
+        try snapshot(compact, name: "controls-save-location")
+        compact.setStatus("")
+        compact.phase = .recording
+        compact.updateControls()
+        try require((compact.panel?.frame.height ?? 1000) < 150 && (compact.panel?.frame.width ?? 1000) < 200 && compact.audioToolbar.isHidden
+                    && compact.startButton.superview == nil, "Active recording must show compact stop controls")
+        try snapshot(compact, name: "controls-recording")
+        compact.phase = .idle
+        compact.failure = ScreenLeafError(message: "合成错误")
+        compact.setStatus("未能开始录制，请检查屏幕录制权限后重试。", isError: true)
+        compact.updateControls()
+        try require((compact.panel?.frame.width ?? 1000) < 400 && compact.settingsButton.superview != nil,
+                    "Compact error controls must retain the recovery action")
+        try snapshot(compact, name: "controls-error")
+        print("PASS: recording controls shrink to their current phase")
+
         let waiting = fixture()
         waiting.phase = .preparing
         let cancelledID = waiting.sessionID
