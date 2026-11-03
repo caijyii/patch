@@ -31,6 +31,8 @@ codesign --verify --deep --strict --verbose=2 "$app_path"
 archive_name="Patch-${release_tag#v}-macOS-arm64.zip"
 # Resource forks, Finder metadata and local extended attributes are not needed.
 COPYFILE_DISABLE=1 ditto -c -k --norsrc --noextattr --keepParent "$app_path" "$output_dir/$archive_name"
+dmg_name="${archive_name%.zip}.dmg"
+bash scripts/package-dmg.sh "$app_path" "$output_dir/$dmg_name"
 cp docs/install.md "$output_dir/INSTALL.md"
 python3 - "$output_dir" "$archive_name" "$release_tag" "$source_commit" <<'PY'
 import hashlib, json, pathlib, plistlib, sys
@@ -40,6 +42,8 @@ info = plistlib.loads((out / 'Patch.app/Contents/Info.plist').read_bytes())
 if tag.split('-preview.')[0] != 'v' + info['CFBundleShortVersionString']:
     raise SystemExit('Tag and bundle version disagree; do not publish')
 archive_hash = hashlib.sha256((out / archive).read_bytes()).hexdigest()
+dmg = archive.removesuffix('.zip') + '.dmg'
+dmg_hash = hashlib.sha256((out / dmg).read_bytes()).hexdigest()
 manifest = {
     'product': 'Patch', 'release_tag': tag, 'channel': 'preview',
     'repository': 'https://github.com/caijyii/patch', 'source_commit': commit,
@@ -48,10 +52,15 @@ manifest = {
     'minimum_macos': info['LSMinimumSystemVersion'],
     'signing': 'ad-hoc', 'notarized': False, 'app_sandbox': True,
     'archive': archive, 'sha256': archive_hash,
+    'preferred_installer': dmg,
+    'installers': [
+        {'file': dmg, 'format': 'dmg', 'sha256': dmg_hash},
+        {'file': archive, 'format': 'zip', 'sha256': archive_hash},
+    ],
     'download_url': f'https://github.com/caijyii/patch/releases/download/{tag}/{archive}',
 }
 (out / 'release-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-assets = [archive, 'INSTALL.md', 'release-manifest.json']
+assets = [dmg, archive, 'INSTALL.md', 'release-manifest.json']
 (out / 'SHA256SUMS.txt').write_text(''.join(
     f'{hashlib.sha256((out / name).read_bytes()).hexdigest()}  {name}\n' for name in assets))
 print(f'Preview assets ready: {out}')
