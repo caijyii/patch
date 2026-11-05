@@ -8,6 +8,7 @@ import Darwin
 @main
 struct ScreenLeafMain {
     static func main() {
+        AppLocalization.language = PreferencesStore.shared.languagePreference
         let app = NSApplication.shared
         if ProcessInfo.processInfo.arguments.contains("--ocr-self-check") {
             let passed = ImageToolsDiagnostics.checkOCR(DemoImage.make())
@@ -16,6 +17,7 @@ struct ScreenLeafMain {
         let delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
+        WindowActivationDiagnostics.startIfRequested()
         app.run()
         withExtendedLifetime(delegate) {}
     }
@@ -23,10 +25,13 @@ struct ScreenLeafMain {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
-    private var statusItem: NSStatusItem!
+    private var statusControls: StatusBarControls!
+    private var pauseRecordingItem: NSMenuItem?
+    private var showRecordingControlsItem: NSMenuItem?
+    private var recordingMenuSeparator: NSMenuItem?
     private var homeController: HomeWindowController?
     private let selector = RegionSelector()
-    private let captureService = CaptureService()
+    private let captureService: CaptureService
     private let imageTools = ImageToolsCoordinator()
     private let recording = RecordingCoordinator()
     private var hotKeys: HotKeys!
@@ -34,23 +39,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let hotKeyBackend: HotKeyBackend?
     private var menuActions: [ShortcutAction: NSMenuItem] = [:]
     private var pinVisibilityMenuItem: NSMenuItem?
+    private lazy var recentContent = RecentContentStore(limit: 20)
+    private lazy var clipboardMonitor = RecentClipboardMonitor(store: recentContent)
+    private var recentController: RecentContentWindowController?
+    private let monitorsClipboard: Bool
 
-    init(preferences: PreferencesStore? = nil, hotKeyBackend: HotKeyBackend? = nil) {
+    init(preferences: PreferencesStore? = nil, hotKeyBackend: HotKeyBackend? = nil,
+         monitorsClipboard: Bool = true, captureService: CaptureService? = nil) {
         self.preferences = preferences ?? .shared
         self.hotKeyBackend = hotKeyBackend
+        self.monitorsClipboard = monitorsClipboard
+        self.captureService = captureService ?? CaptureService()
         super.init()
     }
     private var lastExternalApplication: NSRunningApplication?
     private var activationObserver: NSObjectProtocol?
     private var quitTimer: Timer?
-    private lazy var scrollCapture = ScrollCaptureCoordinator(capture: { [weak self] region in
+    private lazy var scrollCapture: ScrollCaptureCoordinator = ScrollCaptureCoordinator(capture: { [weak self] region in
         guard let self else { throw ScreenLeafError(message: "截图任务已关闭。") }
         return try await self.captureService.capture(region)
     }, onComplete: { [weak self] image, action in
         guard let self else { throw ScreenLeafError(message: "截图任务已关闭。") }
         switch action {
-        case .copy: try ImageToolsUI.copyPNG(image)
-        case .annotate: self.imageTools.showEditor(image)
+        case .copy: try ImageToolsUI.copyPNG(image, pixelScale: self.scrollCapture.outputPixelScale)
+        case .annotate: self.imageTools.showEditor(image, pixelScale: self.scrollCapture.outputPixelScale)
         }
     })
 
@@ -64,6 +76,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                   app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
             MainActor.assumeIsolated { self?.lastExternalApplication = app }
         }
+        ImageToolsUI.onCompletedImage = { [weak self] image, scale in self?.recentContent.addImage(image, pixelScale: scale) }
+        ImageToolsUI.onCompletedText = { [weak self] text in self?.recentContent.addText(text) }
+        imageTools.onPinStateChange = { [weak self] in self?.refreshPinVisibilityAction() }
+        recording.onStateChange = { [weak self] in self?.refreshRecordingActions() }
+        recentContent.onChange = { [weak self] in
+            if self?.recentController?.window?.isVisible == true { self?.recentController?.reload() }
+            self?.homeController?.refreshShortcuts()
+        }
+        applyOptions()
+        clipboardMonitor.setEnabled(monitorsClipboard)
         installMenu()
         installShortcuts()
         showHome()
@@ -80,40 +102,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        showHome()
+        if !WindowActivationCoordinator.shared.restoreWindow() { showHome() }
         return false
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) { homeController?.refreshPermissions() }
+
     private func installMenu() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = IconArtwork.menuBarImage()
-        statusItem.button?.toolTip = "小贴 · Patch · 截图、长截图、贴图和录屏"
         let menu = GlobalShortcutMenu()
         for action in ShortcutAction.displayOrder {
-            let item = NSMenuItem(title: action.title, action: selector(for: action), keyEquivalent: "")
+            let item = NSMenuItem(title: L(action.title), action: selector(for: action), keyEquivalent: "")
             item.target = self
             menuActions[action] = item
             menu.addItem(item)
         }
-        menu.addItem(.separator())
-        let pinItem = NSMenuItem(title: "隐藏全部贴图", action: #selector(togglePins), keyEquivalent: "")
+        let pinItem = NSMenuItem(title: L("隐藏全部贴图"), action: #selector(togglePins), keyEquivalent: "")
         pinItem.target = self
         pinVisibilityMenuItem = pinItem
         menuActions[.togglePins] = pinItem
         menu.addItem(pinItem)
+        let recordingSeparator = NSMenuItem.separator()
+        menu.addItem(recordingSeparator); recordingMenuSeparator = recordingSeparator
+        let pauseItem = NSMenuItem(title: L("暂停录制"), action: #selector(toggleRecordingPause), keyEquivalent: "")
+        pauseItem.target = self; menu.addItem(pauseItem); pauseRecordingItem = pauseItem
+        let controlsItem = NSMenuItem(title: L("显示控制窗"), action: #selector(showRecordingControls), keyEquivalent: "")
+        controlsItem.target = self; menu.addItem(controlsItem); showRecordingControlsItem = controlsItem
+        menu.addItem(.separator())
         for (title, action, key) in [("设置", #selector(showSettings), ","), ("退出", #selector(quit), "q")] {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            let item = NSMenuItem(title: L(title), action: action, keyEquivalent: key)
             item.target = self
             menu.addItem(item)
         }
-        statusItem.menu = menu
+        statusControls = StatusBarControls(menu: menu)
         refreshPinVisibilityAction()
+        refreshRecordingActions()
         let appMenu = NSMenu()
         let rootItem = NSMenuItem()
         let applicationMenu = NSMenu()
-        let quitItem = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: L("退出"), action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
-        let settingsItem = NSMenuItem(title: "设置", action: #selector(showSettings), keyEquivalent: ",")
+        let settingsItem = NSMenuItem(title: L("设置"), action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         applicationMenu.addItem(settingsItem)
         applicationMenu.addItem(.separator())
@@ -121,12 +149,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         rootItem.submenu = applicationMenu
         appMenu.addItem(rootItem)
         // Standard editing shortcuts also work in editable text pins and OCR results.
-        let editItem = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
-        let editMenu = NSMenu(title: "编辑")
+        let editItem = NSMenuItem(title: L("编辑"), action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: L("编辑"))
         for (title, action, key) in [("撤销", Selector(("undo:")), "z"), ("剪切", #selector(NSText.cut(_:)), "x"),
                                    ("复制", #selector(NSText.copy(_:)), "c"), ("粘贴", #selector(NSText.paste(_:)), "v"),
                                    ("全选", #selector(NSText.selectAll(_:)), "a")] {
-            editMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: key))
+            editMenu.addItem(NSMenuItem(title: L(title), action: action, keyEquivalent: key))
         }
         editItem.submenu = editMenu
         appMenu.addItem(editItem)
@@ -142,7 +170,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             .pin: { [weak self] in self?.pinClipboard() },
             .record: { [weak self] in self?.recordScreen() },
             .subject: { [weak self] in self?.subjectScreenshot() },
-            .togglePins: { [weak self] in self?.togglePins() }
+            .togglePins: { [weak self] in self?.togglePins() },
+            .recentContent: { [weak self] in self?.showRecentContent() },
+            .pinRecent: { [weak self] in self?.pinRecentContent() }
         ]
         hotKeys.installShortcuts(preferences.shortcuts, actions: actions)
         refreshShortcutLabels()
@@ -157,18 +187,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         case .record: return #selector(recordScreen)
         case .subject: return #selector(subjectScreenshot)
         case .togglePins: return #selector(togglePins)
+        case .recentContent: return #selector(showRecentContent)
+        case .pinRecent: return #selector(pinRecentContent)
         }
     }
 
     private func refreshShortcutLabels() {
-        (statusItem.menu as? GlobalShortcutMenu)?.globalShortcuts = Set(preferences.shortcuts.values.filter { !$0.isApplicationReserved })
+        (statusControls.menu as? GlobalShortcutMenu)?.globalShortcuts = Set(preferences.shortcuts.values.filter { !$0.isApplicationReserved })
         for action in ShortcutAction.allCases {
             let unavailable = hotKeys.unavailable.contains(action.legacyID)
-            let suffix = unavailable ? " · 不可用" : ""
-            menuActions[action]?.title = "\(action.title)\(suffix)"
+            let suffix = unavailable ? L(" · 不可用") : ""
+            let title = action == .pinRecent ? preferences.pinRecentTitle : action.title
+            menuActions[action]?.title = "\(title)\(suffix)"
             if let item = menuActions[action] { updateMenuShortcut(item, action: action) }
         }
         refreshPinVisibilityAction()
+        refreshRecordingActions()
         homeController?.refreshShortcuts()
     }
 
@@ -176,9 +210,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         showHome()
     }
 
+    private func applyOptions() {
+        NSApp.appearance = preferences.appearancePreference.appearance
+        if hotKeys != nil { refreshShortcutLabels() }
+    }
+
+    @objc private func showRecentContent() {
+        guard homeController?.finishEditing() != false else { return }
+        if recentController == nil {
+            recentController = RecentContentWindowController(store: recentContent) { [weak self] item in
+                self?.pinRecentItem(item, anchor: NSEvent.mouseLocation)
+            }
+        }
+        recentController?.showWindow(nil)
+    }
+
+    @objc private func pinRecentContent() {
+        guard homeController?.finishEditing() != false else { return }
+        let anchor = NSEvent.mouseLocation
+        let items = Array(recentContent.items.prefix(preferences.pinRecentCount))
+        // Open the latest record last, so it remains above the older staggered pins.
+        for (index, item) in items.enumerated().reversed() {
+            pinRecentItem(item, anchor: anchor, batchIndex: index)
+        }
+    }
+
+    private func pinRecentItem(_ item: RecentContentStore.Item, anchor: NSPoint, batchIndex: Int = 0) {
+        switch item.content {
+        case .image(let data, _, let scale):
+            guard let image = NSImage(data: data)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+            imageTools.pinImage(image, pixelScale: scale, recordsHistory: false, anchor: anchor, batchIndex: batchIndex)
+        case .text(let text): imageTools.pinText(text, recordsHistory: false, anchor: anchor, batchIndex: batchIndex)
+        }
+    }
+
+    private func requestScreenPermission() {
+        _ = captureService.ensurePermission()
+        homeController?.refreshPermissions()
+    }
+
     private func refreshPinVisibilityAction() {
-        let title = imageTools.arePinsHidden ? "显示全部贴图" : "隐藏全部贴图"
-        let suffix = hotKeys?.unavailable.contains(ShortcutAction.togglePins.legacyID) == true ? " · 不可用" : ""
+        let title = L(imageTools.arePinsHidden ? "显示全部贴图" : "隐藏全部贴图")
+        let suffix = hotKeys?.unavailable.contains(ShortcutAction.togglePins.legacyID) == true ? L(" · 不可用") : ""
         pinVisibilityMenuItem?.title = "\(title)\(suffix)"
         if let item = pinVisibilityMenuItem { updateMenuShortcut(item, action: .togglePins) }
         pinVisibilityMenuItem?.isEnabled = imageTools.hasPins
@@ -193,6 +266,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(toggleRecordingPause) { return recording.canPauseOrResume }
+        if menuItem.action == #selector(showRecordingControls) { return recording.canShowControls }
+        if menuItem.action == #selector(pinRecentContent) { return !recentContent.items.isEmpty }
         guard menuItem.action == #selector(togglePins) else { return true }
         refreshPinVisibilityAction()
         return imageTools.hasPins
@@ -207,13 +283,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if recording.isRecording { recording.stop(); return }
         selectRegion(purpose: .record)
     }
+    @objc private func toggleRecordingPause() { recording.togglePause() }
+    @objc private func showRecordingControls() { recording.showControls() }
+
+    private func refreshRecordingActions() {
+        let active = recording.isRecording
+        pauseRecordingItem?.isHidden = !active
+        pauseRecordingItem?.title = L(recording.isPaused ? "继续录制" : "暂停录制")
+        pauseRecordingItem?.isEnabled = recording.canPauseOrResume
+        showRecordingControlsItem?.isHidden = !recording.canShowControls
+        recordingMenuSeparator?.isHidden = !active
+        let unavailable = hotKeys?.unavailable.contains(ShortcutAction.record.legacyID) == true ? L(" · 不可用") : ""
+        menuActions[.record]?.title = L(active ? "停止录制" : "录屏") + unavailable
+    }
     @objc private func pinClipboard() {
         homeController?.editor.stopRecording()
         imageTools.pinClipboard()
     }
     @objc private func togglePins() {
         imageTools.togglePins()
-        refreshPinVisibilityAction()
     }
     @objc private func showDemo() { imageTools.showEditor(DemoImage.make()) }
     @objc private func quit() { NSApp.terminate(nil) }
@@ -224,11 +312,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             showError(ScreenLeafError(message: "请先完成或取消正在进行的长截图。"))
             return
         }
-        guard captureService.ensurePermission() else { return }
+        let permitted = captureService.ensurePermission()
+        homeController?.refreshPermissions()
+        guard permitted else { return }
         if purpose == .scroll, !ScrollCapturePermission.ensurePermission() { return }
-        homeController?.window?.orderOut(nil)
-        let frontmost = NSWorkspace.shared.frontmostApplication
-        let target = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? lastExternalApplication : frontmost
+        let target = NSWorkspace.shared.frontmostApplication
         selector.select(purpose: purpose, initialMode: initialMode, targetApplication: target, capture: { [weak self] region in
             guard let self else { throw ScreenLeafError(message: "截图任务已关闭。") }
             return try await self.captureService.capture(region)
@@ -268,10 +356,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                     case .record: self.recordScreen()
                     case .subject: self.subjectScreenshot()
                     case .togglePins: self.togglePins()
+                    case .recentContent: self.showRecentContent()
+                    case .pinRecent: self.pinRecentContent()
                     }
                 }, pinState: { [weak self] in (self?.imageTools.hasPins ?? false, self?.imageTools.arePinsHidden ?? false) },
-                onQuit: { [weak self] in self?.quit() })
+                onQuit: { [weak self] in self?.quit() },
+                onRecentContent: { [weak self] in self?.showRecentContent() },
+                screenPermission: { [weak self] in self?.captureService.hasPermission ?? false },
+                onRequestScreenPermission: { [weak self] in self?.requestScreenPermission() },
+                onOptionsChanged: { [weak self] in self?.applyOptions() },
+                hasRecentContent: { [weak self] in !(self?.recentContent.items.isEmpty ?? true) })
         }
+        homeController?.showHomePage()
         homeController?.showWindow(nil)
     }
 
@@ -295,6 +391,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        statusControls?.remove()
+        clipboardMonitor.setEnabled(false)
+        recentContent.clear()
+        ImageToolsUI.onCompletedImage = nil; ImageToolsUI.onCompletedText = nil
+        recentController?.close()
         imageTools.closeAll()
         if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
     }

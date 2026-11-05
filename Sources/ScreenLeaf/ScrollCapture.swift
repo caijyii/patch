@@ -89,7 +89,7 @@ private final class HorizontalScrollLock {
     func install(onFailure: @escaping (String) -> Void) -> String? {
         self.onFailure = onFailure
         guard AXIsProcessTrusted() else {
-            return "控制权限已失效。请完成或取消当前截图，在隐私与安全中允许小贴控制 Mac 后重新开始。"
+            return L("控制权限已失效。请完成或取消当前截图，在隐私与安全中允许小贴控制 Mac 后重新开始。")
         }
         let mask = CGEventMask(1 << CGEventType.scrollWheel.rawValue)
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
@@ -99,8 +99,8 @@ private final class HorizontalScrollLock {
             let owner = Unmanaged<HorizontalScrollLock>.fromOpaque(context).takeUnretainedValue()
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                 let explanation = type == .tapDisabledByTimeout
-                    ? "系统因事件处理超时停用了横向锁，已暂停。点击继续可重新启用。"
-                    : "系统停用了横向锁，已暂停。请检查控制权限，再点击继续。"
+                    ? L("系统因事件处理超时停用了横向锁，已暂停。点击继续可重新启用。")
+                    : L("系统停用了横向锁，已暂停。请检查控制权限，再点击继续。")
                 owner.failureNote = explanation
                 HorizontalScrollLock.logger.error("Horizontal filter disabled: timeout=\(type == .tapDisabledByTimeout, privacy: .public)")
                 owner.onFailure?(explanation)
@@ -116,11 +116,11 @@ private final class HorizontalScrollLock {
             HorizontalScrollFilter.apply(to: event)
             return Unmanaged.passUnretained(event)
         }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-            return "无法启用横向锁，长截图尚未开始。请检查小贴的控制权限，再点击开始或继续。"
+            return L("无法启用横向锁，长截图尚未开始。请检查小贴的控制权限，再点击开始或继续。")
         }
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
             CFMachPortInvalidate(tap)
-            return "无法安装横向锁，长截图尚未开始。请点击开始或继续重试。"
+            return L("无法安装横向锁，长截图尚未开始。请点击开始或继续重试。")
         }
         self.tap = tap
         self.source = source
@@ -128,7 +128,7 @@ private final class HorizontalScrollLock {
         CGEvent.tapEnable(tap: tap, enable: true)
         guard CGEvent.tapIsEnabled(tap: tap) else {
             stop()
-            return "系统未启用横向锁，长截图尚未开始。请检查控制权限后重试。"
+            return L("系统未启用横向锁，长截图尚未开始。请检查控制权限后重试。")
         }
         Self.logger.notice("Horizontal filter installed: target=\(self.targetPID ?? -1, privacy: .public), x=\(self.region.minX, privacy: .public), y=\(self.region.minY, privacy: .public), width=\(self.region.width, privacy: .public), height=\(self.region.height, privacy: .public)")
         return nil
@@ -175,7 +175,6 @@ private final class ScrollOutlineView: NSView {
 private final class ScrollHUDContent: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
-        appearance = NSAppearance(named: .aqua)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
     }
@@ -235,9 +234,9 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         }
         var label: String {
             switch self {
-            case .manual: return "手动 · 可上下滚动"
-            case .automatic(.up): return "自动向上 · 移鼠标暂停"
-            case .automatic(.down): return "自动向下 · 移鼠标暂停"
+            case .manual: return L("手动 · 可上下滚动")
+            case .automatic(.up): return L("自动向上 · 移鼠标暂停")
+            case .automatic(.down): return L("自动向下 · 移鼠标暂停")
             }
         }
     }
@@ -254,6 +253,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     private var previewMaterial = ToolbarMaterialView(role: .parameter, blendingMode: .behindWindow)
     private var previewView = ScrollPreviewView(frame: .zero)
     private var previewExpanded = true
+    var outputPixelScale: CGFloat? { region?.scale }
     private var region: CaptureRegion?
     private var targetApplication: NSRunningApplication?
     private var processor = ScrollCaptureProcessor()
@@ -274,7 +274,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     private var downButton = NSButton()
     private var pauseButton = NSButton()
     private var previewButton = NSButton()
-    private var finishButton = SelectionButton("完成", symbol: "checkmark") {}
+    private var finishButton = SelectionButton(L("完成"), symbol: "checkmark") {}
     private var annotateButton = NSButton()
     private var cancelButton = NSButton()
 
@@ -370,7 +370,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.delegate = self
-        panel.title = "小贴 · 长截图"
+        panel.title = L("Patch · 长截图")
         panel.identifier = NSUserInterfaceItemIdentifier("patch.scroll.hud")
         toolbar = SelectionToolbar(blendingMode: .behindWindow)
         hudContent = ScrollHUDContent(frame: .zero)
@@ -388,27 +388,27 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         hudContent.addSubview(previewMaterial)
         hudContent.addSubview(previewView)
         panel.contentView = hudContent
-        statusLabel = NSTextField(labelWithString: "正在准备首帧")
+        statusLabel = NSTextField(labelWithString: L("正在准备首帧"))
         statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
         statusLabel.textColor = ToolbarPalette.ink
         statusLabel.identifier = NSUserInterfaceItemIdentifier("scroll.status")
-        dimensionsLabel = NSTextField(labelWithString: "等待首帧")
+        dimensionsLabel = NSTextField(labelWithString: L("等待首帧"))
         dimensionsLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         dimensionsLabel.textColor = ToolbarPalette.secondaryInk
-        upButton = SelectionButton("自动上", symbol: "arrow.up") { [weak self] in self?.selectMode(.automatic(.up)) }
-        downButton = SelectionButton("自动下", symbol: "arrow.down") { [weak self] in self?.selectMode(.automatic(.down)) }
-        pauseButton = SelectionButton("暂停自动", symbol: "pause.fill") { [weak self] in self?.pauseOrResume() }
-        previewButton = SelectionButton("预览", symbol: "photo") { [weak self] in self?.togglePreview() }
-        finishButton = SelectionButton.confirmation(toolTip: "完成长截图，复制并关闭") { [weak self] in self?.finish(.copy) }
-        annotateButton = SelectionButton("标注", symbol: SelectionButton.annotationSymbol) { [weak self] in self?.finish(.annotate) }
-        annotateButton.toolTip = "在当前浮层标注完整长图"
-        cancelButton = SelectionButton.cancellation(toolTip: "取消长截图") { [weak self] in self?.cancel() }
+        upButton = SelectionButton(L("自动上"), symbol: "arrow.up") { [weak self] in self?.selectMode(.automatic(.up)) }
+        downButton = SelectionButton(L("自动下"), symbol: "arrow.down") { [weak self] in self?.selectMode(.automatic(.down)) }
+        pauseButton = SelectionButton(L("暂停自动"), symbol: "pause.fill") { [weak self] in self?.pauseOrResume() }
+        previewButton = SelectionButton(L("预览"), symbol: "photo") { [weak self] in self?.togglePreview() }
+        finishButton = SelectionButton.confirmation(toolTip: L("完成长截图，复制并关闭")) { [weak self] in self?.finish(.copy) }
+        annotateButton = SelectionButton(L("标注"), symbol: SelectionButton.annotationSymbol) { [weak self] in self?.finish(.annotate) }
+        annotateButton.toolTip = L("在当前浮层标注完整长图")
+        cancelButton = SelectionButton.cancellation(toolTip: L("取消长截图")) { [weak self] in self?.cancel() }
         toolbar.trailingActions = [cancelButton, finishButton]
         for button in [upButton, downButton, pauseButton, previewButton, finishButton, annotateButton, cancelButton] {
             button.imagePosition = .imageOnly
         }
-        upButton.toolTip = "自动向上滚动并拼接"
-        downButton.toolTip = "自动向下滚动并拼接"
+        upButton.toolTip = L("自动向上滚动并拼接")
+        downButton.toolTip = L("自动向下滚动并拼接")
         for button in [upButton, downButton, previewButton] { button.setButtonType(.pushOnPushOff) }
         self.panel = panel
         refreshHUD()
@@ -423,20 +423,20 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             button.isEnabled = state != .finishing
             button.contentTintColor = button.state == .on ? ToolbarPalette.selectedInk : nil
         }
-        pauseButton.title = state == .paused ? "继续" : "暂停自动"
+        pauseButton.title = state == .paused ? L("继续") : L("暂停自动")
         pauseButton.setAccessibilityLabel(pauseButton.title)
         let paused = state == .paused
         pauseButton.image = NSImage(systemSymbolName: paused ? "play.fill" : "pause.fill",
                                    accessibilityDescription: pauseButton.title)
         // AppKit can reset image positioning when the title/image changes.
         pauseButton.imagePosition = .imageOnly
-        pauseButton.toolTip = paused ? "继续捕获已有选区" : "停止自动滚动，继续手动捕获"
+        pauseButton.toolTip = paused ? L("继续捕获已有选区") : L("停止自动滚动，继续手动捕获")
         pauseButton.isEnabled = (state == .running && mode.isAutomatic) || state == .paused
         previewButton.state = previewExpanded ? .on : .off
-        previewButton.toolTip = previewExpanded ? "收起长图预览" : "展开长图预览"
+        previewButton.toolTip = previewExpanded ? L("收起长图预览") : L("展开长图预览")
         finishButton.isEnabled = hasFirstFrame && state != .finishing
         annotateButton.isEnabled = finishButton.isEnabled
-        dimensionsLabel.stringValue = hasFirstFrame ? "\(imageWidth) × \(imageHeight) px" : "等待首帧"
+        dimensionsLabel.stringValue = hasFirstFrame ? "\(imageWidth) × \(imageHeight) px" : L("等待首帧")
         var actions: [NSView] = [upButton, downButton]
         if state == .paused || (state == .running && mode.isAutomatic) { actions.append(pauseButton) }
         actions += [previewButton, annotateButton, cancelButton, finishButton]
@@ -521,7 +521,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         mode = .manual
         hasPostedAutomaticScroll = false
         duplicateCount = 0
-        setStatus("自动已暂停 · 可手动滚动")
+        setStatus(L("自动已暂停 · 可手动滚动"))
         return true
     }
 
@@ -531,11 +531,11 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         task?.cancel()
         task = nil
         guard let application = targetApplication, !application.isTerminated else {
-            pause("原窗口不可用", detail: "无法识别选区所在应用。请取消并在原窗口重新框选。")
+            pause(L("原窗口不可用"), detail: L("无法识别选区所在应用。请取消并在原窗口重新框选。"))
             return
         }
         if !ScrollEventRouting.isFrontmost(application), !application.activate(options: []) {
-            pause("请前置原窗口后继续")
+            pause(L("请前置原窗口后继续"))
             return
         }
         guard installScrollLock() else { return }
@@ -555,7 +555,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                 try Task.checkCancellation()
                 guard self.isCapturing(token: token, operation: operation) else { return }
                 guard ScrollEventRouting.isFrontmost(application) else {
-                    self.pause("请前置原窗口后继续")
+                    self.pause(L("请前置原窗口后继续"))
                     return
                 }
                 guard self.checkScrollLock() else { return }
@@ -568,7 +568,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                 while !Task.isCancelled && self.isCapturing(token: token, operation: operation) {
                     guard self.checkScrollLock() else { return }
                     guard ScrollEventRouting.isFrontmost(application) else {
-                        self.pause("前台已切换 · 已暂停")
+                        self.pause(L("前台已切换 · 已暂停"))
                         return
                     }
                     let requestedMode = self.mode
@@ -579,7 +579,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                     guard let frame = try await self.stableFrame(region: region, automatic: requestedMode.isAutomatic,
                                                                  token: token, operation: operation) else {
                         if requestedMode.isAutomatic {
-                            self.waitForOverlap("画面未稳定 · 可手动滚动")
+                            self.waitForOverlap(L("画面未稳定 · 可手动滚动"))
                         }
                         continue
                     }
@@ -591,7 +591,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                 // The horizontal lock remains installed while paused.
             } catch {
                 guard self.isCapturing(token: token, operation: operation) else { return }
-                self.pause("截图失败 · 已暂停", detail: error.localizedDescription)
+                self.pause(L("截图失败 · 已暂停"), detail: error.localizedDescription)
             }
         }
     }
@@ -611,11 +611,11 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             DispatchQueue.main.async { [weak self, weak lock] in
                 guard let self, let lock, self.session == token,
                       self.scrollLock === lock, self.state != .finishing else { return }
-                self.pause("横向锁已停止 · 已暂停", detail: explanation)
+                self.pause(L("横向锁已停止 · 已暂停"), detail: explanation)
             }
         }) {
             lock.stop()
-            pause("请授权控制权限后继续", detail: explanation)
+            pause(L("请授权控制权限后继续"), detail: explanation)
             return false
         }
         scrollLock = lock
@@ -624,7 +624,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
 
     private func checkScrollLock() -> Bool {
         guard scrollLock?.isFiltering == true else {
-            pause("横向锁未启用 · 点继续", detail: scrollLock?.failureNote)
+            pause(L("横向锁未启用 · 点继续"), detail: scrollLock?.failureNote)
             return false
         }
         return true
@@ -639,14 +639,14 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             guard isCapturing(token: token, operation: operation) else { throw CancellationError() }
             guard checkScrollLock() else { throw CancellationError() }
             guard ScrollEventRouting.isFrontmost(targetApplication) else {
-                pause("前台已切换 · 已暂停")
+                pause(L("前台已切换 · 已暂停"))
                 throw CancellationError()
             }
             let frame = try await capture(region)
             try Task.checkCancellation()
             guard isCapturing(token: token, operation: operation) else { throw CancellationError() }
             guard ScrollEventRouting.isFrontmost(targetApplication) else {
-                pause("前台已切换 · 已暂停")
+                pause(L("前台已切换 · 已暂停"))
                 throw CancellationError()
             }
             let sample = await processor.fingerprint(frame)
@@ -660,14 +660,14 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             lastSample = sample
             try await Task.sleep(nanoseconds: 140_000_000)
         }
-        if !automatic, state != .recovering { setStatus("滚动一小段后稍停") }
+        if !automatic, state != .recovering { setStatus(L("滚动一小段后稍停")) }
         return nil
     }
 
     private func accept(_ frame: CGImage, token: UUID, operation: UUID) async {
         guard isCapturing(token: token, operation: operation), checkScrollLock() else { return }
         guard ScrollEventRouting.isFrontmost(targetApplication) else {
-            pause("前台已切换 · 已暂停")
+            pause(L("前台已切换 · 已暂停"))
             return
         }
         let (update, preview) = await processor.append(frame)
@@ -689,27 +689,27 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             if state == .recovering { state = .running }
             imageHeight = height
             duplicateCount = 0
-            setStatus("已覆盖区域 · 可继续")
+            setStatus(L("已覆盖区域 · 可继续"))
         case .duplicate:
             duplicateCount += 1
             if mode.isAutomatic && duplicateCount >= 3 {
-                waitForOverlap("画面未变化 · 可手动滚动")
+                waitForOverlap(L("画面未变化 · 可手动滚动"))
             }
         case .paused(let message):
-            waitForOverlap(compactPauseStatus(for: message), detail: message)
+            waitForOverlap(compactPauseStatus(for: message), detail: localizedStitchingReason(message))
         case .limitReached(let message):
-            pause("已达截图上限 · 请完成", detail: message)
+            pause(L("已达截图上限 · 请完成"), detail: localizedStitchingReason(message))
         }
     }
 
     @discardableResult private func scroll(_ region: CaptureRegion, direction: ScrollStitcher.Direction) -> Bool {
         guard CGPreflightPostEventAccess() else {
             Self.logger.error("Automatic scroll blocked: event posting permission denied")
-            pause("控制权限已失效 · 请检查设置", detail: "请完成或取消当前截图后检查控制权限。若设置已开启，请退出并重新打开小贴后重试。")
+            pause(L("控制权限已失效 · 请检查设置"), detail: L("请完成或取消当前截图后检查控制权限。若设置已开启，请退出并重新打开小贴后重试。"))
             return false
         }
         guard let pid = region.targetPID, ScrollEventRouting.isFrontmost(targetApplication) else {
-            pause("前台已切换 · 已暂停")
+            pause(L("前台已切换 · 已暂停"))
             return false
         }
         let point = region.eventPoint
@@ -720,12 +720,12 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         let hitOwner = ScrollEventRouting.owner(ofWindow: hitWindow, windows: windows)
         guard hitOwner == pid else {
             Self.logger.notice("Automatic scroll blocked: target=\(pid, privacy: .public), hitOwner=\(hitOwner ?? -1, privacy: .public), window=\(hitWindow, privacy: .public), x=\(point.x, privacy: .public), y=\(point.y, privacy: .public)")
-            pause("选区被遮挡 · 已暂停", detail: "请移开遮挡窗口并恢复原位置后继续。")
+            pause(L("选区被遮挡 · 已暂停"), detail: L("请移开遮挡窗口并恢复原位置后继续。"))
             return false
         }
         if hasPostedAutomaticScroll {
             guard let current = CGEvent(source: nil)?.location else {
-                pause("无法确认鼠标位置")
+                pause(L("无法确认鼠标位置"))
                 return false
             }
             if ScrollEventRouting.mouseMovedFromAnchor(current: current, anchor: point) {
@@ -738,7 +738,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                                   units: .pixel, wheelCount: 2,
                                   wheel1: direction == .up ? distance : -distance,
                                   wheel2: 0, wheel3: 0) else {
-            pause("无法自动滚动 · 可手动")
+            pause(L("无法自动滚动 · 可手动"))
             return false
         }
         event.location = point
@@ -761,18 +761,29 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
 
     private func compactPauseStatus(for reason: String) -> String {
         let hints = [
-            ("无法读取", "读帧失败，重试"),
-            ("尺寸发生变化", "区域变化，重新框选"),
-            ("区域太矮", "区域太矮，重新框选"),
-            ("缺少可识别", "细节不足，缓慢滚动"),
-            ("左右偏移", "左右偏移，回正重试"),
-            ("重复度较高", "画面重复，少量滚动"),
-            ("不一致", "内容变化，回滚重试")
+            ("无法读取", L("读帧失败，重试")),
+            ("尺寸发生变化", L("区域变化，重新框选")),
+            ("区域太矮", L("区域太矮，重新框选")),
+            ("缺少可识别", L("细节不足，缓慢滚动")),
+            ("左右偏移", L("左右偏移，回正重试")),
+            ("重复度较高", L("画面重复，少量滚动")),
+            ("不一致", L("内容变化，回滚重试"))
         ]
         guard let hint = hints.first(where: { reason.contains($0.0) })?.1 else {
-            return "拼接暂停，请回滚重试"
+            return L("拼接暂停，请回滚重试")
         }
-        return "拼接暂停 · " + hint
+        return L("拼接暂停 · ") + hint
+    }
+
+    private func localizedStitchingReason(_ reason: String) -> String {
+        // Stitching reasons remain stable for matching; only the displayed detail is localized.
+        let prefix = "检测到约 "
+        let suffix = " 像素的左右偏移。请回到上一段位置并回正，或完成已有结果后重新截图。"
+        if reason.hasPrefix(prefix), reason.hasSuffix(suffix),
+           let pixels = Int(reason.dropFirst(prefix.count).dropLast(suffix.count)) {
+            return LF("检测到约 %d 像素的左右偏移。请回到上一段位置并回正，或完成已有结果后重新截图。", pixels)
+        }
+        return L(reason)
     }
 
     private func waitForOverlap(_ message: String, detail: String? = nil) {
@@ -782,14 +793,15 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         mode = .manual
         hasPostedAutomaticScroll = false
         duplicateCount = 0
-        let guidance = "已有长图已保留。小幅回滚并稍停即可尝试接续，也可点自动上／下重试，或完成已有结果。"
+        let guidance = L("已有长图已保留。小幅回滚并稍停即可尝试接续，也可点自动上／下重试，或完成已有结果。")
         setStatus(message, detail: detail.map { $0 + "\n" + guidance } ?? guidance, showsDetail: false)
     }
 
     private func presentAnnotation(_ image: CGImage) {
         guard let panel = panel as? ScrollHUDPanel, let region else { return }
-        let editor = InlineAnnotationView(image: image, completionHint: "完成长截图，复制并关闭",
-                                          showsCopyAction: false, allowsOutsideAnnotations: true, cancellationHint: "取消长截图并关闭")
+        WindowActivationCoordinator.shared.register(panel)
+        let editor = InlineAnnotationView(image: image, pixelScale: region.scale, completionHint: L("完成长截图，复制并关闭"),
+                                          showsCopyAction: false, allowsOutsideAnnotations: true, cancellationHint: L("取消长截图并关闭"))
         inlineEditor = editor
         let token = session
         editor.onComplete = { [weak self] rendered in
@@ -802,6 +814,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             self.cancel()
         }
         panel.isAnnotating = true
+        panel.hasShadow = true
         // Reuse the current floating panel on the capture's display.
         let visible = NSScreen.screens.first { $0.frame == region.screenFrame }?.visibleFrame ?? region.screenFrame
         let available = visible.insetBy(dx: 24, dy: 24)
@@ -825,7 +838,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         scrollLock?.stop()
         scrollLock = nil
         state = .finishing
-        setStatus("正在生成长截图")
+        setStatus(L("正在生成长截图"))
         let token = session
         let currentProcessor = processor
         task = Task { [weak self] in
@@ -833,7 +846,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             guard let self, self.session == token, !Task.isCancelled else { return }
             self.task = nil
             do {
-                guard let image else { throw ScreenLeafError(message: "无法生成长截图，请重试。") }
+                guard let image else { throw ScreenLeafError(message: L("无法生成长截图，请重试。")) }
                 // Keep the assembled image available until copying or handing it to the editor succeeds.
                 if action == .annotate {
                     self.presentAnnotation(image)
@@ -846,8 +859,8 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                 guard self.session == token else { return }
                 self.state = .paused
                 self.mode = .manual
-                self.setStatus(action == .copy ? "复制失败 · 可重试" : "打开标注失败 · 可重试",
-                               detail: error.localizedDescription + "\n已有长图已保留，可重试或选择另一种完成方式。")
+                self.setStatus(action == .copy ? L("复制失败 · 可重试") : L("打开标注失败 · 可重试"),
+                               detail: error.localizedDescription + L("\n已有长图已保留，可重试或选择另一种完成方式。"))
             }
         }
     }

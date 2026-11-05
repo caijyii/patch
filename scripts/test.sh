@@ -5,7 +5,7 @@ cd "$screenleaf_root"
 mkdir -p .build/verification
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \
-    Sources/ScreenLeaf/CaptureRegion.swift Sources/ScreenLeaf/ScrollStitcher.swift \
+    Sources/ScreenLeaf/CaptureRegion.swift Sources/ScreenLeaf/WindowActivation.swift Sources/ScreenLeaf/Localization.swift Sources/ScreenLeaf/ScrollStitcher.swift \
     Sources/ScreenLeaf/ScrollEventRouting.swift \
     scripts/verify-core.swift -o .build/verification/core-tests
 .build/verification/core-tests "$screenleaf_root/scripts/fixtures"

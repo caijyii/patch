@@ -27,14 +27,28 @@ struct CaptureRegion {
 @MainActor
 func showError(_ error: Error, title: String = "操作未完成") {
     let alert = NSAlert()
-    alert.messageText = title
+    alert.messageText = L(title)
     alert.informativeText = error.localizedDescription
     alert.alertStyle = .warning
-    alert.addButton(withTitle: "知道了")
+    alert.addButton(withTitle: L("知道了"))
+    WindowActivationCoordinator.shared.register(alert.window)
+    defer { WindowActivationCoordinator.shared.unregister(alert.window) }
     alert.runModal()
 }
 
 struct ScreenLeafError: LocalizedError {
     let message: String
-    var errorDescription: String? { message }
+    var errorDescription: String? { L(message) }
+}
+
+/// Ordinary Patch documents/settings are valid screenshot subjects. Transient
+/// panels, pins and capture controls keep their existing exclusion behavior.
+@MainActor
+enum CaptureWindowPolicy {
+    static func includes(_ window: NSWindow) -> Bool {
+        window.styleMask.contains(.titled) && window.level == .normal && !(window is NSPanel)
+    }
+    static var includedWindowIDs: Set<CGWindowID> {
+        Set(NSApp.windows.filter { includes($0) }.compactMap { CGWindowID(exactly: $0.windowNumber) })
+    }
 }

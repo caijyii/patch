@@ -14,6 +14,7 @@ extension SelectionView {
     fileprivate var verificationSelection: CGRect? { selection }
     fileprivate func verificationFullScreen() { selectScreen() }
     fileprivate var verificationCanvas: ImageToolsCanvas { canvas }
+    fileprivate var verificationAnnotationControls: AnnotationControls { controls }
     fileprivate var verificationToolbar: SelectionToolbar { toolbar }
     fileprivate var verificationMode: ScreenshotSelectionMode { screenshotMode }
     fileprivate var verificationCommittedMode: ScreenshotSelectionMode? { committedMode }
@@ -139,6 +140,8 @@ private final class SelectionUIFixture {
         if let size = sizeControl, size.category == parts[0], let value = Double(parts[1]) {
             size.slider.doubleValue = value
             size.slider.sendAction(size.slider.action, to: size.slider.target)
+        } else if parts[0] == "贴纸图案", let button = root.verificationAnnotationControls.stickerButtons.first(where: { $0.accessibilityLabel() == label }) {
+            button.performClick(nil)
         } else { try sample(label).performClick(nil) }
     }
     func sample(_ label: String) throws -> NSButton {
@@ -150,6 +153,9 @@ private final class SelectionUIFixture {
 
     func selectedSample(_ category: String) throws -> String {
         if let size = sizeControl, size.category == category { return category + ":" + size.valueLabel.stringValue }
+        if category == "贴纸图案", let item = StickerCatalog.item(for: root.verificationCanvas.selectedAnnotation?.text ?? root.verificationCanvas.annotationSticker) {
+            return category + ":" + item.title
+        }
         let selected = configurations.filter { ($0.accessibilityLabel() ?? "").hasPrefix(category + ":") && $0.state == .on }
         guard selected.count == 1, let label = selected.first?.accessibilityLabel() else {
             throw SelectionUIFailure(description: "Expected one selected \(category) sample, found \(selected.count)")
@@ -348,7 +354,7 @@ private struct SelectionUIVerification {
         for purpose in [CaptureSelectionPurpose.screenshot, .text, .scroll, .record] {
             let f = SelectionUIFixture(source: image, purpose: purpose)
             let initial = purpose == .screenshot
-                ? ["框选", "主体", "窗口", "整屏"] + ImageToolsTool.allCases.map(\.rawValue) + ["撤销", "保存", "贴图", "文字", "取消", "完成"]
+                ? ["框选", "主体", "窗口", "整屏"] + AnnotationControls.displayOrder.map(\.rawValue) + ["撤销", "保存", "贴图", "文字", "取消", "完成"]
                 : (purpose == .record ? ["框选", "窗口", "整屏", "取消"] : [])
             try require(f.actionButtons.map(\.title) == initial && f.configurations.isEmpty && f.menus.isEmpty,
                         "\(purpose) has incorrect initial toolbar actions")
@@ -361,7 +367,7 @@ private struct SelectionUIVerification {
             }
             f.root.verificationSelect(selected)
             let expected = purpose == .screenshot
-                ? ImageToolsTool.allCases.map(\.rawValue) + ["撤销", "框选", "主体", "窗口", "整屏", "保存", "贴图", "文字", "取消", "完成"]
+                ? AnnotationControls.displayOrder.map(\.rawValue) + ["撤销", "框选", "主体", "窗口", "整屏", "保存", "贴图", "文字", "取消", "完成"]
                 : (purpose == .record ? ["框选", "窗口", "整屏", "取消", "确认"] : ["取消", "确认"])
             try require(f.actionButtons.map(\.title).sorted() == expected.sorted(),
                         "\(purpose) has incorrect buttons: \(f.actionButtons.map(\.title))")
@@ -392,7 +398,7 @@ private struct SelectionUIVerification {
         let actions = Array(main[(separators[1] + 1)...]).compactMap { $0 as? NSButton }
         try require(modes.map(\.title) == ["框选", "主体", "窗口", "整屏"]
                     && modes.allSatisfy { $0.imagePosition == .noImage }, "Screenshot modes lost their first compact group")
-        try require(tools.map(\.title) == ImageToolsTool.allCases.map(\.rawValue) + ["撤销"]
+        try require(tools.map(\.title) == AnnotationControls.displayOrder.map(\.rawValue) + ["撤销"]
                     && tools.allSatisfy { $0.imagePosition == .imageOnly }, "Screenshot tools lost their independent group")
         try require(actions.map(\.title) == ["保存", "贴图", "文字", "取消", "完成"]
                     && actions.allSatisfy { $0.imagePosition == .imageOnly },
@@ -679,7 +685,7 @@ private struct SelectionUIVerification {
             try require(!button.isEnabled, "Pending mode leaves an old result action enabled: \(title)")
             button.performClick(nil)
         }
-        try require(f.visibleButtons.filter { ImageToolsTool.allCases.map(\.rawValue).contains($0.title)
+        try require(f.visibleButtons.filter { AnnotationControls.displayOrder.map(\.rawValue).contains($0.title)
             && $0.imagePosition == .imageOnly }.allSatisfy { !$0.isEnabled },
             "Pending mode leaves an annotation tool enabled")
         try require(f.actions.count == 1 && canvas.annotations.count == 1,
@@ -755,7 +761,7 @@ private struct SelectionUIVerification {
         "标注颜色": ["红色", "黄色", "绿色", "蓝色", "白色"],
         "标注粗细": ["1.5", "3", "5", "8"], "文字大小": ["14", "18", "24", "32", "48"],
         "序号大小": ["18", "24", "32", "40"], "马赛克大小": ["4", "8", "12", "20", "32"],
-        "贴纸图案": ["小花", "郁金香", "幼苗", "飘叶", "向日葵", "小鸡", "小猫", "蝴蝶", "太阳", "彩虹"],
+        "贴纸图案": StickerCatalog.items.map(\.title),
         "贴纸大小": ["16", "24", "32", "48", "64", "96"]
     ]
 
@@ -777,15 +783,27 @@ private struct SelectionUIVerification {
         for tool in ImageToolsTool.allCases {
             let button = try f.button(tool.rawValue)
             button.performClick(nil)
-            let labels = Set(f.configurations.compactMap { $0.accessibilityLabel()?.components(separatedBy: ":").first })
+            var labels = Set(f.configurations.compactMap { $0.accessibilityLabel()?.components(separatedBy: ":").first })
+            if let size = f.sizeControl { labels.insert(size.category) }
             try require(labels == configurationLabels[tool], "\(tool) shows incorrect configuration groups: \(labels)")
             try require(f.menus.isEmpty, "\(tool) still uses popup menus")
-            try require(button.state == .on && f.configurations.allSatisfy(\.isEnabled), "\(tool) configuration is not active")
+            try require(button.state == .on && f.configurations.allSatisfy(\.isEnabled)
+                        && f.sizeControl?.isEnabled == true, "\(tool) configuration is not active")
             try require((button.layer?.borderWidth ?? 0) == 0, "\(tool) retains a custom active-tool border")
             for category in labels {
                 let actual = f.configurations.compactMap { $0.accessibilityLabel() }.filter { $0.hasPrefix(category + ":") }.sorted()
-                let expected = (configurationValues[category] ?? []).map { category + ":" + $0 }.sorted()
+                let values = configurationValues[category] ?? []
+                let expected = (category == "贴纸图案" ? Array(values.prefix(actual.count)) : values).map { category + ":" + $0 }.sorted()
                 try require(f.sizeControl?.category == category || actual == expected, "\(tool)'s \(category) samples are incomplete")
+                if category == "贴纸图案" {
+                    let row = f.root.verificationToolbar.rows.last!.filter { !$0.isHidden }
+                    let patterns = f.configurations.filter { ($0.accessibilityLabel() ?? "").hasPrefix("贴纸图案:") }
+                    try require(patterns.map { $0.identifier!.rawValue } == Array(StickerCatalog.items.prefix(patterns.count).map(\.id)),
+                                "Floating picker changed the default prefix order")
+                    try require(row.allSatisfy { abs($0.frame.midY - f.sizeControl!.frame.midY) < 0.5 }
+                                && f.root.verificationToolbar.bounds.width - 8 - (row.map(\.frame.maxX).max() ?? 0) < 32,
+                                "Floating sticker row wraps or leaves room for another sticker")
+                }
                 let selected = try f.selectedSample(category)
                 try require(selected == category + ":" + defaultValue(category), "\(tool)'s \(category) default sample is incorrect")
             }
@@ -793,7 +811,7 @@ private struct SelectionUIVerification {
                 try require(isHit(f.hit(at: f.center(of: sample)), inside: sample), "\(tool) configuration sample \(sample.accessibilityLabel() ?? "") frame=\(sample.frame) cannot receive hit testing: \(describes(f.hit(at: f.center(of: sample))))")
             }
             button.performClick(nil)
-            try require(f.configurations.isEmpty && button.state == .off, "\(tool) configuration remains visible after toggling off")
+            try require(f.configurations.isEmpty && f.sizeControl == nil && button.state == .off, "\(tool) configuration remains visible after toggling off")
         }
     }
 

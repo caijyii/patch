@@ -34,6 +34,12 @@ extension ImageToolsCoordinator {
 @MainActor
 extension ImageToolsOCRController {
     fileprivate var probeHasResult: Bool { hasResult }
+    fileprivate var probeMessage: String { textView.string }
+    fileprivate var probeStatusHidden: Bool { status.isHidden }
+    fileprivate var probeCopyEnabled: Bool { copyButton.isEnabled }
+    fileprivate var probeHasTransparentTextBackground: Bool {
+        !textView.drawsBackground && textView.enclosingScrollView?.drawsBackground == false
+    }
 }
 
 private enum OCRProbeFailure: Error { case failed(String) }
@@ -217,6 +223,38 @@ private struct OCRQueueProbe {
         try expect(weakCoordinator == nil, "OCR lifecycle closures do not retain coordinator")
     }
 
+    @MainActor private static func windowBackgroundAndLayout() throws {
+        let controller = ImageToolsOCRController(writeClipboard: { _ in false })
+        defer { controller.close() }
+        let window = controller.window!
+        let content = window.contentView!
+        let longText = (1...30).map { "\($0). Synthetic recognized text — 保留编辑、选择与滚动。" }.joined(separator: "\n")
+        try expect(window.titlebarAppearsTransparent && window.styleMask.contains(.fullSizeContentView),
+                   "OCR glow extends beneath its transparent title bar")
+        for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+            window.appearance = NSAppearance(named: appearanceName)
+            for empty in [false, true] {
+                if empty { controller.fail(ScreenLeafError(message: "没有识别到文字。")) }
+                else { controller.complete(longText) }
+                for size in [NSSize(width: 440, height: 280), NSSize(width: 340, height: 220), NSSize(width: 620, height: 420)] {
+                    window.setContentSize(size)
+                    content.superview?.layoutSubtreeIfNeeded()
+                    content.layoutSubtreeIfNeeded()
+                    try expect(controller.probeHasTransparentTextBackground,
+                               "OCR text and scroll backgrounds remain transparent [\(appearanceName.rawValue), empty=\(empty), \(size)]")
+                    let safe = window.contentLayoutRect
+                    try expect(!safe.isEmpty && safe.height < content.bounds.height,
+                               "OCR reserves its native title-bar layout inset")
+                    for view in content.subviews where !view.isHidden && !view.frame.isEmpty {
+                        let frame = view.convert(view.bounds, to: nil)
+                        try expect(safe.insetBy(dx: -0.5, dy: -0.5).contains(frame),
+                                   "OCR content stays inside native layout bounds [\(appearanceName.rawValue), empty=\(empty), \(size)]")
+                    }
+                }
+            }
+        }
+    }
+
     @MainActor static func main() {
         do {
             _ = NSApplication.shared
@@ -226,6 +264,18 @@ private struct OCRQueueProbe {
             try completionCancellation()
             try failureAndSuccessor()
             try windowLifecycle()
+            try windowBackgroundAndLayout()
+            for language in [AppLanguagePreference.simplifiedChinese, .english] {
+                AppLocalization.language = language
+                let controller = ImageToolsOCRController(writeClipboard: { _ in false })
+                let explanation = L("没有识别到文字。可尝试截取更清晰或更大的文字区域。")
+                controller.fail(ScreenLeafError(message: explanation))
+                try expect(controller.probeStatusHidden && controller.probeMessage == explanation
+                           && !controller.probeCopyEnabled && !controller.probeHasResult,
+                           "empty OCR shows one explanation and cannot copy [\(language.rawValue)]")
+                controller.close()
+            }
+            AppLocalization.language = .simplifiedChinese
             if CommandLine.arguments.contains("--ocr") {
                 let coordinator = ImageToolsCoordinator()
                 coordinator.recognize(DemoImage.make())
@@ -249,6 +299,8 @@ private struct OCRQueueProbe {
                 coordinator.recognize(blank)
                 try spin(until: { coordinator.probeJobCount == 0 }, seconds: 20)
                 try expect(coordinator.probeOCRController?.probeHasResult == false, "158x90 blank background OCR completes with an empty-result error")
+                try expect(coordinator.probeOCRController?.probeStatusHidden == true,
+                           "real blank OCR does not repeat an error heading")
                 coordinator.closeAll()
                 let text = try ImageToolsOCRWorker.read(DemoImage.make())
                 try expect(text.contains("Patch"), "unchanged synchronous OCR API recognizes generated DemoImage")

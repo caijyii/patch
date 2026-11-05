@@ -48,7 +48,7 @@ final class ShortcutRecorderButton: NSButton {
         alignment = .center
         target = self
         action = #selector(clicked)
-        toolTip = "点击后按下新的快捷键；Esc 取消，Tab 切换。"
+        toolTip = L("点击后按下新的快捷键；Esc 取消，Tab 切换。")
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -107,9 +107,9 @@ final class ShortcutEditorSession {
     func conciseMessage(_ action: ShortcutAction) -> String { conciseMessages[action] ?? "" }
 
     func recordingTitle(_ action: ShortcutAction) -> String {
-        let saved = draft[action]?.displayString ?? "未设置"
+        let saved = draft[action]?.displayString ?? L("未设置")
         if recordingAction == action && keepsRecordingUntilFinished { return recordingModifiers ?? saved }
-        return recordingAction == action ? (recordingModifiers ?? "\(saved) · 录入中") : saved
+        return recordingAction == action ? (recordingModifiers ?? LF("%@ · 录入中", saved)) : saved
     }
 
     func reset() {
@@ -376,36 +376,36 @@ final class ShortcutEditorSession {
         for action in ShortcutAction.allCases {
             var message: String
             let concise: String
-            if persistenceFailed { concise = "保存失败" }
+            if persistenceFailed { concise = L("保存失败") }
             else if let issue = issues[action] {
                 switch issue {
-                case .duplicate, .applicationReserved, .systemReserved: concise = "快捷键冲突"
-                case .invalid: concise = "组合无效"
-                case .registrationFailed: concise = "快捷键不可用"
-                case .systemCheckFailed: concise = "暂时无法检查"
-                case .handlerFailed: concise = "需重启 Patch"
+                case .duplicate, .applicationReserved, .systemReserved: concise = L("快捷键冲突")
+                case .invalid: concise = L("组合无效")
+                case .registrationFailed: concise = L("快捷键不可用")
+                case .systemCheckFailed: concise = L("暂时无法检查")
+                case .handlerFailed: concise = L("需重启 Patch")
                 }
-            } else if hotKeys.cleanupFailures[action] != nil { concise = "需重启 Patch" }
+            } else if hotKeys.cleanupFailures[action] != nil { concise = L("需重启 Patch") }
             else { concise = "" }
             conciseMessages[action] = concise
             if persistenceFailed {
-                message = "配置未保存，请重新选择快捷键。"
+                message = L("配置未保存，请重新选择快捷键。")
                 issueActions.insert(action)
             } else if let input = rejectedInputs[action], let issue = failedReasons[action] {
                 let reason: String
                 if case .invalid = issue { reason = input.invalidReason ?? issue.localizedDescription }
                 else { reason = issue.localizedDescription }
-                let retained = store.shortcuts[action]?.displayString ?? "原配置"
-                let status = hotKeys.registeredShortcuts[action] == store.shortcuts[action] ? "仍使用 \(retained)。" : "原配置 \(retained) 未更改。"
+                let retained = store.shortcuts[action]?.displayString ?? L("原配置")
+                let status = hotKeys.registeredShortcuts[action] == store.shortcuts[action] ? LF("仍使用 %@。", retained) : LF("原配置 %@ 未更改。", retained)
                 message = "\(input.displayString)：\(reason)\n\(status)"
             } else if let issue = issues[action] {
                 if case .invalid = issue { message = draft[action]?.invalidReason ?? issue.localizedDescription }
                 else { message = issue.localizedDescription }
             } else if recordingAction == action {
-                message = "按下快捷键；Esc 取消，Tab 切换。"
+                message = L("按下快捷键；Esc 取消，Tab 切换。")
             } else { message = "" }
             if hotKeys.cleanupFailures[action] != nil {
-                message += (message.isEmpty ? "" : "\n") + "快捷键释放未完成，请重新打开小贴。"
+                message += (message.isEmpty ? "" : "\n") + L("快捷键释放未完成，请重新打开小贴。")
                 issueActions.insert(action)
             }
             messages[action] = message
@@ -425,7 +425,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate {
         session = ShortcutEditorSession(hotKeys: hotKeys, store: store, onSave: onChange)
         let window = ShortcutSettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 470),
                                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "小贴 · 设置"
+        PatchWindowTitle.apply(to: window, title: L("Patch · 设置"))
         window.isReleasedWhenClosed = false
         window.contentView = ShortcutSettingsContentView(frame: NSRect(x: 0, y: 0, width: 640, height: 470))
         super.init(window: window)
@@ -461,7 +461,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate {
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 22)
         ])
-        let title = NSTextField(labelWithString: "快捷键")
+        let title = NSTextField(labelWithString: L("快捷键"))
         title.font = .systemFont(ofSize: 20, weight: .semibold)
         stack.addArrangedSubview(title)
         for action in ShortcutAction.settingsOrder {
@@ -471,7 +471,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate {
             let recorder = ShortcutRecorderButton()
             recorder.widthAnchor.constraint(equalToConstant: 320).isActive = true
             recorder.heightAnchor.constraint(equalToConstant: 30).isActive = true
-            recorder.setAccessibilityLabel("\(action.title)快捷键")
+            recorder.setAccessibilityLabel(LF("%@快捷键", action.title))
             recorder.onClick = { [weak self] in self?.startRecording(action) }
             recorder.onKey = { [weak self] event in self?.session.capture(event) ?? false }
             recorder.onCancel = { [weak self] in self?.cancelRecordingOrClose() }
@@ -480,7 +480,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate {
             note.font = .systemFont(ofSize: 11)
             note.textColor = .systemOrange
             note.widthAnchor.constraint(equalToConstant: 320).isActive = true
-            note.setAccessibilityLabel("\(action.title)快捷键提示")
+            note.setAccessibilityLabel(LF("%@快捷键提示", action.title))
             notes[action] = note
             let entry = NSStackView(views: [recorder, note])
             entry.orientation = .vertical
@@ -491,12 +491,12 @@ final class SettingsController: NSWindowController, NSWindowDelegate {
             row.spacing = 24
             stack.addArrangedSubview(row)
         }
-        let defaults = NSButton(title: "恢复默认", target: self, action: #selector(restoreDefaults))
+        let defaults = NSButton(title: L("恢复默认"), target: self, action: #selector(restoreDefaults))
         defaults.bezelStyle = .rounded
-        let save = NSButton(title: "保存", target: self, action: #selector(save))
+        let save = NSButton(title: L("保存"), target: self, action: #selector(save))
         save.bezelStyle = .rounded
         save.keyEquivalent = "\r"
-        let close = NSButton(title: "关闭", target: self, action: #selector(closeSettings))
+        let close = NSButton(title: L("关闭"), target: self, action: #selector(closeSettings))
         close.bezelStyle = .rounded
         let actions = NSStackView(views: [defaults, close, save])
         actions.spacing = 12

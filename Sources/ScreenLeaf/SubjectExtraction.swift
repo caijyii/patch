@@ -15,10 +15,10 @@ enum SubjectExtractionError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noSubjects: return "没有识别到可提取的主体。可以调整截图范围后再试。"
-        case .unsupportedMask: return "暂时无法读取主体轮廓，请换一个截图范围再试。"
-        case .analysisFailed: return "主体分析未完成，请稍后重试或换一个截图范围。"
-        case .renderingFailed: return "无法生成透明主体图片，请重新分析后再试。"
+        case .noSubjects: return L("没有识别到可提取的主体。可以调整截图范围后再试。")
+        case .unsupportedMask: return L("暂时无法读取主体轮廓，请换一个截图范围再试。")
+        case .analysisFailed: return L("主体分析未完成，请稍后重试或换一个截图范围。")
+        case .renderingFailed: return L("无法生成透明主体图片，请重新分析后再试。")
         }
     }
 }

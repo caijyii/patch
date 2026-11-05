@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import AppKit
 
 /// Annotation sizes are stored in screen points, independent of display scale.
 struct AnnotationPreference: Codable, Equatable {
@@ -47,9 +48,9 @@ struct KeyboardShortcut: Codable, Hashable {
     var invalidReason: String? {
         guard !isValid else { return nil }
         if modifiers == [.shift], Self.keyNames[keyCode] != nil {
-            return "这个 Shift 组合会影响日常输入，请加上 ⌘、⌃ 或 ⌥。"
+            return L("这个 Shift 组合会影响日常输入，请加上 ⌘、⌃ 或 ⌥。")
         }
-        return "请使用修饰键加一个按键；Shift 可单独配合功能键或方向键。"
+        return L("请使用修饰键加一个按键；Shift 可单独配合功能键或方向键。")
     }
 
     static let shiftOnlyKeyCodes: Set<UInt32> = [
@@ -63,7 +64,8 @@ struct KeyboardShortcut: Codable, Hashable {
         if modifiers.contains(.option) { result += "⌥" }
         if modifiers.contains(.shift) { result += "⇧" }
         if modifiers.contains(.command) { result += "⌘" }
-        return result + (Self.keyNames[keyCode] ?? "键 \(keyCode)")
+        let key = Self.keyNames[keyCode] ?? LF("键 %d", keyCode)
+        return result + (AppLocalization.isEnglish && key.hasPrefix("数字键 ") ? key.replacingOccurrences(of: "数字键 ", with: "Num ") : L(key))
     }
 
     /// Policy is separate from structural validity so previously saved bindings remain visible.
@@ -98,22 +100,24 @@ struct KeyboardShortcut: Codable, Hashable {
 }
 
 enum ShortcutAction: String, CaseIterable, Codable, Hashable {
-    case screenshot, scroll, text, pin, record, subject, togglePins
+    case screenshot, scroll, text, pin, record, subject, togglePins, recentContent, pinRecent
 
     /// Presentation order is independent of legacy hotkey installation priority.
-    static let displayOrder: [ShortcutAction] = [.screenshot, .scroll, .subject, .record, .text, .pin]
+    static let displayOrder: [ShortcutAction] = [.screenshot, .scroll, .subject, .record, .text, .pin, .recentContent, .pinRecent]
 
     static let settingsOrder = displayOrder + [ShortcutAction.togglePins]
 
     var title: String {
         switch self {
-        case .screenshot: return "截图"
-        case .scroll: return "长截图"
-        case .text: return "提取文字"
-        case .pin: return "贴图"
-        case .record: return "录屏"
-        case .subject: return "主体截图"
-        case .togglePins: return "贴图显隐"
+        case .screenshot: return L("截图")
+        case .scroll: return L("长截图")
+        case .text: return L("提取文字")
+        case .pin: return L("贴图")
+        case .record: return L("录屏")
+        case .subject: return L("主体截图")
+        case .togglePins: return L("显示／隐藏全部贴图")
+        case .recentContent: return L("剪贴记录")
+        case .pinRecent: return L("批量贴出")
         }
     }
 
@@ -126,6 +130,8 @@ enum ShortcutAction: String, CaseIterable, Codable, Hashable {
         case .record: return 5
         case .subject: return 6
         case .togglePins: return 7
+        case .recentContent: return 8
+        case .pinRecent: return 9
         }
     }
 
@@ -135,8 +141,15 @@ enum ShortcutAction: String, CaseIterable, Codable, Hashable {
     }
 
     var defaultShortcut: KeyboardShortcut {
-        let keyCodes: [UInt32] = [18, 19, 20, 21, 23, 22, 26]
-        return KeyboardShortcut(keyCode: keyCodes[Int(legacyID - 1)], modifiers: [.option])
+        let keyCodes: [UInt32] = [18, 19, 20, 21, 23, 22, 26, 28, 25]
+        return KeyboardShortcut(keyCode: keyCodes[Self.settingsOrder.firstIndex(of: self)!], modifiers: [.option])
+    }
+
+    /// Legacy IDs remain registration identities, independent of visual order and defaults.
+    static let legacyActions: [ShortcutAction] = [.screenshot, .scroll, .text, .pin, .record, .subject, .togglePins]
+    static var legacyDefaultShortcuts: [ShortcutAction: KeyboardShortcut] {
+        let codes: [UInt32] = [18, 19, 20, 21, 23, 22, 26]
+        return Dictionary(uniqueKeysWithValues: zip(legacyActions, codes).map { ($0.0, KeyboardShortcut(keyCode: $0.1, modifiers: [.option])) })
     }
 
     static var defaultShortcuts: [ShortcutAction: KeyboardShortcut] {
@@ -160,6 +173,10 @@ final class UserDefaultsPreferencesStorage: PreferencesStorage {
 
     func read() -> Data? { defaults.data(forKey: key) }
     func write(_ data: Data) { defaults.set(data, forKey: key) }
+    func setPreferredLanguage(_ language: AppLanguagePreference) {
+        if language == .system { defaults.removeObject(forKey: "AppleLanguages") }
+        else { defaults.set([language.rawValue], forKey: "AppleLanguages") }
+    }
 }
 
 /// No UserDefaults domain is touched by tests using this storage.
@@ -172,12 +189,23 @@ final class MemoryPreferencesStorage: PreferencesStorage {
     func write(_ data: Data) { self.data = data; writeCount += 1 }
 }
 
+enum AppAppearancePreference: String, Codable, CaseIterable {
+    case system, light, dark
+    var title: String { switch self { case .system: return L("跟随系统"); case .light: return L("浅色"); case .dark: return L("深色") } }
+    var appearance: NSAppearance? { switch self { case .system: return nil; case .light: return NSAppearance(named: .aqua); case .dark: return NSAppearance(named: .darkAqua) } }
+}
+
 @MainActor
 final class PreferencesStore {
     static let shared = PreferencesStore(storage: UserDefaultsPreferencesStorage())
 
     private struct Snapshot: Codable {
         var version = 1
+        var appearance: AppAppearancePreference?
+        var language: AppLanguagePreference?
+        var pinRecentCount: Int?
+        var shortcutLayoutVersion: Int?
+        var stickerOrder: [String]?
         var annotations: [String: AnnotationPreference] = [:]
         var shortcuts: [String: KeyboardShortcut] = [:]
     }
@@ -190,6 +218,57 @@ final class PreferencesStore {
         if let data = storage.read(), let decoded = try? JSONDecoder().decode(Snapshot.self, from: data), decoded.version == 1 {
             snapshot = decoded
         } else { snapshot = Snapshot() }
+    }
+
+    var appearancePreference: AppAppearancePreference { snapshot.appearance ?? .system }
+    var languagePreference: AppLanguagePreference { snapshot.language ?? .system }
+    var pinRecentCount: Int { min(20, max(1, snapshot.pinRecentCount ?? 5)) }
+    var pinRecentTitle: String {
+        pinRecentCount == 1 ? L("贴出最近 1 条") : LF("贴出最近 %d 条", pinRecentCount)
+    }
+    func setPinRecentCount(_ value: Int) {
+        guard (1...20).contains(value), value != pinRecentCount else { return }
+        snapshot.pinRecentCount = value; persist()
+    }
+    func setLanguagePreference(_ value: AppLanguagePreference) {
+        guard value != languagePreference else { return }
+        snapshot.language = value; persist()
+        (storage as? UserDefaultsPreferencesStorage)?.setPreferredLanguage(value)
+    }
+    func setAppearancePreference(_ value: AppAppearancePreference) {
+        guard value != appearancePreference else { return }
+        snapshot.appearance = value; persist()
+    }
+
+    static let stickerOrderDidChange = Notification.Name("PatchStickerOrderDidChange")
+
+    /// Stable identifiers keep reordering separate from the current drawing selection.
+    func orderedStickerIdentifiers(defaults: [String], canonicalize: (String) -> String = { $0 }) -> [String] {
+        Self.normalizedStickerOrder(snapshot.stickerOrder ?? [], defaults: defaults, canonicalize: canonicalize)
+    }
+    func setStickerOrder(_ identifiers: [String], defaults: [String], canonicalize: (String) -> String = { $0 }) {
+        let normalized = Self.normalizedStickerOrder(identifiers, defaults: defaults, canonicalize: canonicalize)
+        guard normalized != orderedStickerIdentifiers(defaults: defaults, canonicalize: canonicalize) else { return }
+        snapshot.stickerOrder = normalized == defaults ? nil : normalized
+        persist()
+        NotificationCenter.default.post(name: Self.stickerOrderDidChange, object: self)
+    }
+    private static func normalizedStickerOrder(_ identifiers: [String], defaults: [String], canonicalize: (String) -> String) -> [String] {
+        let available = Set(defaults)
+        var seen = Set<String>()
+        var result = identifiers.map(canonicalize).filter { available.contains($0) && seen.insert($0).inserted }
+        // Keep the relative order of saved items. A newly added pattern belongs
+        // beside its default neighbour, rather than after every unrelated group.
+        for (index, identifier) in defaults.enumerated() where seen.insert(identifier).inserted {
+            if let previous = defaults[..<index].reversed().first(where: { result.contains($0) }),
+               let position = result.firstIndex(of: previous) {
+                result.insert(identifier, at: position + 1)
+            } else if let next = defaults.dropFirst(index + 1).first(where: { result.contains($0) }),
+                      let position = result.firstIndex(of: next) {
+                result.insert(identifier, at: position)
+            } else { result.append(identifier) }
+        }
+        return result
     }
 
     func annotation(for tool: String) -> AnnotationPreference {
@@ -209,11 +288,21 @@ final class PreferencesStore {
 
     var shortcuts: [ShortcutAction: KeyboardShortcut] {
         if snapshot.shortcuts.isEmpty { return ShortcutAction.defaultShortcuts }
-        let missingDefaults = Set([ShortcutAction.subject, .togglePins].filter { snapshot.shortcuts[$0.rawValue] == nil })
+        let isLegacy = (snapshot.shortcutLayoutVersion ?? 1) < 2
+        let legacyDefaults = ShortcutAction.legacyDefaultShortcuts
+        let savedActions = Set(snapshot.shortcuts.keys.compactMap(ShortcutAction.init(rawValue:)))
+        let oldestActions = Set(ShortcutAction.legacyActions.prefix(5))
+        if isLegacy, oldestActions.isSubset(of: savedActions), savedActions.isSubset(of: Set(ShortcutAction.legacyActions)),
+           savedActions.count == snapshot.shortcuts.count,
+           savedActions.allSatisfy({ snapshot.shortcuts[$0.rawValue] == legacyDefaults[$0] }) {
+            // Only an entirely unchanged old layout adopts the new reading order.
+            return ShortcutAction.defaultShortcuts
+        }
+        let missingDefaults = Set([ShortcutAction.subject, .togglePins, .recentContent, .pinRecent].filter { snapshot.shortcuts[$0.rawValue] == nil })
         var result: [ShortcutAction: KeyboardShortcut] = [:]
         for action in ShortcutAction.allCases {
             if missingDefaults.contains(action) {
-                result[action] = action.defaultShortcut
+                result[action] = isLegacy ? (legacyDefaults[action] ?? action.defaultShortcut) : action.defaultShortcut
                 continue
             }
             guard let shortcut = snapshot.shortcuts[action.rawValue], shortcut.isValid else {
@@ -224,8 +313,8 @@ final class PreferencesStore {
         if !missingDefaults.isEmpty {
             let existing = result.filter { !missingDefaults.contains($0.key) }
             guard Set(existing.values).count == existing.count else { return ShortcutAction.defaultShortcuts }
-            // Keep old custom keys even if one owns the new default. Launch installs
-            // those actions first and reports the subject key conflict for repair.
+            // Existing actions register first. A new default conflicting with a custom
+            // binding is reported for repair without stealing the existing shortcut.
             return result
         }
         return Set(result.values).count == result.count ? result : ShortcutAction.defaultShortcuts
@@ -238,13 +327,23 @@ final class PreferencesStore {
               ShortcutAction.allCases.allSatisfy({ shortcuts[$0]?.isValid == true }),
               Set(shortcuts.values).count == shortcuts.count else { return false }
         let encoded = Dictionary(uniqueKeysWithValues: shortcuts.map { ($0.key.rawValue, $0.value) })
-        guard snapshot.shortcuts != encoded else { return true }
+        guard snapshot.shortcuts != encoded || snapshot.shortcutLayoutVersion != 2 else { return true }
         snapshot.shortcuts = encoded
+        snapshot.shortcutLayoutVersion = 2
         persist()
         return true
     }
 
     private func persist() {
         if let data = try? JSONEncoder().encode(snapshot) { storage.write(data) }
+    }
+}
+
+/// Semantic colors resolve against each view's effective appearance, including manual overrides.
+enum AppTheme {
+    static func color(_ light: NSColor, _ dark: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        }
     }
 }

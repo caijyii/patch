@@ -74,7 +74,7 @@ final class RegionSelector {
             } catch {
                 guard let self, self.selectionID == id, !Task.isCancelled else { return }
                 self.cancel()
-                showError(error, title: "截图未完成")
+                showError(error, title: L("截图未完成"))
             }
         }
     }
@@ -162,7 +162,7 @@ final class RegionSelector {
                                                                fallbackApplicationPID: self.target?.processIdentifier)
             let region = CaptureRegion(rect: global, displayID: displayID, screenFrame: screenFrame,
                                        scale: scale, targetPID: targetPID)
-            if action == .save, let image { self.save(image, focus: view) }
+            if action == .save, let image { self.save(image, focus: view, pixelScale: scale) }
             else { self.finish(action: action, region: region, image: image) }
         }
     }
@@ -170,8 +170,10 @@ final class RegionSelector {
     private func visibleWindows() -> [SelectionCandidate] {
         guard let list = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] else { return [] }
         let ownPID = ProcessInfo.processInfo.processIdentifier
+        let included = CaptureWindowPolicy.includedWindowIDs
         return list.compactMap { item in
-            guard let pid = item[kCGWindowOwnerPID as String] as? Int32, pid > 0, pid != ownPID,
+            guard let pid = item[kCGWindowOwnerPID as String] as? Int32, pid > 0,
+                  pid != ownPID || (item[kCGWindowNumber as String] as? NSNumber).map({ included.contains($0.uint32Value) }) == true,
                   let layer = item[kCGWindowLayer as String] as? Int, layer == 0,
                   let dictionary = item[kCGWindowBounds as String] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: dictionary), bounds.width >= 16, bounds.height >= 16,
@@ -191,22 +193,25 @@ final class RegionSelector {
         return source.handleShortcut(event)
     }
 
-    private func save(_ image: CGImage, focus: SelectionView) {
+    private func save(_ image: CGImage, focus: SelectionView, pixelScale: CGFloat) {
         let id = selectionID
         windows.forEach { $0.orderOut(nil) }
-        NSApp.activate(ignoringOtherApps: true)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
         panel.nameFieldStringValue = "Patch-\(ImageToolsUI.timestamp()).png"
+        WindowActivationCoordinator.shared.register(panel)
+        defer { WindowActivationCoordinator.shared.unregister(panel) }
+        NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else {
             if selectionID == id { restoreOverlays(focus: focus) }
             return
         }
         do {
             try ImageToolsUI.png(image).write(to: url, options: .atomic)
+            ImageToolsUI.onCompletedImage?(image, pixelScale)
             if selectionID == id { cancelAndRestoreTarget() }
         } catch {
-            showError(error, title: "保存未完成")
+            showError(error, title: L("保存未完成"))
             if selectionID == id { restoreOverlays(focus: focus) }
         }
     }
@@ -296,7 +301,7 @@ private final class SelectionChrome: NSView {
     var selection: CGRect?
     var hover: CGRect?
     var imageSize = CGSize.zero
-    var primaryTitle = "复制"
+    var primaryTitle = L("复制")
     var scrollHint = false
     var fullScreenAvailable = true
     var annotationSelected = false
@@ -330,10 +335,10 @@ private final class SelectionChrome: NSView {
             badge(text, near: CGPoint(x: rect.minX, y: y), font: .monospacedDigitSystemFont(ofSize: 12, weight: .medium))
         }
         let hint: String
-        if selection == nil { hint = emptyHint ?? ("单击选窗口 · 拖动框选" + (fullScreenAvailable ? " · F 整屏" : "") + " · Esc 取消") }
-        else if annotationSelected { hint = "拖动移动 · 设置区修改 · Delete 删除 · Esc 取消选中" }
-        else { hint = "双击空白或 Enter \(primaryTitle) · Esc 取消" }
-        let text = scrollHint ? hint + "\n只选择随滚动变化的正文，避开固定顶栏和底栏" : hint
+        if selection == nil { hint = emptyHint ?? (L("单击选窗口 · 拖动框选") + (fullScreenAvailable ? L(" · F 整屏") : "") + L(" · Esc 取消")) }
+        else if annotationSelected { hint = L("拖动移动 · 设置区修改 · Delete 删除 · Esc 取消选中") }
+        else { hint = LF("双击空白或 Enter %@ · Esc 取消", primaryTitle) }
+        let text = scrollHint ? hint + L("\n只选择随滚动变化的正文，避开固定顶栏和底栏") : hint
         let size = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium)])
         badge(text, near: CGPoint(x: (bounds.width - size.width) / 2, y: bounds.height - size.height - 28), font: .systemFont(ofSize: 13, weight: .medium))
     }
@@ -448,7 +453,7 @@ private final class SelectionView: NSView {
         chrome.frame = bounds
         chrome.autoresizingMask = [.width, .height]
         chrome.imageSize = CGSize(width: image.width, height: image.height)
-        chrome.primaryTitle = purpose == .screenshot ? "复制" : "确认选区"
+        chrome.primaryTitle = purpose == .screenshot ? L("复制") : L("确认选区")
         chrome.scrollHint = purpose == .scroll
         chrome.fullScreenAvailable = purpose.supportsFullScreen
         addSubview(chrome)
@@ -493,18 +498,18 @@ private final class SelectionView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private func buildToolbar() {
-        screenButton = SelectionButton("整屏", symbol: "display") { [weak self] in
+        screenButton = SelectionButton(L("整屏"), symbol: "display") { [weak self] in
             guard let self else { return }
             if self.purpose == .screenshot { self.requestMode(.screen) } else { self.selectScreen() }
         }
-        screenButton.toolTip = "选取当前显示器的完整画面（F）"
-        freeButton = SelectionButton("自由框选", symbol: "crop") { [weak self] in self?.reset(mode: .free) }
-        windowButton = SelectionButton("窗口框选", symbol: "macwindow") { [weak self] in
+        screenButton.toolTip = L("选取当前显示器的完整画面（F）")
+        freeButton = SelectionButton(L("自由框选"), symbol: "crop") { [weak self] in self?.reset(mode: .free) }
+        windowButton = SelectionButton(L("窗口框选"), symbol: "macwindow") { [weak self] in
             guard let self else { return }
             if self.purpose == .screenshot { self.requestMode(.window) } else { self.reset(mode: .window) }
         }
-        cancelButton = SelectionButton.cancellation(toolTip: "取消（Esc）") { [weak self] in self?.onCancel?() }
-        confirmButton = SelectionButton.confirmation("确认", toolTip: "确认选区，进入下一步（Enter / 双击空白）") {
+        cancelButton = SelectionButton.cancellation(toolTip: L("取消（Esc）")) { [weak self] in self?.onCancel?() }
+        confirmButton = SelectionButton.confirmation(L("确认"), toolTip: L("确认选区，进入下一步（Enter / 双击空白）")) {
             [weak self] in _ = self?.confirmSelection()
         }
         if purpose != .screenshot {
@@ -512,41 +517,41 @@ private final class SelectionView: NSView {
             confirmButton.imagePosition = .imageLeading
         }
         if purpose == .record {
-            freeButton.title = "框选"
-            freeButton.setAccessibilityLabel("框选")
-            freeButton.toolTip = "拖动框选录制区域（R）"
-            windowButton.title = "窗口"
-            windowButton.setAccessibilityLabel("窗口")
-            windowButton.toolTip = "悬停高亮窗口，单击选择或直接拖动框选（W）"
+            freeButton.title = L("框选")
+            freeButton.setAccessibilityLabel(L("框选"))
+            freeButton.toolTip = L("拖动框选录制区域（R）")
+            windowButton.title = L("窗口")
+            windowButton.setAccessibilityLabel(L("窗口"))
+            windowButton.toolTip = L("悬停高亮窗口，单击选择或直接拖动框选（W）")
             for button in [freeButton!, windowButton!, screenButton!] {
                 button.imagePosition = .noImage
                 button.setButtonType(.pushOnPushOff)
             }
         }
         guard purpose.supportsAnnotations else { return }
-        rectangleButton = SelectionButton("框选", symbol: "rectangle.dashed") { [weak self] in self?.requestMode(.rectangle) }
-        rectangleButton.toolTip = "拖动框选截图范围（R）"
-        subjectButton = SelectionButton("主体", symbol: "viewfinder") { [weak self] in self?.requestMode(.subject) }
-        subjectButton.toolTip = "识别并选择主体 · 点击此处结束标注，继续增减主体或重新框选"
-        windowButton.title = "窗口"
-        windowButton.setAccessibilityLabel("窗口")
-        windowButton.toolTip = "悬停高亮窗口，单击选择或直接拖动框选（W）"
+        rectangleButton = SelectionButton(L("框选"), symbol: "rectangle.dashed") { [weak self] in self?.requestMode(.rectangle) }
+        rectangleButton.toolTip = L("拖动框选截图范围（R）")
+        subjectButton = SelectionButton(L("主体"), symbol: "viewfinder") { [weak self] in self?.requestMode(.subject) }
+        subjectButton.toolTip = L("识别并选择主体 · 点击此处结束标注，继续增减主体或重新框选")
+        windowButton.title = L("窗口")
+        windowButton.setAccessibilityLabel(L("窗口"))
+        windowButton.toolTip = L("悬停高亮窗口，单击选择或直接拖动框选（W）")
         for button in [rectangleButton!, subjectButton!, windowButton!, screenButton!] {
             button.imagePosition = .noImage
             button.setButtonType(.pushOnPushOff)
         }
         let definitions: [(String, String, CaptureSelectionAction)] = [
-            ("完成", "checkmark", .copy), ("保存", "square.and.arrow.down", .save),
-            ("贴图", "pin", .pin), ("文字", "text.viewfinder", .ocr)
+            (L("完成"), "checkmark", .copy), (L("保存"), "square.and.arrow.down", .save),
+            (L("贴图"), "pin", .pin), (L("文字"), "text.viewfinder", .ocr)
         ]
         for (title, symbol, action) in definitions {
             let handler: () -> Void = { [weak self] in self?.perform(action) }
             let button = action == .copy
-                ? SelectionButton.confirmation(toolTip: "完成截图，复制并关闭（⌘C / Enter）", action: handler)
+                ? SelectionButton.confirmation(toolTip: L("完成截图，复制并关闭（⌘C / Enter）"), action: handler)
                 : SelectionButton(title, symbol: symbol, action: handler)
             button.imagePosition = .imageOnly
-            if action == .save { button.toolTip = "保存 PNG（⌘S）" }
-            if action == .pin { button.toolTip = "将选区贴到屏幕" }
+            if action == .save { button.toolTip = L("保存 PNG（⌘S）") }
+            if action == .pin { button.toolTip = L("将选区贴到屏幕") }
             imageActions.append(button)
             imageActionButtons.append((action, button))
         }
@@ -582,14 +587,21 @@ private final class SelectionView: NSView {
     private var imageScale: CGFloat { CGFloat(canvas.source.width) / max(1, bounds.width) }
 
     private func arrangeToolbar() {
+        let clipped = toolbarArea.intersection(bounds)
+        let available = clipped.isNull || clipped.isEmpty ? bounds : clipped
+        let usableWidth = min(1120, max(40, available.width - 24))
         let selectionActions: [NSView] = purpose.supportsFullScreen
             ? (selection == bounds ? [freeButton, windowButton] : [screenButton]) : []
         if purpose == .screenshot {
             let modes: [NSView] = [rectangleButton, subjectButton, windowButton, screenButton]
             let visibleControls = screenshotMode == .subject ? subjectControls! : rectangleControls!
-            let controlRows = visibleControls.rows(appendingActions: Array(imageActions.dropFirst()) + [cancelButton!, imageActions[0]])
-            toolbar.rows = [modes + [modeSeparator] + (controlRows.first ?? [])]
-                + Array(controlRows.dropFirst())
+            let actions = Array(imageActions.dropFirst()) + [cancelButton!, imageActions[0]]
+            let main = modes + [modeSeparator] + (visibleControls.rows(appendingActions: actions, maxWidth: usableWidth).first ?? [])
+            // The floating toolbar keeps the width established by its actions;
+            // extra stickers must not stretch it across the available screen.
+            let parameterWidth = min(usableWidth, SelectionToolbar.singleLineWidth(main))
+            let controlRows = visibleControls.rows(appendingActions: actions, maxWidth: parameterWidth)
+            toolbar.rows = [main] + Array(controlRows.dropFirst())
         } else if purpose == .record {
             toolbar.rows = [[freeButton, windowButton, screenButton, cancelButton] + (selection == nil ? [] : [confirmButton!])]
         } else if selection == nil {
@@ -599,9 +611,7 @@ private final class SelectionView: NSView {
         }
         toolbar.trailingActions = purpose == .screenshot ? [cancelButton, imageActions[0]] : [cancelButton, confirmButton]
         toolbar.isHidden = toolbar.rows.isEmpty
-        let clipped = toolbarArea.intersection(bounds)
-        let available = clipped.isNull || clipped.isEmpty ? bounds : clipped
-        let size = toolbar.arrange(maxWidth: min(1120, max(40, available.width - 24)), maxHeight: available.height)
+        let size = toolbar.arrange(maxWidth: usableWidth, maxHeight: available.height)
         toolbar.frame = SelectionGeometry.toolbarFrame(selection: selection, size: size, within: available)
     }
 
@@ -972,11 +982,11 @@ private final class SelectionView: NSView {
         chrome.selection = creationPreview ?? (pendingModeChange && screenshotMode == .window ? nil : selection)
         chrome.hover = selection == nil || pendingModeChange ? hover : nil
         if purpose == .screenshot {
-            chrome.emptyHint = screenshotMode == .window ? "悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消" : "拖动框选范围 · R 框选 · W 窗口 · F 整屏 · Esc 取消"
+            chrome.emptyHint = screenshotMode == .window ? L("悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消") : L("拖动框选范围 · R 框选 · W 窗口 · F 整屏 · Esc 取消")
         } else if purpose == .scroll {
             chrome.emptyHint = selectionMode == .window
-                ? "单击选择窗口 · R 返回正文框选 · Esc 取消"
-                : "拖动框选正文 · W 窗口框选 · Esc 取消"
+                ? L("单击选择窗口 · R 返回正文框选 · Esc 取消")
+                : L("拖动框选正文 · W 窗口框选 · Esc 取消")
         }
         chrome.needsDisplay = true
         rectangleCanvas.interactionBounds = selection.map { SelectionGeometry.pixelRect($0, in: bounds, imageSize: chrome.imageSize) }
@@ -999,7 +1009,7 @@ private final class SelectionView: NSView {
             imageActionButtons.forEach { action, button in
                 button.isEnabled = ready && !(subject && action == .ocr)
                 if action == .ocr {
-                    button.toolTip = subject ? "主体模式暂不支持提取文字，可切换到框选、窗口或整屏。" : "提取当前选区中的文字"
+                    button.toolTip = subject ? L("主体模式暂不支持提取文字，可切换到框选、窗口或整屏。") : L("提取当前选区中的文字")
                 }
             }
             let visibleControls = subject ? subjectControls! : rectangleControls!
@@ -1011,7 +1021,7 @@ private final class SelectionView: NSView {
             let undoingSubjects = screenshotMode == .subject && subjectSelectionTool
             visibleControls.undoButton.isEnabled = !pendingModeChange
                 && (undoingSubjects ? subjects.canUndo : canAnnotate && canvas.canUndo)
-            visibleControls.undoButton.toolTip = undoingSubjects ? "撤销主体选择（⌘Z）" : "撤销标注（⌘Z）"
+            visibleControls.undoButton.toolTip = undoingSubjects ? L("撤销主体选择（⌘Z）") : L("撤销标注（⌘Z）")
         }
         if purpose == .screenshot {
             let position: NSControl.ImagePosition = .imageOnly

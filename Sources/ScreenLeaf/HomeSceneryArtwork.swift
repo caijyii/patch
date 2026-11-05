@@ -33,7 +33,7 @@ enum HomeSceneryArtwork {
         context.fillPath()
         context.addPath(horizon)
         context.setStrokeColor(color(season == .winter ? (dark ? 0xb8c7cd : 0xa1b1ba) :
-            (dark ? 0xafbd9e : 0x95a485), alpha: 0.4))
+            (dark ? 0x747579 : 0x95a485), alpha: 0.4))
         context.setLineWidth(1.4)
         context.strokePath()
 
@@ -48,9 +48,9 @@ enum HomeSceneryArtwork {
         context.scaleBy(x: Self.treeScale, y: Self.treeScale)
         let sway = CGFloat(sin(motionTime * 0.55)) * 1.8 / Self.treeScale
         context.setStrokeColor(color(season == .winter ? (dark ? 0xabb9bc : 0x8c9da0) :
-            (dark ? 0xa5b193 : 0x829274)))
+            (dark ? 0x797a7e : 0x829274)))
         context.setFillColor(color(season == .winter ? (dark ? 0x7b8b8e : 0xb4c0bf) :
-            (dark ? 0x7a8566 : 0xa9b58f), alpha: dark ? 0x55 / 255.0 : 0x60 / 255.0))
+            (dark ? 0x444548 : 0xa9b58f), alpha: dark ? 0x55 / 255.0 : 0x60 / 255.0))
         context.setLineWidth(1.8 / sqrt(Self.treeScale))
         context.beginPath()
         context.move(to: CGPoint(x: -28, y: 370))
@@ -113,10 +113,10 @@ enum HomeSceneryArtwork {
             context.addCurve(to: CGPoint(x: x - rx + dx, y: y),
                 control1: CGPoint(x: x - rx * 0.65 + dx, y: y + ry * 0.9),
                 control2: CGPoint(x: x - rx * 1.03 + dx, y: y + ry * 0.5))
-            context.setFillColor(color(season.leaves[index % 3], alpha: season == .spring ? 0.30 : 0.35))
+            context.setFillColor(color(dark ? nightLeaf(season.leaves[index % 3]) : season.leaves[index % 3], alpha: dark ? 0.22 : season == .spring ? 0.30 : 0.35))
             context.fillPath()
 
-            context.setStrokeColor(color(dark ? 0xc2cdb0 : 0x8f9f7d, alpha: 0.35))
+            context.setStrokeColor(color(dark ? 0x7c7d81 : 0x8f9f7d, alpha: 0.35))
             context.setLineWidth(1)
             context.saveGState()
             context.translateBy(x: x + dx, y: y)
@@ -129,7 +129,7 @@ enum HomeSceneryArtwork {
             context.strokePath()
             context.restoreGState()
 
-            context.setStrokeColor(color(dark ? 0xc2cdb0 : 0x8f9f7d, alpha: 0.45))
+            context.setStrokeColor(color(dark ? 0x7c7d81 : 0x8f9f7d, alpha: 0.45))
             for leaf in 0..<3 {
                 let lx = x + CGFloat(sin(Double(index) * 2.4 + Double(leaf) * 4)) * rx * 0.65 + dx
                 let ly = y + CGFloat(cos(Double(index) * 3 + Double(leaf) * 2)) * ry * 0.6
@@ -235,7 +235,7 @@ enum HomeSceneryArtwork {
 
     private static func drawSkyAndGrass(in context: CGContext, season: HomeSeason, dark: Bool) {
         context.setStrokeColor(color(season == .winter ? (dark ? 0xbbcbd2 : 0xa0b2bf) :
-            (dark ? 0xb6c7ae : 0x98aa8d), alpha: 0.35))
+            (dark ? 0x7c7d81 : 0x98aa8d), alpha: 0.35))
         context.setLineWidth(1.5)
         for (x, y): (CGFloat, CGFloat) in [(89, 97), (631, 71)] {
             context.beginPath()
@@ -288,20 +288,27 @@ enum HomeSceneryArtwork {
 
     private static func skyColor(for season: HomeSeason, dark: Bool) -> UInt32 {
         switch season {
-        case .spring: return dark ? 0x334239 : 0xf0f5ef
-        case .summer: return dark ? 0x30434a : 0xedf5f7
-        case .autumn: return dark ? 0x344238 : 0xeef4f1
-        case .winter: return dark ? 0x36424b : 0xecf1f5
+        case .spring: return dark ? 0x202124 : 0xf0f5ef
+        case .summer: return dark ? 0x202226 : 0xedf5f7
+        case .autumn: return dark ? 0x222224 : 0xeef4f1
+        case .winter: return dark ? 0x232529 : 0xecf1f5
         }
     }
 
     private static func groundColor(for season: HomeSeason, dark: Bool) -> UInt32 {
         switch season {
-        case .spring: return dark ? 0x586746 : 0xd7e7d0
-        case .summer: return dark ? 0x496548 : 0xd3e5d3
-        case .autumn: return dark ? 0x4b5941 : 0xdbe6db
+        case .spring: return dark ? 0x48494b : 0xd7e7d0
+        case .summer: return dark ? 0x45474a : 0xd3e5d3
+        case .autumn: return dark ? 0x484749 : 0xdbe6db
         case .winter: return dark ? 0xabbfc8 : 0xffffff
         }
+    }
+
+    private static func nightLeaf(_ rgb: UInt32) -> UInt32 {
+        let r = Double((rgb >> 16) & 0xff), g = Double((rgb >> 8) & 0xff), b = Double(rgb & 0xff)
+        let gray = r * 0.2126 + g * 0.7152 + b * 0.0722
+        func channel(_ value: Double) -> UInt32 { UInt32((gray * 0.88 + value * 0.12) * 0.60) }
+        return channel(r) << 16 | channel(g) << 8 | channel(b)
     }
 
     private static func color(_ rgb: UInt32, alpha: CGFloat = 1) -> CGColor {

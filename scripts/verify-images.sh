@@ -22,7 +22,7 @@ printf 'Verifying images with SDK: %s\n' "$task_sdk"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$task_sdk" \
     -module-cache-path "$task_work/module-cache" -target arm64-apple-macosx15.0 \
     "$task_root/Sources/ScreenLeaf/CaptureRegion.swift" \
-    "$task_root/Sources/ScreenLeaf/Preferences.swift" "$task_root/Sources/ScreenLeaf/AnnotationControls.swift" \
+    "$task_root/Sources/ScreenLeaf/Localization.swift" "$task_root/Sources/ScreenLeaf/WindowTitle.swift" "$task_root/Sources/ScreenLeaf/WindowActivation.swift" "$task_root/Sources/ScreenLeaf/WindowAmbientBackground.swift" "$task_root/Sources/ScreenLeaf/Preferences.swift" "$task_root/Sources/ScreenLeaf/AnnotationControls.swift" \
     "$task_root/Sources/ScreenLeaf/SubjectExtraction.swift" "$task_root/Sources/ScreenLeaf/SubjectSelection.swift" \
     "$task_work/ImageToolsVerification.swift" \
     -o "$task_work/verify-images"

@@ -69,7 +69,9 @@ private struct PreferencesVerification {
             ("per-tool settings persist in injected memory storage without cross-tool inheritance", preferences),
             ("invalid and future preferences fall back without rewriting storage", invalidPreferences),
             ("shortcut serialization and accepted modifiers are validated", shortcutModel),
-            ("five-action preferences gain the subject default without replacing custom keys", legacyShortcuts),
+            ("old 5/6/7-action defaults migrate; custom bindings win conflicts with new actions", legacyShortcuts),
+            ("batch count and language preferences persist independently with safe boundaries", batchAndLanguagePreferences),
+            ("sticker order persists, normalizes stable IDs and inserts new items beside default neighbours", stickerOrder),
             ("release failures are tracked and retried without dispatching obsolete callbacks", releaseRetry)
         ]
         let checks: [(String, () throws -> Void)] = [
@@ -106,6 +108,40 @@ private struct PreferencesVerification {
         }
         if failed != 0 { exit(1) }
         print("PASS: \(selectedChecks.count) preference and hotkey checks; fake backend only, no UserDefaults or system input")
+    }
+
+    @MainActor private static func stickerOrder() throws {
+        let data = Data("{\"version\":1,\"annotations\":{},\"shortcuts\":{},\"stickerOrder\":[\"old-b\",\"b\",\"removed\",\"a\"]}".utf8)
+        let memory = MemoryPreferencesStorage(data: data)
+        let store = PreferencesStore(storage: memory)
+        let defaults = ["a", "b", "c"]
+        func canonical(_ id: String) -> String { id == "old-b" ? "b" : id }
+        try require(store.orderedStickerIdentifiers(defaults: defaults, canonicalize: canonical) == ["b", "c", "a"], "Legacy/duplicate/removed IDs were not normalized")
+        try require(memory.writeCount == 0, "Reading order rewrote preferences")
+        store.setStickerOrder(["c", "old-b", "b", "removed"], defaults: defaults, canonicalize: canonical)
+        let restored = PreferencesStore(storage: memory)
+        try require(restored.orderedStickerIdentifiers(defaults: defaults, canonicalize: canonical) == ["c", "a", "b"], "Sticker reorder was not persisted")
+        try require(restored.orderedStickerIdentifiers(defaults: defaults + ["d"], canonicalize: canonical) == ["c", "d", "a", "b"], "New catalog content did not follow its default neighbour")
+        let writes = memory.writeCount
+        store.setStickerOrder(["c", "a", "b"], defaults: defaults)
+        try require(memory.writeCount == writes, "An unchanged order wrote preferences again")
+        restored.setStickerOrder(defaults, defaults: defaults)
+        let reset = PreferencesStore(storage: memory)
+        try require(reset.orderedStickerIdentifiers(defaults: defaults) == defaults, "Default order did not survive reload")
+        let plain = MemoryPreferencesStorage(data: Data("{\"version\":1,\"annotations\":{},\"shortcuts\":{}}".utf8))
+        try require(PreferencesStore(storage: plain).orderedStickerIdentifiers(defaults: defaults) == defaults && plain.writeCount == 0,
+                    "Old settings without sticker order failed to migrate")
+        let oldIDs = ["sun", "dog", "cat", "flower"]
+        let before = MemoryPreferencesStorage()
+        let beforeStore = PreferencesStore(storage: before)
+        beforeStore.setStickerOrder(oldIDs, defaults: ["cat", "dog", "sun", "flower"])
+        let expanded = ["cat", "blue-cat", "dog", "sun", "flower"]
+        let migrated = PreferencesStore(storage: before).orderedStickerIdentifiers(defaults: expanded)
+        try require(migrated == ["sun", "dog", "cat", "blue-cat", "flower"] && migrated.filter { $0 != "blue-cat" } == oldIDs,
+                    "New blue cat did not stay with the existing cat or changed saved item order")
+        beforeStore.setStickerOrder(["blue-cat"] + oldIDs, defaults: expanded)
+        try require(PreferencesStore(storage: before).orderedStickerIdentifiers(defaults: expanded) == ["blue-cat"] + oldIDs,
+                    "A deliberately reordered blue cat was moved back to its default neighbour")
     }
 
     @MainActor private static func preferences() throws {
@@ -149,7 +185,7 @@ private struct PreferencesVerification {
     }
 
     @MainActor private static func shortcutModel() throws {
-        try require(ShortcutAction.displayOrder == [.screenshot, .scroll, .subject, .record, .text, .pin]
+        try require(ShortcutAction.displayOrder == [.screenshot, .scroll, .subject, .record, .text, .pin, .recentContent, .pinRecent]
                     && Set(ShortcutAction.settingsOrder) == Set(ShortcutAction.allCases)
                     && ShortcutAction.settingsOrder.count == ShortcutAction.allCases.count,
                     "Feature display order is incorrect or omits/duplicates an action")
@@ -157,7 +193,7 @@ private struct PreferencesVerification {
         let store = PreferencesStore(storage: memory)
         var chosen = ShortcutAction.defaultShortcuts
         chosen[.screenshot] = KeyboardShortcut(keyCode: 122, modifiers: [.command, .shift])
-        chosen[.subject] = KeyboardShortcut(keyCode: 28, modifiers: [.option])
+        chosen[.subject] = KeyboardShortcut(keyCode: 28, modifiers: [.control, .option])
         try require(store.setShortcuts(chosen), "Valid shortcuts could not be persisted")
         try require(PreferencesStore(storage: memory).shortcuts == chosen, "Shortcuts did not survive reconstruction")
         let writes = memory.writeCount
@@ -175,83 +211,145 @@ private struct PreferencesVerification {
                     "Modifier conversion did not round trip")
     }
 
-    @MainActor private static func legacyShortcuts() throws {
-        let previousActions: [ShortcutAction] = [.screenshot, .scroll, .text, .pin, .record]
-        try require(ShortcutAction.allCases == previousActions + [.subject, .togglePins], "The new action changed legacy launch priority")
-        try require(previousActions.map(\.legacyID) == [1, 2, 3, 4, 5]
-                    && previousActions.map { $0.defaultShortcut.keyCode } == [18, 19, 20, 21, 23]
-                    && ShortcutAction.subject.legacyID == 6
-                    && ShortcutAction.subject.defaultShortcut == KeyboardShortcut(keyCode: 22, modifiers: [.option]),
-                    "Existing action IDs/defaults or the subject default changed")
-
+    @MainActor private static func legacyStorage(_ shortcuts: [ShortcutAction: KeyboardShortcut], layoutVersion: Int? = nil) throws -> MemoryPreferencesStorage {
         struct SavedSnapshot: Encodable {
             let version = 1
             let annotations: [String: AnnotationPreference] = [:]
             let shortcuts: [String: KeyboardShortcut]
+            let shortcutLayoutVersion: Int?
         }
-        func storage(_ shortcuts: [ShortcutAction: KeyboardShortcut]) throws -> MemoryPreferencesStorage {
-            let saved = Dictionary(uniqueKeysWithValues: shortcuts.map { ($0.key.rawValue, $0.value) })
-            return MemoryPreferencesStorage(data: try JSONEncoder().encode(SavedSnapshot(shortcuts: saved)))
+        let saved = Dictionary(uniqueKeysWithValues: shortcuts.map { ($0.key.rawValue, $0.value) })
+        return MemoryPreferencesStorage(data: try JSONEncoder().encode(SavedSnapshot(shortcuts: saved, shortcutLayoutVersion: layoutVersion)))
+    }
+
+    @MainActor private static func legacyShortcuts() throws {
+        let oldActions = ShortcutAction.legacyActions
+        let oldDefaults = ShortcutAction.legacyDefaultShortcuts
+        try require(ShortcutAction.allCases == oldActions + [.recentContent, .pinRecent]
+                    && oldActions.map(\.legacyID) == [1, 2, 3, 4, 5, 6, 7]
+                    && oldActions.map { oldDefaults[$0]!.keyCode } == [18, 19, 20, 21, 23, 22, 26]
+                    && ShortcutAction.recentContent.legacyID == 8 && ShortcutAction.pinRecent.legacyID == 9,
+                    "New shortcuts changed legacy IDs or installation priority")
+        try require(ShortcutAction.settingsOrder.map { $0.defaultShortcut.keyCode } == [18, 19, 20, 21, 23, 22, 26, 28, 25]
+                    && ShortcutAction.settingsOrder.allSatisfy { $0.defaultShortcut.modifiers == [.option] },
+                    "New defaults do not follow the visual Option-1 through Option-9 order")
+
+        for count in [5, 6, 7] {
+            let fixture = Dictionary(uniqueKeysWithValues: oldActions.prefix(count).map { ($0, oldDefaults[$0]!) })
+            let memory = try legacyStorage(fixture)
+            let store = PreferencesStore(storage: memory)
+            try require(store.shortcuts == ShortcutAction.defaultShortcuts && memory.writeCount == 0,
+                        "An unchanged old \(count)-action layout did not adopt the new default order")
+            store.setPinRecentCount(7)
+            try require(PreferencesStore(storage: memory).shortcuts == ShortcutAction.defaultShortcuts,
+                        "Saving a separate setting changed legacy-default migration")
         }
-        let oldSix = Dictionary(uniqueKeysWithValues: ShortcutAction.displayOrder.map {
-            ($0, KeyboardShortcut(keyCode: $0.defaultShortcut.keyCode, modifiers: [.control, .option]))
+
+        let oldSix = Dictionary(uniqueKeysWithValues: oldActions.prefix(6).map {
+            ($0, KeyboardShortcut(keyCode: oldDefaults[$0]!.keyCode, modifiers: [.control, .option]))
         })
-        let oldSixMemory = try storage(oldSix)
+        let oldSixMemory = try legacyStorage(oldSix)
         let upgraded = PreferencesStore(storage: oldSixMemory).shortcuts
         try require(oldSix.allSatisfy { upgraded[$0.key] == $0.value }
-                    && upgraded[.togglePins] == ShortcutAction.togglePins.defaultShortcut && oldSixMemory.writeCount == 0,
-                    "Adding the seventh action replaced existing Control-Option bindings")
-        var previous = ShortcutAction.defaultShortcuts.filter { $0.key != .subject && $0.key != .togglePins }
-        previous[.screenshot] = KeyboardShortcut(keyCode: 25, modifiers: [.option])
-        previous[.pin] = KeyboardShortcut(keyCode: 122, modifiers: [.shift])
-        let memory = try storage(previous)
-        let store = PreferencesStore(storage: memory)
-        let loaded = store.shortcuts
-        try require(previous.allSatisfy { loaded[$0.key] == $0.value }
-                    && loaded[.subject] == ShortcutAction.subject.defaultShortcut && memory.writeCount == 0,
-                    "Loading an old snapshot replaced custom keys or wrote during migration")
+                    && upgraded[.togglePins] == oldDefaults[.togglePins]
+                    && upgraded[.recentContent] == ShortcutAction.recentContent.defaultShortcut
+                    && upgraded[.pinRecent] == ShortcutAction.pinRecent.defaultShortcut && oldSixMemory.writeCount == 0,
+                    "Migrating six custom actions replaced old bindings or omitted new actions")
 
-        var colliding = previous
-        colliding[.screenshot] = ShortcutAction.subject.defaultShortcut
-        let conflictMemory = try storage(colliding)
+        var previous = oldDefaults
+        previous[.screenshot] = ShortcutAction.pinRecent.defaultShortcut
+        previous[.pin] = KeyboardShortcut(keyCode: 122, modifiers: [.shift])
+        let conflictMemory = try legacyStorage(previous)
         let conflictStore = PreferencesStore(storage: conflictMemory)
         let desired = conflictStore.shortcuts
-        try require(colliding.allSatisfy { desired[$0.key] == $0.value }
-                    && desired[.subject] == desired[.screenshot] && conflictMemory.writeCount == 0,
-                    "The subject default replaced an existing custom binding")
-        let backend = FakeHotKeyBackend()
-        let keys = HotKeys(backend: backend)
+        try require(previous.allSatisfy { desired[$0.key] == $0.value }
+                    && desired[.recentContent] == desired[.togglePins] && desired[.pinRecent] == desired[.screenshot]
+                    && conflictMemory.writeCount == 0,
+                    "New defaults replaced existing custom bindings")
+        let backend = FakeHotKeyBackend(), keys = HotKeys(backend: backend)
         var fired: [ShortcutAction] = []
         let actions = Dictionary(uniqueKeysWithValues: ShortcutAction.allCases.map { action in
             (action, { fired.append(action) })
         })
         let failures = keys.installShortcuts(desired, actions: actions)
-        try require(failures == [.subject: .duplicate(.screenshot, .subject)] && keys.unavailable == [6]
-                    && keys.registeredShortcuts == desired.filter { $0.key != .subject } && backend.registrations.count == previousActions.count + 1,
-                    "A migrated default conflict disabled or rebound an old shortcut")
-        backend.emit(ShortcutAction.subject.defaultShortcut)
-        try require(fired == [.screenshot], "The migrated conflict stole the old action callback")
+        try require(failures == [.recentContent: .duplicate(.togglePins, .recentContent), .pinRecent: .duplicate(.screenshot, .pinRecent)]
+                    && keys.unavailable == [8, 9] && keys.registeredShortcuts == previous
+                    && backend.registrations.count == oldActions.count,
+                    "A newly added shortcut stole or disabled an existing binding")
+        backend.emit(previous[.screenshot]!); backend.emit(previous[.togglePins]!)
+        try require(fired == [.screenshot, .togglePins], "Migrated conflicts stole old action callbacks")
         try require(!conflictStore.setShortcuts(desired) && conflictMemory.writeCount == 0,
-                    "A migrated duplicate was persisted without repair")
+                    "An unresolved migrated duplicate was persisted")
         var repaired = desired
-        repaired[.subject] = KeyboardShortcut(keyCode: 28, modifiers: [.option])
+        repaired[.recentContent] = KeyboardShortcut(keyCode: 26, modifiers: [.control, .option])
+        repaired[.pinRecent] = KeyboardShortcut(keyCode: 28, modifiers: [.control, .option])
         try keys.applyShortcuts(repaired).get()
         try require(conflictStore.setShortcuts(repaired) && conflictMemory.writeCount == 1
                     && PreferencesStore(storage: conflictMemory).shortcuts == repaired
-                    && keys.unavailable.isEmpty && keys.registeredShortcuts[.screenshot] == colliding[.screenshot],
-                    "Repairing the subject key did not preserve and save the existing bindings")
-        backend.emit(repaired[.subject]!)
-        try require(fired == [.screenshot, .subject], "The repaired subject key lost its action callback")
+                    && keys.unavailable.isEmpty && previous.allSatisfy { keys.registeredShortcuts[$0.key] == $0.value },
+                    "Repairing new shortcuts replaced existing bindings or failed to persist")
+        backend.emit(repaired[.recentContent]!); backend.emit(repaired[.pinRecent]!)
+        try require(fired == [.screenshot, .togglePins, .recentContent, .pinRecent], "New repaired shortcuts lost their action callbacks")
+        let encoded = try JSONSerialization.jsonObject(with: conflictMemory.data!) as! [String: Any]
+        try require(encoded["shortcutLayoutVersion"] as? Int == 2, "Saving shortcuts omitted the layout migration marker")
+
+        // A marked layout must not be mistaken for an untouched old default layout.
+        let markedMemory = try legacyStorage(oldDefaults, layoutVersion: 2)
+        let marked = PreferencesStore(storage: markedMemory).shortcuts
+        try require(oldDefaults.allSatisfy { marked[$0.key] == $0.value } && markedMemory.writeCount == 0,
+                    "An already-versioned layout was remapped a second time")
+
+        var fiveCustom = Dictionary(uniqueKeysWithValues: oldActions.prefix(5).map { ($0, oldDefaults[$0]!) })
+        fiveCustom[.screenshot] = oldDefaults[.subject]
+        let fiveMemory = try legacyStorage(fiveCustom)
+        let five = PreferencesStore(storage: fiveMemory).shortcuts
+        let fiveKeys = HotKeys(backend: FakeHotKeyBackend())
+        let fiveFailures = fiveKeys.installShortcuts(five, actions: [:])
+        try require(fiveCustom.allSatisfy { fiveKeys.registeredShortcuts[$0.key] == $0.value }
+                    && fiveFailures[.subject] == .duplicate(.screenshot, .subject)
+                    && fiveFailures[.recentContent] == .duplicate(.togglePins, .recentContent),
+                    "Adding missing legacy/new actions stole an older custom key")
 
         var missing = previous; missing.removeValue(forKey: .record)
         var invalid = previous; invalid[.pin] = KeyboardShortcut(keyCode: 999, modifiers: [.control])
         var duplicate = previous; duplicate[.scroll] = duplicate[.screenshot]
-        var duplicateCurrent = loaded; duplicateCurrent[.subject] = duplicateCurrent[.screenshot]
+        var duplicateCurrent = repaired; duplicateCurrent[.subject] = duplicateCurrent[.screenshot]
         for broken in [missing, invalid, duplicate, duplicateCurrent] {
-            let brokenMemory = try storage(broken)
+            let brokenMemory = try legacyStorage(broken)
             try require(PreferencesStore(storage: brokenMemory).shortcuts == ShortcutAction.defaultShortcuts
                         && brokenMemory.writeCount == 0,
-                        "The subject migration accepted another malformed shortcut configuration")
+                        "Migration accepted another malformed shortcut configuration")
+        }
+    }
+
+    @MainActor private static func batchAndLanguagePreferences() throws {
+        let memory = MemoryPreferencesStorage(), store = PreferencesStore(storage: memory)
+        try require(store.pinRecentCount == 5 && store.languagePreference == .system && memory.writeCount == 0,
+                    "New-store batch count or language defaults are incorrect")
+        for invalid in [Int.min, -1, 0, 21, Int.max] { store.setPinRecentCount(invalid) }
+        try require(store.pinRecentCount == 5 && memory.writeCount == 0, "Out-of-range batch counts were stored")
+        store.setPinRecentCount(1); store.setPinRecentCount(20)
+        let originalRuntimeLanguage = AppLocalization.language
+        store.setLanguagePreference(.english); store.setAppearancePreference(.dark)
+        var shortcuts = ShortcutAction.defaultShortcuts
+        shortcuts[.subject] = KeyboardShortcut(keyCode: 122, modifiers: [.control, .option])
+        try require(store.setShortcuts(shortcuts), "Cannot persist independent language/count/shortcut settings")
+        let writes = memory.writeCount
+        let restored = PreferencesStore(storage: memory)
+        try require(restored.pinRecentCount == 20 && restored.languagePreference == .english
+                    && restored.appearancePreference == .dark && restored.shortcuts == shortcuts
+                    && AppLocalization.language == originalRuntimeLanguage && memory.writeCount == writes,
+                    "Preference reconstruction lost settings, wrote data, or switched the running interface language")
+        restored.setPinRecentCount(20); restored.setLanguagePreference(.english); restored.setAppearancePreference(.dark)
+        try require(memory.writeCount == writes, "Unchanged preferences were needlessly persisted")
+        restored.setLanguagePreference(.system)
+        try require(PreferencesStore(storage: memory).languagePreference == .system
+                    && PreferencesStore(storage: memory).shortcuts == shortcuts, "Restoring system language damaged shortcuts")
+        for (stored, expected) in [(-20, 1), (0, 1), (21, 20), (999, 20)] {
+            let bytes = Data("{\"version\":1,\"annotations\":{},\"shortcuts\":{},\"pinRecentCount\":\(stored)}".utf8)
+            let corrupt = MemoryPreferencesStorage(data: bytes)
+            try require(PreferencesStore(storage: corrupt).pinRecentCount == expected && corrupt.writeCount == 0,
+                        "Persisted batch count did not clamp safely without a read-time write")
         }
     }
 
@@ -573,7 +671,7 @@ private struct PreferencesVerification {
         backend.blocked.insert(replacement); backend.attempts = []
         try require(editor.save() && backend.attempts.isEmpty && keys.registeredShortcuts[.screenshot] == nil,
                     "A successful save retained stale edited actions")
-        editor.startRecording(.subject); _ = editor.capture(try event(22, [.option]))
+        editor.startRecording(.subject); _ = editor.capture(try event(UInt16(ShortcutAction.subject.defaultShortcut.keyCode), [.option]))
         editor.reset()
         try require(editor.save() && backend.attempts.isEmpty && keys.registeredShortcuts[.subject] == nil,
                     "Cancelling a draft retained edited actions")
@@ -598,7 +696,7 @@ private struct PreferencesVerification {
         // A no-edit save only retries deferred cleanup, not unrelated failed launches.
         try require(editor.save() && backend.attempts.isEmpty && keys.registeredShortcuts == initialActive,
                     "No-edit save retried an unavailable launch key")
-        editor.startRecording(.subject); _ = editor.capture(try event(22, [.option]))
+        editor.startRecording(.subject); _ = editor.capture(try event(UInt16(ShortcutAction.subject.defaultShortcut.keyCode), [.option]))
         try require(!editor.save() && backend.attempts == [missing] && keys.registeredShortcuts == initialActive,
                     "Explicit same-value recording did not retry its failed registration")
         backend.blocked.remove(missing); backend.attempts = []
@@ -640,7 +738,7 @@ private struct PreferencesVerification {
         try require(fired() == [.screenshot, .scroll], "A partial-registration swap lost action routing")
 
         let swapped = store.shortcuts, swappedActive = keys.registeredShortcuts
-        editor.startRecording(.text); _ = editor.capture(try event(22, [.option]))
+        editor.startRecording(.text); _ = editor.capture(try event(UInt16(ShortcutAction.subject.defaultShortcut.keyCode), [.option]))
         try require(!editor.save() && editor.message(.text).contains("相同快捷键") && editor.hasIssue(.subject)
                     && store.shortcuts == swapped && keys.registeredShortcuts == swappedActive && backend.attempts.isEmpty,
                     "A duplicate of an inactive saved shortcut bypassed global validation")

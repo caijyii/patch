@@ -11,12 +11,13 @@ import Vision
 final class ImageToolsCoordinator {
     private var windows: [UUID: NSWindowController] = [:]
     private var pins: [UUID: ImageToolsPinController] = [:]
-    private var pinsHidden = false
     private var ocrQueue = ImageToolsOCRQueue()
     private var ocrJobs: [UUID: ImageToolsOCRJob] = [:]
+    var onPinStateChange: (() -> Void)?
 
     var hasPins: Bool { !pins.isEmpty }
-    var arePinsHidden: Bool { hasPins && pinsHidden }
+    // New pins can be visible while older ones remain hidden.
+    var arePinsHidden: Bool { hasPins && pins.values.allSatisfy { $0.window?.isVisible != true } }
 
     init() {}
 
@@ -24,7 +25,7 @@ final class ImageToolsCoordinator {
 
     func showEditor(_ image: CGImage, pixelScale: CGFloat? = nil) {
         let id = UUID()
-        let controller = ImageToolsEditorController(image: image)
+        let controller = ImageToolsEditorController(image: image, pixelScale: pixelScale)
         controller.onPin = { [weak self] in self?.pinImage($0, pixelScale: pixelScale) }
         controller.onOCR = { [weak self] in self?.recognize($0) }
         controller.onClose = { [weak self] in self?.windows.removeValue(forKey: id) }
@@ -34,15 +35,18 @@ final class ImageToolsCoordinator {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func pinImage(_ image: CGImage, pixelScale: CGFloat? = nil) {
-        let controller = ImageToolsPinController(image: image, pixelScale: pixelScale)
+    func pinImage(_ image: CGImage, pixelScale: CGFloat? = nil, recordsHistory: Bool = true,
+                  anchor: NSPoint? = nil, batchIndex: Int = 0) {
+        let point = anchor ?? NSEvent.mouseLocation
+        if recordsHistory { ImageToolsUI.onCompletedImage?(image, pixelScale) }
+        let controller = ImageToolsPinController(image: image, pixelScale: pixelScale, anchor: point, batchIndex: batchIndex)
         controller.onOCR = { [weak self] image in self?.recognize(image) }
         addPin(controller)
     }
 
     func showSubjectSelection(_ image: CGImage, pixelScale: CGFloat? = nil) {
         let id = UUID()
-        let controller = SubjectSelectionController(image: image)
+        let controller = SubjectSelectionController(image: image, pixelScale: pixelScale)
         controller.onPin = { [weak self] in self?.pinImage($0, pixelScale: pixelScale) }
         controller.onClose = { [weak self] in self?.windows.removeValue(forKey: id) }
         windows[id] = controller
@@ -58,25 +62,24 @@ final class ImageToolsCoordinator {
         let controllers = Array(windows.values) + Array(pins.values)
         windows.removeAll()
         pins.removeAll()
-        pinsHidden = false
         controllers.forEach { $0.close() }
+        onPinStateChange?()
     }
 
-    func pinText(_ text: String) {
-        addPin(ImageToolsPinController(text: text))
+    func pinText(_ text: String, recordsHistory: Bool = true, anchor: NSPoint? = nil, batchIndex: Int = 0) {
+        let point = anchor ?? NSEvent.mouseLocation
+        if recordsHistory { ImageToolsUI.onCompletedText?(text) }
+        addPin(ImageToolsPinController(text: text, anchor: point, batchIndex: batchIndex))
     }
 
-    func pinClipboard(from pasteboard: NSPasteboard = .general) {
-        if let image = NSImage(pasteboard: pasteboard),
-           let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-            let savedScale = pasteboard.string(forType: ImageToolsUI.pixelScalePasteboardType).flatMap(Double.init)
-            let metadataScale = image.size.width > 0 ? CGFloat(cgImage.width) / image.size.width : nil
-            let pixelScale = savedScale.map { CGFloat($0) } ?? metadataScale
-            pinImage(cgImage, pixelScale: pixelScale)
+    func pinClipboard(from pasteboard: NSPasteboard = .general, anchor: NSPoint? = nil) {
+        let point = anchor ?? NSEvent.mouseLocation
+        if let image = ImageToolsUI.clipboardImage(from: pasteboard) {
+            pinImage(image.image, pixelScale: image.pixelScale, anchor: point)
         } else if let text = pasteboard.string(forType: .string), !text.isEmpty {
-            pinText(text)
+            pinText(text, anchor: point)
         } else {
-            showError(ScreenLeafError(message: "剪贴板中没有可贴出的图片或文字。"), title: "无法贴出剪贴板")
+            showError(ScreenLeafError(message: L("剪贴板中没有可贴出的图片或文字。")), title: L("无法贴出剪贴板"))
         }
     }
 
@@ -103,24 +106,38 @@ final class ImageToolsCoordinator {
 
     func togglePins() {
         guard !pins.isEmpty else { return }
-        pinsHidden.toggle()
+        let hidePins = !arePinsHidden
         for controller in pins.values {
-            if pinsHidden { controller.window?.orderOut(nil) }
-            else { controller.window?.orderFrontRegardless() }
+            guard let window = controller.window else { continue }
+            if hidePins {
+                window.orderOut(nil)
+                WindowActivationCoordinator.shared.unregister(window)
+            } else {
+                if controller.isAnnotating { WindowActivationCoordinator.shared.register(window) }
+                window.orderFrontRegardless()
+            }
         }
+        onPinStateChange?()
     }
 
     private func addPin(_ controller: ImageToolsPinController) {
         let id = UUID()
-        if pinsHidden {
-            pinsHidden = false
-            pins.values.forEach { $0.window?.orderFrontRegardless() }
-        }
+        // Repeated pins at one pointer position should leave a small visible edge.
+        // Only the new window moves; hidden pins do not reserve desktop positions.
+        controller.avoidInitialOverlap(with: pins.values.compactMap {
+            guard let window = $0.window, window.isVisible else { return nil }
+            return window.frame
+        })
+        // A new pin must not reveal older pins that the user has hidden.
         pins[id] = controller
-        controller.onClose = { [weak self] in self?.pins.removeValue(forKey: id) }
+        controller.onClose = { [weak self] in
+            guard let self, self.pins.removeValue(forKey: id) != nil else { return }
+            self.onPinStateChange?()
+        }
         controller.showWindow(nil)
         controller.window?.orderFrontRegardless()
         controller.focusTextIfNeeded()
+        onPinStateChange?()
     }
 }
 
@@ -554,7 +571,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
     /// Updates the underlying subject image without discarding annotations or their undo history.
     func replaceSourcePreservingAnnotations(_ image: CGImage) throws {
         guard image.width == source.width, image.height == source.height else {
-            throw ScreenLeafError(message: "更新图片的像素尺寸必须保持一致。")
+            throw ScreenLeafError(message: L("更新图片的像素尺寸必须保持一致。"))
         }
         finishTextEditing()
         finishAnnotationDrag()
@@ -578,7 +595,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
 
     private func rasterized(_ items: [ImageToolsAnnotation], croppingTo pixelRect: CGRect? = nil) throws -> CGImage {
         guard items.allSatisfy({ $0.tool != .mosaic || $0.mosaic != nil }) else {
-            throw ScreenLeafError(message: "马赛克尚未完成，无法导出图片。")
+            throw ScreenLeafError(message: L("马赛克尚未完成，无法导出图片。"))
         }
         let imageBounds = CGRect(x: 0, y: 0, width: source.width, height: source.height)
         let region: CGRect
@@ -586,11 +603,11 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
             guard pixelRect.origin.x.isFinite, pixelRect.origin.y.isFinite,
                   pixelRect.width.isFinite, pixelRect.height.isFinite,
                   pixelRect.width > 0, pixelRect.height > 0 else {
-                throw ScreenLeafError(message: "无法读取选区，请重新选取。")
+                throw ScreenLeafError(message: L("无法读取选区，请重新选取。"))
             }
             region = pixelRect.integral.intersection(allowsOutsideAnnotations ? bounds : imageBounds)
             guard !region.isNull, !region.isEmpty else {
-                throw ScreenLeafError(message: "无法读取选区，请重新选取。")
+                throw ScreenLeafError(message: L("无法读取选区，请重新选取。"))
             }
         } else { region = exportBounds(for: items) }
         // CoreGraphics can round stroke coverage differently when the bitmap's
@@ -600,7 +617,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
         guard let context = CGContext(data: nil, width: Int(renderRegion.width), height: Int(renderRegion.height),
                 bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            throw ScreenLeafError(message: "图片过大，无法分配导出内存。")
+            throw ScreenLeafError(message: L("图片过大，无法分配导出内存。"))
         }
         if allowsOutsideAnnotations {
             context.setFillColor(NSColor.white.cgColor)
@@ -620,7 +637,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
                 bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
                 let input = context.data, let output = cropped.data else {
-                throw ScreenLeafError(message: "图片过大，无法分配导出内存。")
+                throw ScreenLeafError(message: L("图片过大，无法分配导出内存。"))
             }
             let offset = Int(region.minY - renderRegion.minY) * context.bytesPerRow + Int(region.minX - renderRegion.minX) * 4
             for row in 0..<Int(region.height) {
@@ -628,12 +645,12 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
                     from: input.advanced(by: offset + row * context.bytesPerRow), byteCount: Int(region.width) * 4)
             }
             guard let result = cropped.makeImage() else {
-                throw ScreenLeafError(message: "无法导出标注后的图片。")
+                throw ScreenLeafError(message: L("无法导出标注后的图片。"))
             }
             return result
         }
         guard let result = context.makeImage() else {
-            throw ScreenLeafError(message: "无法导出标注后的图片。")
+            throw ScreenLeafError(message: L("无法导出标注后的图片。"))
         }
         return result
     }
@@ -641,12 +658,12 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
     private func mosaicPatch(_ crop: CGImage, blockSize: CGFloat) throws -> CGImage {
         // Work on a copied 8-bit raster so exports contain only the replacement pixels.
         guard blockSize.isFinite, blockSize >= 2, blockSize <= CGFloat(Int.max / 2) else {
-            throw ScreenLeafError(message: "马赛克块大小无效，请选择有效大小。")
+            throw ScreenLeafError(message: L("马赛克块大小无效，请选择有效大小。"))
         }
         let bitmap = NSBitmapImageRep(cgImage: crop)
         guard let bytes = bitmap.bitmapData, bitmap.bitsPerSample == 8,
               bitmap.bitsPerPixel == bitmap.samplesPerPixel * 8, !bitmap.isPlanar else {
-            throw ScreenLeafError(message: "无法处理马赛克选区的像素格式。")
+            throw ScreenLeafError(message: L("无法处理马赛克选区的像素格式。"))
         }
         let step = max(2, Int(blockSize.rounded()))
         let channels = bitmap.samplesPerPixel
@@ -672,7 +689,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
             }
         }
         guard let patch = bitmap.cgImage else {
-            throw ScreenLeafError(message: "无法生成马赛克图片。")
+            throw ScreenLeafError(message: L("无法生成马赛克图片。"))
         }
         return patch
     }
@@ -721,15 +738,15 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
         guard let index = selectedIndex, annotations.indices.contains(index) else { return }
         attempt {
             for value in [width, fontSize, numberSize].compactMap({ $0 }) {
-                guard value.isFinite, value > 0 else { throw ScreenLeafError(message: "标注大小无效，请选择有效大小。") }
+                guard value.isFinite, value > 0 else { throw ScreenLeafError(message: L("标注大小无效，请选择有效大小。")) }
             }
             if let block = mosaicBlockSize, !block.isFinite || block < 2 {
-                throw ScreenLeafError(message: "马赛克块大小无效，请选择有效大小。")
+                throw ScreenLeafError(message: L("马赛克块大小无效，请选择有效大小。"))
             }
             var proposed = annotations
             if let sticker, proposed[index].tool == .sticker {
                 guard StickerCatalog.item(for: sticker) != nil || sticker.count == 1 else {
-                    throw ScreenLeafError(message: "请选择一张有效贴纸。")
+                    throw ScreenLeafError(message: L("请选择一张有效贴纸。"))
                 }
                 proposed[index].text = StickerCatalog.canonicalIdentifier(sticker)
             }
@@ -779,7 +796,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
             if annotation.tool == .mosaic {
                 let rect = annotation.rect.integral.intersection(bounds)
                 guard !rect.isNull, rect.width >= 2, rect.height >= 2 else {
-                    throw ScreenLeafError(message: "马赛克区域太小或不在图片中，请调整选区。")
+                    throw ScreenLeafError(message: L("马赛克区域太小或不在图片中，请调整选区。"))
                 }
                 annotation.points = [rect.origin, CGPoint(x: rect.maxX, y: rect.maxY)]
                 annotation.mosaic = try mosaicPatch(rasterized(result, croppingTo: rect), blockSize: annotation.mosaicBlockSize)
@@ -1074,9 +1091,11 @@ private final class ImageToolsEditorController: NSWindowController, NSWindowDele
     private var controls: AnnotationControls!
     private var actions: [NSView] = []
     private let zoomLabel = NSTextField(labelWithString: "100%")
+    private let pixelScale: CGFloat?
     private let appliesToPin: Bool
 
-    init(image: CGImage, preferences: PreferencesStore? = nil, appliesToPin: Bool = false) {
+    init(image: CGImage, pixelScale: CGFloat? = nil, preferences: PreferencesStore? = nil, appliesToPin: Bool = false) {
+        self.pixelScale = pixelScale
         canvas = ImageToolsCanvas(image: image)
         self.appliesToPin = appliesToPin
         let visible = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
@@ -1084,7 +1103,7 @@ private final class ImageToolsEditorController: NSWindowController, NSWindowDele
         let height = min(max(360, CGFloat(image.height) + 180), min(760, visible.height - 100))
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = appliesToPin ? "小贴 · 标注贴图" : "小贴 · 截图标注"
+        PatchWindowTitle.apply(to: window, title: appliesToPin ? L("Patch · 标注贴图") : L("Patch · 截图标注"))
         window.minSize = CGSize(width: 560, height: 320)
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -1095,6 +1114,11 @@ private final class ImageToolsEditorController: NSWindowController, NSWindowDele
         updateZoom()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func showWindow(_ sender: Any?) {
+        if let window { WindowActivationCoordinator.shared.register(window) }
+        super.showWindow(sender)
+    }
 
     private func setup(preferences: PreferencesStore?) {
         guard let content = window?.contentView else { return }
@@ -1109,29 +1133,29 @@ private final class ImageToolsEditorController: NSWindowController, NSWindowDele
         scroll.backgroundColor = .windowBackgroundColor
         content.addSubview(scroll)
         content.addSubview(toolbar)
-        let save = SelectionButton("保存", symbol: "square.and.arrow.down") { [weak self] in self?.saveImage() }
-        save.toolTip = "保存 PNG"
+        let save = SelectionButton(L("保存"), symbol: "square.and.arrow.down") { [weak self] in self?.saveImage() }
+        save.toolTip = L("保存 PNG")
         actions = [
-            SelectionButton("复制", symbol: "doc.on.doc") { [weak self] in self?.copyImage() },
+            SelectionButton(L("复制"), symbol: "doc.on.doc") { [weak self] in self?.copyImage() },
             save
         ]
         if !appliesToPin {
-            let pin = SelectionButton("贴图", symbol: "pin") { [weak self] in self?.pinImage() }
-            pin.toolTip = "将图片贴到屏幕"
+            let pin = SelectionButton(L("贴图"), symbol: "pin") { [weak self] in self?.pinImage() }
+            pin.toolTip = L("将图片贴到屏幕")
             actions.append(pin)
         }
-        let ocr = SelectionButton("文字", symbol: "text.viewfinder") { [weak self] in self?.ocr() }
-        ocr.toolTip = "提取图片中的文字"
+        let ocr = SelectionButton(L("文字"), symbol: "text.viewfinder") { [weak self] in self?.ocr() }
+        ocr.toolTip = L("提取图片中的文字")
         actions.append(ocr)
         for case let button as NSButton in actions { button.imagePosition = .imageOnly }
-        let minus = SelectionButton("缩小", symbol: "minus.magnifyingglass") { [weak self] in self?.zoomOut() }
-        let plus = SelectionButton("放大", symbol: "plus.magnifyingglass") { [weak self] in self?.zoomIn() }
+        let minus = SelectionButton(L("缩小"), symbol: "minus.magnifyingglass") { [weak self] in self?.zoomOut() }
+        let plus = SelectionButton(L("放大"), symbol: "plus.magnifyingglass") { [weak self] in self?.zoomIn() }
         minus.imagePosition = .imageOnly; plus.imagePosition = .imageOnly
         zoomLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         zoomLabel.textColor = ToolbarPalette.secondaryInk
         actions += [minus, zoomLabel, plus]
         if appliesToPin {
-            actions.append(SelectionButton.confirmation("应用到贴图", toolTip: "完成标注，应用到贴图") { [weak self] in self?.applyImage() })
+            actions.append(SelectionButton.confirmation(L("应用到贴图"), toolTip: L("完成标注，应用到贴图")) { [weak self] in self?.applyImage() })
             toolbar.trailingActions = [actions.last!]
         }
         controls.onUpdate = { [weak self] in self?.layoutEditor() }
@@ -1144,8 +1168,9 @@ private final class ImageToolsEditorController: NSWindowController, NSWindowDele
 
     private func layoutEditor() {
         guard let content = window?.contentView, controls != nil else { return }
-        toolbar.rows = controls.rows(appendingActions: actions)
-        let size = toolbar.arrange(maxWidth: max(40, content.bounds.width - 24))
+        let usableWidth = max(40, content.bounds.width - 24)
+        toolbar.rows = controls.rows(appendingActions: actions, maxWidth: usableWidth)
+        let size = toolbar.arrange(maxWidth: usableWidth)
         toolbar.frame = CGRect(x: 12, y: max(0, content.bounds.height - size.height - 10), width: size.width, height: size.height)
         scroll.frame = CGRect(x: 0, y: 0, width: content.bounds.width,
                               height: max(0, toolbar.frame.minY - 10))
@@ -1159,13 +1184,18 @@ private final class ImageToolsEditorController: NSWindowController, NSWindowDele
         controls?.displayScaleDidChange()
         layoutEditor()
     }
-    @objc private func copyImage() { exporting { try ImageToolsUI.copyPNG($0) } }
+    @objc private func copyImage() { exporting { try ImageToolsUI.copyPNG($0, pixelScale: self.pixelScale) } }
     @objc private func saveImage() {
         exporting { image in
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.png]
             panel.nameFieldStringValue = "Patch-\(ImageToolsUI.timestamp()).png"
-            if panel.runModal() == .OK, let url = panel.url { try ImageToolsUI.png(image).write(to: url, options: .atomic) }
+            WindowActivationCoordinator.shared.register(panel)
+            defer { WindowActivationCoordinator.shared.unregister(panel) }
+            if panel.runModal() == .OK, let url = panel.url {
+                try ImageToolsUI.png(image).write(to: url, options: .atomic)
+                ImageToolsUI.onCompletedImage?(image, self.pixelScale)
+            }
         }
     }
     @objc private func pinImage() { exporting { self.onPin?($0) } }
@@ -1203,6 +1233,28 @@ private final class AnnotationScrollView: NSScrollView {
     }
 }
 
+/// Display-only chrome; never participates in the image canvas or its export.
+@MainActor
+private final class ImageToolsWindowBorder: NSView {
+    static let width: CGFloat = 1
+    override var isOpaque: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        ToolbarPalette.border.setStroke()
+        let edge = NSBezierPath(rect: bounds.insetBy(dx: Self.width / 2, dy: Self.width / 2))
+        edge.lineWidth = Self.width
+        edge.stroke()
+    }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
+}
+
+private final class AnnotationZoomLabel: NSTextField {
+    // Keep the toolbar width stable when fitting changes 100% to one or two digits.
+    override var intrinsicContentSize: NSSize {
+        CGSize(width: 40, height: super.intrinsicContentSize.height)
+    }
+}
+
 /// A document-sized canvas hosted by the existing pin or capture panel.
 /// Scrolling/magnification affect the viewport, never the exported pixel dimensions.
 @MainActor
@@ -1210,22 +1262,24 @@ final class InlineAnnotationView: NSView {
     let canvas: ImageToolsCanvas
     let scroll: NSScrollView = AnnotationScrollView()
     private let toolbar = SelectionToolbar()
+    private let presentationBorder = ImageToolsWindowBorder()
     private(set) var controls: AnnotationControls!
-    private let zoomLabel = NSTextField(labelWithString: "100%")
+    private let zoomLabel = AnnotationZoomLabel(labelWithString: "100%")
     private var actions: [NSView] = []
     private var arranging = false
     private var completing = false
+    private let pixelScale: CGFloat?
     var onComplete: ((CGImage) throws -> Void)?
     var onCancel: (() -> Void)?
     var onError: (Error) -> Void = { showError($0) }
 
-    init(image: CGImage, preferences: PreferencesStore? = nil, moveHandle: NSView? = nil,
+    init(image: CGImage, pixelScale: CGFloat? = nil, preferences: PreferencesStore? = nil, moveHandle: NSView? = nil,
          completionHint: String, showsCopyAction: Bool = true, allowsOutsideAnnotations: Bool = false,
-         cancellationHint: String = "退出标注，保留原图") {
+         cancellationHint: String = L("退出标注，保留原图")) {
+        self.pixelScale = pixelScale
         canvas = ImageToolsCanvas(image: image)
         canvas.allowsOutsideAnnotations = allowsOutsideAnnotations
         super.init(frame: .zero)
-        appearance = NSAppearance(named: .aqua)
         wantsLayer = true; layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true; scroll.allowsMagnification = true
@@ -1235,6 +1289,10 @@ final class InlineAnnotationView: NSView {
         scroll.documentView = canvas
         (scroll as? AnnotationScrollView)?.onZoom = { [weak self] in self?.zoomChanged() }
         addSubview(scroll); addSubview(toolbar)
+        presentationBorder.frame = bounds
+        presentationBorder.autoresizingMask = [.width, .height]
+        presentationBorder.setAccessibilityElement(false)
+        addSubview(presentationBorder)
         controls = AnnotationControls(canvas: canvas, preferences: preferences, scale: { [weak self] in
             1 / max(0.0001, self?.scroll.magnification ?? 1)
         })
@@ -1245,12 +1303,13 @@ final class InlineAnnotationView: NSView {
         }
         if let moveHandle { actions.append(moveHandle) }
         zoomLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        actions += [icon("缩小", "minus.magnifyingglass") { [weak self] in self?.zoom(by: 1 / 1.25) },
-                    zoomLabel, icon("放大", "plus.magnifyingglass") { [weak self] in self?.zoom(by: 1.25) },
-                    SelectionButton("适合宽度") { [weak self] in self?.fitWidth() },
+        zoomLabel.alignment = .center
+        actions += [icon(L("缩小"), "minus.magnifyingglass") { [weak self] in self?.zoom(by: 1 / 1.25) },
+                    zoomLabel, icon(L("放大"), "plus.magnifyingglass") { [weak self] in self?.zoom(by: 1.25) },
+                    SelectionButton(L("适合宽度")) { [weak self] in self?.fitWidth() },
                     SelectionButton("100%") { [weak self] in self?.setZoom(1) }]
-        if showsCopyAction { actions.append(icon("复制", "doc.on.doc") { [weak self] in self?.copyImage() }) }
-        actions += [icon("保存 PNG", "square.and.arrow.down") { [weak self] in self?.saveImage() },
+        if showsCopyAction { actions.append(icon(L("复制"), "doc.on.doc") { [weak self] in self?.copyImage() }) }
+        actions += [icon(L("保存 PNG"), "square.and.arrow.down") { [weak self] in self?.saveImage() },
                     SelectionButton.cancellation(toolTip: cancellationHint) { [weak self] in self?.onCancel?() },
                     SelectionButton.confirmation(toolTip: completionHint) { [weak self] in self?.complete() }]
         toolbar.trailingActions = Array(actions.suffix(2))
@@ -1262,13 +1321,19 @@ final class InlineAnnotationView: NSView {
             name: NSScrollView.didEndLiveMagnifyNotification, object: scroll)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor }
+        needsDisplay = true
+    }
     private func refresh() { needsLayout = true; layoutSubtreeIfNeeded() }
     override func layout() {
         super.layout()
         guard !arranging, controls != nil else { return }
         arranging = true; defer { arranging = false }
-        toolbar.rows = controls.rows(appendingActions: actions)
-        let size = toolbar.arrange(maxWidth: max(40, bounds.width - 16))
+        let usableWidth = max(40, bounds.width - 16)
+        toolbar.rows = controls.rows(appendingActions: actions, maxWidth: usableWidth)
+        let size = toolbar.arrange(maxWidth: usableWidth)
         toolbar.frame = CGRect(x: 8, y: max(0, bounds.height - size.height - 8), width: size.width, height: size.height)
         scroll.frame = CGRect(x: 0, y: 0, width: bounds.width, height: max(1, toolbar.frame.minY - 8))
         updateWorkspace()
@@ -1298,8 +1363,9 @@ final class InlineAnnotationView: NSView {
         scrollTo(CGPoint(x: CGFloat(canvas.source.width) / 2, y: CGFloat(canvas.source.height) / 2))
     }
     func preferredWindowSize(maximum: CGSize) -> CGSize {
-        toolbar.rows = controls.rows(appendingActions: actions)
-        let toolbarSize = toolbar.arrange(maxWidth: max(40, maximum.width - 16))
+        let usableWidth = max(40, maximum.width - 16)
+        toolbar.rows = controls.rows(appendingActions: actions, maxWidth: usableWidth)
+        let toolbarSize = toolbar.arrange(maxWidth: usableWidth)
         return CGSize(width: min(maximum.width, toolbarSize.width + 16),
                       height: min(maximum.height, max(320, toolbarSize.height + 32 + min(600, CGFloat(canvas.source.height)))))
     }
@@ -1327,7 +1393,7 @@ final class InlineAnnotationView: NSView {
         catch { completing = false; onError(error) }
     }
     private func copyImage() {
-        do { try ImageToolsUI.copyPNG(canvas.renderedImage()) } catch { onError(error) }
+        do { try ImageToolsUI.copyPNG(canvas.renderedImage(), pixelScale: pixelScale) } catch { onError(error) }
     }
     private func saveImage() {
         do {
@@ -1335,7 +1401,12 @@ final class InlineAnnotationView: NSView {
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.png]
             panel.nameFieldStringValue = "Patch-\(ImageToolsUI.timestamp()).png"
-            if panel.runModal() == .OK, let url = panel.url { try ImageToolsUI.png(image).write(to: url, options: .atomic) }
+            WindowActivationCoordinator.shared.register(panel)
+            defer { WindowActivationCoordinator.shared.unregister(panel) }
+            if panel.runModal() == .OK, let url = panel.url {
+                try ImageToolsUI.png(image).write(to: url, options: .atomic)
+                ImageToolsUI.onCompletedImage?(image, pixelScale)
+            }
         } catch { onError(error) }
     }
     func handleKeyEquivalent(_ event: NSEvent) -> Bool {
@@ -1385,7 +1456,7 @@ private final class ImageToolsPinImageView: NSView {
     init(image: CGImage, size: CGSize) {
         self.image = image
         super.init(frame: CGRect(origin: .zero, size: size))
-        toolTip = "拖动移动 · 滚轮或捏合缩放 · 右键操作"
+        toolTip = L("拖动移动 · 滚轮或捏合缩放 · 右键操作")
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func draw(_ dirtyRect: NSRect) {
@@ -1450,17 +1521,28 @@ private final class ImageToolsPinTextView: NSTextView {
     }
 }
 
-/// Pins fill their content bounds without an outer frame or shadow gutter.
+/// Opaque images keep a one-point frame outside their pixel-sized viewport.
+/// Transparent cutouts keep their original unframed surface.
 @MainActor
 private final class ImageToolsPinSurface: NSView {
     var displaysImage = false { didSet { needsDisplay = true } }
+    var showsBorder = false { didSet { needsDisplay = true } }
     var selected = false { didSet { needsDisplay = true } }
     override var isOpaque: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
-        guard !displaysImage else { return }
-        NSColor.textBackgroundColor.setFill()
-        NSBezierPath(rect: bounds).fill()
+        if !displaysImage {
+            NSColor.textBackgroundColor.setFill()
+            NSBezierPath(rect: bounds).fill()
+        }
+        if showsBorder {
+            ToolbarPalette.border.setStroke()
+            let width = ImageToolsWindowBorder.width
+            let edge = NSBezierPath(rect: bounds.insetBy(dx: width / 2, dy: width / 2))
+            edge.lineWidth = width
+            edge.stroke()
+        }
     }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
 }
 
 /// Selection stays inside the visible viewport, without changing content or hit testing.
@@ -1525,7 +1607,7 @@ private final class ImageToolsPinDragHandle: NSView {
     override var intrinsicContentSize: NSSize { CGSize(width: 26, height: 28) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func draw(_ dirtyRect: NSRect) {
-        let symbol = NSImage(systemSymbolName: "arrow.up.and.down.and.arrow.left.and.right", accessibilityDescription: "移动贴图")
+        let symbol = NSImage(systemSymbolName: "arrow.up.and.down.and.arrow.left.and.right", accessibilityDescription: L("移动贴图"))
         symbol?.withSymbolConfiguration(.init(paletteColors: [ToolbarPalette.secondaryInk]))?.draw(
             in: CGRect(x: bounds.midX - 8, y: bounds.midY - 8, width: 16, height: 16))
     }
@@ -1535,10 +1617,64 @@ private final class ImageToolsPinDragHandle: NSView {
     override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
 }
 
+/// AppKit screen coordinates, with a stable target display for all pins in one batch.
+enum ImageToolsPinPlacement {
+    static func avoidingStack(_ preferred: CGRect, visible: CGRect, occupied: [CGRect]) -> CGRect {
+        func hasSameCorner(_ candidate: CGRect) -> Bool {
+            occupied.contains { abs($0.minX - candidate.minX) < 12 && abs($0.maxY - candidate.maxY) < 12 }
+        }
+        guard hasSameCorner(preferred) else { return preferred }
+        let directionX: CGFloat = preferred.midX > visible.midX ? -1 : 1
+        let directionY: CGFloat = preferred.midY > visible.midY ? -1 : 1
+        func candidate(_ dx: CGFloat, _ dy: CGFloat) -> CGRect {
+            CGRect(x: min(max(preferred.minX + dx, visible.minX), visible.maxX - preferred.width),
+                   y: min(max(preferred.minY + dy, visible.minY), visible.maxY - preferred.height),
+                   width: preferred.width, height: preferred.height)
+        }
+        // Prefer a subtle diagonal cascade; near an edge, either axis may still have room.
+        // Bound the search even when the viewport fills the entire display.
+        for index in 1...20 {
+            let step = CGFloat(index) * 18
+            for offset in [CGSize(width: directionX * step, height: directionY * step),
+                           CGSize(width: directionX * step, height: 0),
+                           CGSize(width: 0, height: directionY * step)] {
+                let next = candidate(offset.width, offset.height)
+                if !hasSameCorner(next) { return next }
+            }
+        }
+        return preferred
+    }
+
+    static func screenIndex(for anchor: CGPoint, frames: [CGRect]) -> Int? {
+        if let containing = frames.firstIndex(where: { $0.contains(anchor) }) { return containing }
+        return frames.indices.min { left, right in
+            func distance(_ frame: CGRect) -> CGFloat {
+                let dx = max(frame.minX - anchor.x, 0, anchor.x - frame.maxX)
+                let dy = max(frame.minY - anchor.y, 0, anchor.y - frame.maxY)
+                return dx * dx + dy * dy
+            }
+            return distance(frames[left]) < distance(frames[right])
+        }
+    }
+
+    static func frame(size: CGSize, anchor: CGPoint, visible: CGRect, batchIndex: Int = 0) -> CGRect {
+        let width = min(size.width, visible.width), height = min(size.height, visible.height)
+        func clampX(_ x: CGFloat) -> CGFloat { min(max(x, visible.minX), visible.maxX - width) }
+        func clampY(_ y: CGFloat) -> CGFloat { min(max(y, visible.minY), visible.maxY - height) }
+        let x = clampX(anchor.x + 16), y = clampY(anchor.y - 16 - height)
+        // Cascade toward the half of the display with more room, without changing display.
+        let step = CGFloat(max(0, batchIndex)) * 32
+        let dx = x + width / 2 > visible.midX ? -step : step
+        let dy = y + height / 2 > visible.midY ? -step : step
+        return CGRect(x: clampX(x + dx), y: clampY(y + dy), width: width, height: height)
+    }
+}
+
 @MainActor
 private final class ImageToolsPinController: NSWindowController, NSWindowDelegate, NSTextViewDelegate {
     var onClose: (() -> Void)?
     var onOCR: ((CGImage) -> Void)?
+    var isAnnotating: Bool { inlineEditor != nil }
     private let scroll = NSScrollView()
     private let surface = ImageToolsPinSurface()
     private let selectionOutline = ImageToolsPinSelectionOutline()
@@ -1557,14 +1693,21 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     private var baseSize = CGSize(width: 440, height: 240)
     private var scale: CGFloat = 1
     private var imagePixelScale: CGFloat?
+    // Recompute only when the source image changes, never while zooming or selecting.
+    private var imageHasTransparency = false
+    private let initialAnchor: NSPoint
+    private let initialBatchIndex: Int
+    private var initialVisibleArea: CGRect?
 
-    convenience init(image: CGImage, pixelScale: CGFloat? = nil, preferences: PreferencesStore? = nil) {
-        self.init(title: "小贴 · 图片贴图", preferences: preferences)
+    convenience init(image: CGImage, pixelScale: CGFloat? = nil, preferences: PreferencesStore? = nil,
+                     anchor: NSPoint? = nil, batchIndex: Int = 0) {
+        self.init(title: L("Patch · 图片贴图"), preferences: preferences, anchor: anchor ?? NSEvent.mouseLocation, batchIndex: batchIndex)
         imagePixelScale = pixelScale
         let size = Self.initialImageSize(image, pixelScale: pixelScale)
         baseSize = size
         let view = ImageToolsPinImageView(image: image, size: size)
         imageView = view
+        imageHasTransparency = ImageToolsUI.hasTransparentPixels(image)
         surface.displaysImage = true
         window?.minSize = CGSize(width: 1, height: 1)
         view.onMenu = { [weak self] in self?.contextMenu() ?? NSMenu() }
@@ -1575,10 +1718,11 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         scroll.documentView = view
         configureHUD()
         updateScale()
+        placeInitially()
     }
 
-    convenience init(text: String, preferences: PreferencesStore? = nil) {
-        self.init(title: "小贴 · 文字贴图", preferences: preferences)
+    convenience init(text: String, preferences: PreferencesStore? = nil, anchor: NSPoint? = nil, batchIndex: Int = 0) {
+        self.init(title: L("Patch · 文字贴图"), preferences: preferences, anchor: anchor ?? NSEvent.mouseLocation, batchIndex: batchIndex)
         let view = ImageToolsPinTextView(frame: CGRect(origin: .zero, size: baseSize))
         view.isRichText = true
         view.importsGraphics = false; view.allowsUndo = true
@@ -1597,7 +1741,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         view.maxSize = CGSize(width: baseSize.width, height: CGFloat.greatestFiniteMagnitude)
         view.string = text
         view.delegate = self
-        view.toolTip = "拖动移动 · 双击编辑文字 · 双指滚动 · 捏合缩放"
+        view.toolTip = L("拖动移动 · 双击编辑文字 · 双指滚动 · 捏合缩放")
         view.onBeginEditing = { [weak self] in self?.setTextEditing(true) }
         view.onMenu = { [weak self] in self?.contextMenu() ?? NSMenu() }
         view.onZoom = { [weak self] factor, point in self?.changeScale(by: factor, anchoredAt: point) }
@@ -1612,17 +1756,22 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         configureHUD()
         resizeText()
         updateScale()
+        placeInitially()
     }
 
-    private init(title: String, preferences: PreferencesStore?) {
+    private init(title: String, preferences: PreferencesStore?, anchor: NSPoint, batchIndex: Int) {
         self.preferences = preferences
+        initialAnchor = anchor; initialBatchIndex = batchIndex
+        let screens = NSScreen.screens
+        initialVisibleArea = ImageToolsPinPlacement.screenIndex(for: anchor, frames: screens.map(\.frame))
+            .map { screens[$0].visibleFrame } ?? NSScreen.main?.visibleFrame
         let panel = ImageToolsPinPanel(contentRect: CGRect(x: 0, y: 0, width: 440, height: 240),
             styleMask: [.borderless], backing: .buffered, defer: false)
         panel.title = title
         panel.isReleasedWhenClosed = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        // WindowServer shadows extend beyond the content even when its view fills the window.
+        // Image initialization and annotation mode choose the appropriate presentation.
         panel.hasShadow = false
         panel.becomesKeyOnlyIfNeeded = false
         panel.level = .floating
@@ -1666,11 +1815,25 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             }
             return false
         }
-        panel.center()
-        let offset = CGFloat(Int.random(in: -80...80))
-        panel.setFrameOrigin(CGPoint(x: panel.frame.minX + offset, y: panel.frame.minY - offset / 2))
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private func placeInitially() {
+        guard let window else { return }
+        let visible = visibleArea()
+        // Layout first: text wrapping and image scale determine the actual viewport size.
+        window.setFrame(ImageToolsPinPlacement.frame(size: window.frame.size, anchor: initialAnchor,
+            visible: visible, batchIndex: initialBatchIndex), display: false)
+        initialVisibleArea = nil
+        layoutHUD()
+    }
+
+    func avoidInitialOverlap(with occupied: [CGRect]) {
+        guard let window else { return }
+        let frame = ImageToolsPinPlacement.avoidingStack(window.frame, visible: visibleArea(), occupied: occupied)
+        window.setFrameOrigin(frame.origin)
+        layoutHUD()
+    }
 
     private static func initialImageSize(_ image: CGImage, pixelScale: CGFloat? = nil) -> CGSize {
         // Captures keep native pixels for export, but occupy their original screen points.
@@ -1683,8 +1846,8 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     }
     private func configureHUD() {
         let handle = ImageToolsPinDragHandle()
-        handle.toolTip = "拖动移动贴图"
-        handle.setAccessibilityLabel("移动贴图")
+        handle.toolTip = L("拖动移动贴图")
+        handle.setAccessibilityLabel(L("移动贴图"))
         handle.onMouseDown = { [weak self] in self?.beginMoving(with: $0) }
         handle.onMouseDragged = { [weak self] in self?.continueMoving(with: $0) }
         handle.onMouseUp = { [weak self] in self?.endMoving(with: $0) }
@@ -1698,33 +1861,33 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         textColorButtons = []
         if let textView {
             if textView.isMoving {
-                row.append(button("编辑文字", SelectionButton.annotationSymbol) { [weak self] in self?.setTextEditing(true) })
+                row.append(button(L("编辑文字"), SelectionButton.annotationSymbol) { [weak self] in self?.setTextEditing(true) })
             } else {
-                textCompletion = SelectionButton.confirmation("完成编辑", toolTip: "完成文字编辑，返回贴图") {
+                textCompletion = SelectionButton.confirmation(L("完成编辑"), toolTip: L("完成文字编辑，返回贴图")) {
                     [weak self] in self?.setTextEditing(false)
                 }
             }
             if !textView.isMoving {
-                for (title, color) in [("默认颜色", NSColor.labelColor), ("红色", .systemRed), ("橙色", .systemOrange),
-                                       ("绿色", .systemGreen), ("蓝色", .systemBlue)] {
+                for (title, color) in [(L("默认颜色"), NSColor.labelColor), (L("红色"), .systemRed), (L("橙色"), .systemOrange),
+                                       (L("绿色"), .systemGreen), (L("蓝色"), .systemBlue)] {
                     let item = SelectionOptionButton(sample: .color(color), label: title) { [weak self] in self?.colorSelectedText(color) }
                     item.isEnabled = textView.selectedRange().length > 0
                     textColorButtons.append(item); row.append(item)
                 }
-                row.append(button("撤销", "arrow.uturn.backward") { [weak self] in self?.textView?.undoManager?.undo() })
+                row.append(button(L("撤销"), "arrow.uturn.backward") { [weak self] in self?.textView?.undoManager?.undo() })
             }
         }
         if imageView != nil {
-            row.append(button("标注", SelectionButton.annotationSymbol) { [weak self] in self?.annotateImage() })
-            row.append(button("提取文字", "text.viewfinder") { [weak self] in self?.ocrImage() })
+            row.append(button(L("标注"), SelectionButton.annotationSymbol) { [weak self] in self?.annotateImage() })
+            row.append(button(L("提取文字"), "text.viewfinder") { [weak self] in self?.ocrImage() })
         }
-        row.append(button(imageView != nil ? "复制图片" : "复制文字", "doc.on.doc") { [weak self] in self?.copyContent() })
+        row.append(button(imageView != nil ? L("复制图片") : L("复制文字"), "doc.on.doc") { [weak self] in self?.copyContent() })
         if imageView != nil {
-            let save = button("保存 PNG", "square.and.arrow.down") { [weak self] in self?.saveImage() }
-            save.toolTip = "保存 PNG（⌘S）"
+            let save = button(L("保存 PNG"), "square.and.arrow.down") { [weak self] in self?.saveImage() }
+            save.toolTip = L("保存 PNG（⌘S）")
             row.append(save)
         }
-        row.append(button("关闭贴图", "xmark") { [weak self] in self?.closePin() })
+        row.append(button(L("关闭贴图"), "xmark") { [weak self] in self?.closePin() })
         if let textCompletion { row.append(textCompletion) }
         toolbar.trailingActions = textCompletion == nil ? [] : Array(row.suffix(2))
         toolbar.rows = [row]
@@ -1786,7 +1949,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     }
     private func endMoving(with event: NSEvent) { continueMoving(with: event); dragOrigin = nil }
     private func visibleArea() -> CGRect {
-        window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
+        initialVisibleArea ?? window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
     }
     private func layoutHUD() {
         guard inlineEditor == nil, let window, let hud else { return }
@@ -1817,19 +1980,19 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             return item
         }
         if imageView != nil {
-            _ = add("标注", symbol: SelectionButton.annotationSymbol, action: #selector(annotateImage))
-            _ = add("提取文字", symbol: "text.viewfinder", action: #selector(ocrImage))
-            _ = add("保存 PNG", symbol: "square.and.arrow.down", action: #selector(saveImage))
+            _ = add(L("标注"), symbol: SelectionButton.annotationSymbol, action: #selector(annotateImage))
+            _ = add(L("提取文字"), symbol: "text.viewfinder", action: #selector(ocrImage))
+            _ = add(L("保存 PNG"), symbol: "square.and.arrow.down", action: #selector(saveImage))
         } else {
-            _ = add(textView?.isMoving == true ? "编辑文字" : "完成编辑", symbol: textView?.isMoving == true ? SelectionButton.annotationSymbol : "checkmark", action: #selector(toggleMoveMode))
+            _ = add(textView?.isMoving == true ? L("编辑文字") : L("完成编辑"), symbol: textView?.isMoving == true ? SelectionButton.annotationSymbol : "checkmark", action: #selector(toggleMoveMode))
         }
-        _ = add(imageView != nil ? "复制图片" : "复制文字", symbol: "doc.on.doc", action: #selector(copyContent))
+        _ = add(imageView != nil ? L("复制图片") : L("复制文字"), symbol: "doc.on.doc", action: #selector(copyContent))
         menu.addItem(.separator())
-        _ = add("缩小", symbol: "minus.magnifyingglass", action: #selector(zoomOut))
-        _ = add("恢复大小", symbol: "arrow.counterclockwise", action: #selector(resetZoom))
-        _ = add("放大", symbol: "plus.magnifyingglass", action: #selector(zoomIn))
+        _ = add(L("缩小"), symbol: "minus.magnifyingglass", action: #selector(zoomOut))
+        _ = add(L("恢复大小"), symbol: "arrow.counterclockwise", action: #selector(resetZoom))
+        _ = add(L("放大"), symbol: "plus.magnifyingglass", action: #selector(zoomIn))
         menu.addItem(.separator())
-        _ = add("关闭贴图", symbol: "xmark", action: #selector(closePin))
+        _ = add(L("关闭贴图"), symbol: "xmark", action: #selector(closePin))
         return menu
     }
 
@@ -1864,7 +2027,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         guard let textView, let storage = textView.textStorage, NSMaxRange(range) <= storage.length else { return }
         let inverse = storage.attributedSubstring(from: range)
         textView.undoManager?.registerUndo(withTarget: self) { target in target.restoreTextStyle(inverse, range: range) }
-        textView.undoManager?.setActionName("文字颜色")
+        textView.undoManager?.setActionName(L("文字颜色"))
         if let color { storage.addAttribute(.foregroundColor, value: color, range: range) }
         else { storage.replaceCharacters(in: range, with: previous) }
         textView.setSelectedRange(range)
@@ -1911,15 +2074,29 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             let hudSpace: CGFloat = selected ? (hud?.frame.height ?? 40) + 6 : 0
             let origin = window.frame.origin
             let top = window.frame.maxY
-            window.setContentSize(CGSize(width: max(minimum.width, min(size.width, visible.width - 40)),
-                                         height: max(minimum.height, min(size.height, visible.height - 40 - hudSpace))))
+            let frameWidth = presentationInset * 2
+            window.setContentSize(CGSize(width: max(minimum.width, min(size.width, visible.width - 40 - frameWidth)) + frameWidth,
+                                         height: max(minimum.height, min(size.height, visible.height - 40 - hudSpace - frameWidth)) + frameWidth))
             let requested = CGRect(x: origin.x, y: top - window.frame.height,
                                    width: window.frame.width, height: window.frame.height)
             window.setFrame(Self.frameFittingVisibleArea(requested, in: visible), display: true)
             window.contentView?.layoutSubtreeIfNeeded()
         }
         if textView != nil { scroll.magnification = scale }
+        refreshPinPresentation()
         layoutHUD()
+    }
+    private var hasFramedContent: Bool { textView != nil || (imageView != nil && !imageHasTransparency) }
+    private var presentationInset: CGFloat { hasFramedContent ? ImageToolsWindowBorder.width : 0 }
+    private func layoutPinSurface() {
+        guard inlineEditor == nil else { return }
+        scroll.frame = surface.bounds.insetBy(dx: presentationInset, dy: presentationInset)
+        selectionOutline.frame = scroll.frame
+    }
+    private func refreshPinPresentation() {
+        surface.showsBorder = inlineEditor == nil && hasFramedContent
+        window?.hasShadow = inlineEditor != nil || hasFramedContent
+        layoutPinSurface()
     }
     private static func frameFittingVisibleArea(_ requested: CGRect, in visible: CGRect) -> CGRect {
         let width = min(requested.width, visible.width), height = min(requested.height, visible.height)
@@ -1928,21 +2105,23 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     }
     @objc private func annotateImage() {
         guard inlineEditor == nil, let imageView, let window else { return }
+        WindowActivationCoordinator.shared.register(window)
         beforeEditingFrame = window.frame
         let handle = ImageToolsPinDragHandle()
-        handle.toolTip = "拖动移动贴图"
+        handle.toolTip = L("拖动移动贴图")
         handle.onMouseDown = { [weak self] in self?.beginMoving(with: $0) }
         handle.onMouseDragged = { [weak self] in self?.continueMoving(with: $0) }
         handle.onMouseUp = { [weak self] in self?.endMoving(with: $0) }
-        let editor = InlineAnnotationView(image: imageView.image, preferences: preferences, moveHandle: handle,
-                                          completionHint: "完成标注，返回贴图", allowsOutsideAnnotations: true)
+        let editor = InlineAnnotationView(image: imageView.image, pixelScale: imagePixelScale, preferences: preferences, moveHandle: handle,
+                                          completionHint: L("完成标注，返回贴图"), allowsOutsideAnnotations: true)
         inlineEditor = editor
+        refreshPinPresentation()
         editor.onComplete = { [weak self] image in self?.endInlineEditing(image: image) }
         editor.onCancel = { [weak self] in self?.endInlineEditing(image: nil) }
         hud?.orderOut(nil); scroll.isHidden = true; selectionOutline.isHidden = true
         let visible = visibleArea().insetBy(dx: 20, dy: 20)
         let preferredWidth = editor.preferredWindowSize(maximum: visible.size).width
-        let size = CGSize(width: min(visible.width, max(preferredWidth, max(740, window.frame.width))),
+        let size = CGSize(width: preferredWidth,
                           height: min(visible.height, max(480, window.frame.height)))
         window.setFrame(Self.frameFittingVisibleArea(CGRect(x: window.frame.minX, y: window.frame.maxY - size.height,
             width: size.width, height: size.height), in: visible), display: true)
@@ -1952,6 +2131,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         selectPin(); window.makeFirstResponder(editor.canvas)
     }
     private func endInlineEditing(image: CGImage?) {
+        if let window { WindowActivationCoordinator.shared.unregister(window) }
         inlineEditor?.removeFromSuperview(); inlineEditor = nil
         scroll.isHidden = false; selectionOutline.isHidden = false
         if let image, let imageView {
@@ -1962,7 +2142,9 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
                                   height: baseSize.height * CGFloat(image.height) / CGFloat(imageView.image.height))
             }
             imageView.image = image
+            imageHasTransparency = ImageToolsUI.hasTransparentPixels(image)
             imageView.needsDisplay = true
+            ImageToolsUI.onCompletedImage?(image, imagePixelScale)
         }
         if let frame = beforeEditingFrame, let start = inlineWindowFrame, let window {
             let restored = frame.offsetBy(dx: window.frame.minX - start.minX, dy: window.frame.minY - start.minY)
@@ -1974,7 +2156,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     }
     private func replaceImage(_ image: CGImage) {
         imageView?.image = image
-        window?.hasShadow = false
+        imageHasTransparency = ImageToolsUI.hasTransparentPixels(image)
         baseSize = Self.initialImageSize(image, pixelScale: imagePixelScale)
         updateScale()
         if window?.isVisible == true { window?.orderFrontRegardless() }
@@ -1987,7 +2169,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
                 let range = textView.selectedRange()
                 let text = range.length > 0 ? (textView.string as NSString).substring(with: range) : textView.string
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
+                if NSPasteboard.general.setString(text, forType: .string) { ImageToolsUI.onCompletedText?(text) }
                 let all = NSRange(location: 0, length: (textView.string as NSString).length)
                 if let data = textView.rtf(from: range.length > 0 ? range : all) {
                     NSPasteboard.general.setData(data, forType: .rtf)
@@ -2000,6 +2182,8 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         let chooser = NSSavePanel()
         chooser.allowedContentTypes = [.png]
         chooser.nameFieldStringValue = "Patch-\(ImageToolsUI.timestamp()).png"
+        WindowActivationCoordinator.shared.register(chooser)
+        defer { WindowActivationCoordinator.shared.unregister(chooser) }
         guard chooser.runModal() == .OK, let url = chooser.url else { return }
         do { try ImageToolsUI.png(imageView.image).write(to: url, options: .atomic) }
         catch { showError(error) }
@@ -2014,7 +2198,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     func windowDidBecomeKey(_ notification: Notification) { setSelected(true) }
     func windowDidResignKey(_ notification: Notification) { setSelected(false) }
     func windowDidMove(_ notification: Notification) { layoutHUD() }
-    func windowDidResize(_ notification: Notification) { layoutHUD() }
+    func windowDidResize(_ notification: Notification) { layoutPinSurface(); layoutHUD() }
     func windowDidChangeScreen(_ notification: Notification) { layoutHUD() }
     func windowWillClose(_ notification: Notification) {
         setSelected(false)
@@ -2171,7 +2355,7 @@ private enum ImageToolsOCRWorker {
             try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
             try cancellation.checkCancellation()
             let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-            guard !lines.isEmpty else { throw ScreenLeafError(message: "没有识别到文字。可尝试截取更清晰或更大的文字区域。") }
+            guard !lines.isEmpty else { throw ScreenLeafError(message: L("没有识别到文字。可尝试截取更清晰或更大的文字区域。")) }
             let elapsedMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
             logger.info("recognition completed duration_ms=\(elapsedMilliseconds, privacy: .public)")
             return lines.joined(separator: "\n")
@@ -2218,29 +2402,44 @@ private final class ImageToolsCopyButton: SelectionButton {
 private final class ImageToolsOCRController: NSWindowController, NSWindowDelegate, NSTextViewDelegate {
     var onClose: (() -> Void)?
     private let textView = NSTextView()
-    private let status = NSTextField(labelWithString: "识别中…")
+    private let status = NSTextField(labelWithString: L("识别中…"))
     private var copyButton: NSButton!
     private let writeClipboard: (String) -> Bool
     private var hasResult = false
     init(writeClipboard: ((String) -> Bool)? = nil) {
         self.writeClipboard = writeClipboard ?? { text in
             NSPasteboard.general.clearContents()
-            return NSPasteboard.general.setString(text, forType: .string)
+            let copied = NSPasteboard.general.setString(text, forType: .string)
+            if copied { ImageToolsUI.onCompletedText?(text) }
+            return copied
         }
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 440, height: 280),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "文字"
+        PatchWindowTitle.apply(to: window, title: L("Patch · 提取文字"))
+        let initialFrame = window.frame
+        window.styleMask.insert(.fullSizeContentView)
+        window.titlebarAppearsTransparent = true
+        window.setFrame(initialFrame, display: false)
         window.isReleasedWhenClosed = false
         window.minSize = CGSize(width: 300, height: 180)
         window.collectionBehavior = [.fullScreenPrimary]
+        window.backgroundColor = WindowAmbientBackground.color
+        window.contentView = WindowAmbientView()
         super.init(window: window)
         window.delegate = self
         setup(); window.center()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func showWindow(_ sender: Any?) {
+        if let window { WindowActivationCoordinator.shared.register(window) }
+        super.showWindow(sender)
+    }
+
     private func setup() {
-        guard let content = window?.contentView else { return }
-        copyButton = ImageToolsCopyButton("复制并关闭", symbol: "doc.on.doc") { [weak self] in self?.copyText() }
+        guard let window, let content = window.contentView,
+              let layoutGuide = window.contentLayoutGuide as? NSLayoutGuide else { return }
+        copyButton = ImageToolsCopyButton(L("复制并关闭"), symbol: "doc.on.doc") { [weak self] in self?.copyText() }
         copyButton.isEnabled = false
         let spacer = NSView()
         let actions = NSStackView(views: [spacer, copyButton])
@@ -2248,9 +2447,12 @@ private final class ImageToolsOCRController: NSWindowController, NSWindowDelegat
         status.font = .systemFont(ofSize: 12); status.textColor = .secondaryLabelColor
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.contentView.drawsBackground = false
         scroll.borderType = .noBorder
         textView.frame = CGRect(x: 0, y: 0, width: 416, height: 220)
         textView.isRichText = false; textView.isEditable = false; textView.isSelectable = true
+        textView.drawsBackground = false
         textView.font = .systemFont(ofSize: 16)
         textView.textContainerInset = CGSize(width: 4, height: 4)
         textView.isVerticallyResizable = true
@@ -2267,7 +2469,7 @@ private final class ImageToolsOCRController: NSWindowController, NSWindowDelegat
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
+            stack.topAnchor.constraint(equalTo: layoutGuide.topAnchor, constant: 12),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
@@ -2283,16 +2485,15 @@ private final class ImageToolsOCRController: NSWindowController, NSWindowDelegat
     }
     func fail(_ error: Error) {
         hasResult = false
-        status.stringValue = "识别未完成"
-        status.isHidden = false
+        status.isHidden = true
         textView.isEditable = false
-        textView.string = (error as? ScreenLeafError)?.message ?? "无法完成文字识别，请重试。"
+        textView.string = (error as? ScreenLeafError)?.message ?? L("无法完成文字识别，请重试。")
         copyButton.isEnabled = false
     }
     @objc private func copyText() {
         guard hasResult, !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard writeClipboard(textView.string) else {
-            status.stringValue = "未能复制，请重试。"
+            status.stringValue = L("未能复制，请重试。")
             status.isHidden = false
             return
         }
@@ -2329,6 +2530,17 @@ enum ImageToolsUI {
         button.bezelStyle = .rounded
         return button
     }
+    static var onCompletedImage: ((CGImage, CGFloat?) -> Void)?
+    static var onCompletedText: ((String) -> Void)?
+
+    static func clipboardImage(from pasteboard: NSPasteboard) -> (image: CGImage, pixelScale: CGFloat?)? {
+        guard let image = NSImage(pasteboard: pasteboard),
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let saved = pasteboard.string(forType: pixelScalePasteboardType).flatMap(Double.init)
+        let metadata = image.size.width > 0 ? CGFloat(cgImage.width) / image.size.width : nil
+        return (cgImage, saved.map { CGFloat($0) } ?? metadata)
+    }
+
     static let pixelScalePasteboardType = NSPasteboard.PasteboardType("dev.screenleaf.image-pixel-scale")
 
     static func png(_ image: CGImage, pixelScale: CGFloat? = nil) throws -> Data {
@@ -2337,7 +2549,7 @@ enum ImageToolsUI {
             bitmap.size = CGSize(width: CGFloat(image.width) / pixelScale, height: CGFloat(image.height) / pixelScale)
         }
         guard let data = bitmap.representation(using: .png, properties: [:]) else {
-            throw ScreenLeafError(message: "无法编码 PNG 图片。")
+            throw ScreenLeafError(message: L("无法编码 PNG 图片。"))
         }
         return data
     }
@@ -2345,12 +2557,13 @@ enum ImageToolsUI {
         let data = try png(image, pixelScale: pixelScale)
         pasteboard.clearContents()
         guard pasteboard.setData(data, forType: .png) else {
-            throw ScreenLeafError(message: "无法将图片写入剪贴板。")
+            throw ScreenLeafError(message: L("无法将图片写入剪贴板。"))
         }
         if let pixelScale, pixelScale.isFinite, pixelScale > 0 {
             // PNG resolution metadata may round; keep the exact capture scale for our own round-trip.
             pasteboard.setString(String(Double(pixelScale)), forType: pixelScalePasteboardType)
         }
+        if pasteboard.name == NSPasteboard.general.name { onCompletedImage?(image, pixelScale) }
     }
     static func timestamp() -> String {
         let formatter = DateFormatter()

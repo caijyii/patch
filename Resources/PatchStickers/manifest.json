@@ -70,6 +70,14 @@
     ]
   },
   {
+    "id": "patch-blue-cat",
+    "title": "蓝猫",
+    "emoji": "🐱",
+    "category": "动物",
+    "file": "pdf/patch-blue-cat.pdf",
+    "legacyIDs": []
+  },
+  {
     "id": "patch-butterfly",
     "title": "蝴蝶",
     "emoji": "🦋",
@@ -227,7 +235,8 @@
     "file": "pdf/patch-face-blowing-a-kiss.pdf",
     "legacyIDs": [
       "fluent-face-blowing-a-kiss"
-    ]
+    ],
+    "retired": true
   },
   {
     "id": "patch-smiling-face-with-heart-eyes",

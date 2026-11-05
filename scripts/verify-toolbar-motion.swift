@@ -110,8 +110,8 @@ private final class PorcelainPreview: NSView {
             ("button decoration preserves native action, disabled state and full hit targets", hitTargets),
             ("shared action captions and icons remain legible in light and dark windows", appearance),
             ("Chinese action captions retain their native text-cell size after wrapping", captionGeometry),
-            ("selected captions, glyphs and parameter samples render darker than ordinary content", toolbarAppearance),
-            ("all toolbar surfaces are pure white without blur, gradients or backdrop dependence", reducedTransparency),
+            ("selected light-theme captions, glyphs and parameter samples keep stronger contrast", toolbarAppearance),
+            ("light toolbar surfaces stay opaque and uniform without backdrop dependence", reducedTransparency),
             ("color swatches remain visible under hover, press and selection", colorSwatchHover),
             ("hover waits for dwell and gentle scale feedback respects reduced motion", motion),
             ("all four mode captions keep selection distinct from hover and refresh state immediately", modeFeedback),
@@ -254,7 +254,7 @@ private final class PorcelainPreview: NSView {
         try require(controls.rows.count == 2 && (30...40).contains(controls.stickerButtons.count) && controls.sizeControl.category == "贴纸大小",
                     "Sticker palette is missing curated choices or flat sizes")
         try require(canvas.annotationFontSize == 16 && canvas.annotationSticker == StickerCatalog.defaultIdentifier, "Initial sticker is wrong")
-        controls.stickerButtons[5].performClick(nil)
+        controls.stickerButtons.first { $0.identifier?.rawValue == StickerCatalog.canonicalIdentifier("🐥") }!.performClick(nil)
         for _ in 0..<8 { controls.refresh(); _ = controls.rows }
         try require(canvas.annotationSticker == StickerCatalog.canonicalIdentifier("🐥"), "Explicit sticker changed during redraw")
         controls.choose(tool: .sticker)
@@ -273,9 +273,10 @@ private final class PorcelainPreview: NSView {
         try require(controls.stickerButtons.count >= 10, "Sticker resources are not available")
         canvas.selectedAnnotation = ImageToolsAnnotation(tool: .sticker, fontSize: 64, text: "🦋")
         canvas.onAnnotationSelectionChange?(canvas.selectedAnnotation)
-        try require(memory.writeCount == 0 && controls.activeTool == .sticker && controls.stickerButtons[7].state == .on,
+        try require(memory.writeCount == 0 && controls.activeTool == .sticker
+                    && controls.stickerButtons.first { $0.identifier?.rawValue == StickerCatalog.canonicalIdentifier("🦋") }?.state == .on,
                     "Selecting a sticker rewrote preferences or failed to select its palette item")
-        controls.stickerButtons[8].performClick(nil)
+        controls.stickerButtons.first { $0.identifier?.rawValue == StickerCatalog.canonicalIdentifier("☀️") }!.performClick(nil)
         try require(canvas.selectedAnnotation?.text == StickerCatalog.canonicalIdentifier("☀️") && canvas.annotationSticker == StickerCatalog.canonicalIdentifier("☀️"), "Palette did not edit selected sticker")
         controls.sizeControl.slider.doubleValue = 96
         controls.sizeControl.slider.sendAction(controls.sizeControl.slider.action, to: controls.sizeControl.slider.target)
@@ -319,6 +320,49 @@ private final class PorcelainPreview: NSView {
             }
         }
         try require(toolbar.bounds.height > originalHeight, "Narrow toolbar does not wrap into additional lines")
+        try adaptiveStickerGeometry()
+    }
+
+    @MainActor private static func adaptiveStickerGeometry() throws {
+        let oldLanguage = AppLocalization.language
+        defer { AppLocalization.language = oldLanguage }
+        for language in [AppLanguagePreference.simplifiedChinese, .english] {
+            AppLocalization.language = language
+            let (canvas, controls, memory) = fixture()
+            controls.choose(tool: .sticker)
+            controls.stickerButtons.last!.performClick(nil)
+            let selected = canvas.annotationSticker, writes = memory.writeCount
+            let toolbar = SelectionToolbar()
+            var previousCount = 0
+            for width: CGFloat in [480, 560, 640, 740, 900, 1120] {
+                toolbar.rows = controls.rows(appendingActions: actions(), maxWidth: width)
+                arrange(toolbar, width: width)
+                let row = toolbar.rows[1].filter { !$0.isHidden }
+                let inline = controls.stickerButtons.filter { button in row.contains { $0 === button } }
+                try require(!inline.isEmpty && inline.count >= previousCount,
+                            "Wider hosts did not make more sticker choices available")
+                try require(row.allSatisfy { abs($0.frame.midY - controls.sizeControl.frame.midY) < 0.5 }
+                            && row.contains { $0 === controls.moreStickerButton },
+                            "Sticker choices wrapped More or size controls on a supported host width")
+                let rightEdge = row.map(\.frame.maxX).max() ?? 0
+                if inline.count < controls.stickerButtons.count {
+                    try require(width - 8 - rightEdge < 32,
+                                "The sticker row leaves enough unused space for another full choice")
+                }
+                try require(inline.map { $0.identifier!.rawValue } == Array(controls.orderedStickerIdentifiers.prefix(inline.count)),
+                            "Adaptive capacity changed the saved sticker order")
+                if width == 480 { try require(inline.count < 10, "Narrow host still forces ten stickers") }
+                if width == 1120 { try require(inline.count > 10, "Wide host is still limited to ten stickers") }
+                previousCount = inline.count
+            }
+            toolbar.rows = controls.rows(maxWidth: 180)
+            arrange(toolbar, width: 180)
+            try require(toolbar.rows[1].contains { $0 === controls.moreStickerButton }
+                        && controls.sizeControl.frame.width >= 122,
+                        "Extremely narrow fallback hides More or crushes the size control")
+            try require(canvas.annotationSticker == selected && memory.writeCount == writes,
+                        "Width changes altered selected sticker or saved preferences")
+        }
     }
 
     @MainActor private static func rowSurfaces() throws {
@@ -329,7 +373,7 @@ private final class PorcelainPreview: NSView {
         toolbar.rows = controls.rows(appendingActions: actionButtons)
         arrange(toolbar, width: 900)
         try require(toolbar.rows.count == 2, "Mosaic must have one main strip and one parameter row")
-        let toolItems = ImageToolsTool.allCases.compactMap { controls.toolButtons[$0] } + [controls.undoButton]
+        let toolItems = AnnotationControls.displayOrder.compactMap { controls.toolButtons[$0] } + [controls.undoButton]
         try require(zip(toolbar.rows[0].prefix(toolItems.count), toolItems).allSatisfy { $0 === $1 },
                     "The main strip lost annotation tools or undo")
         try require(zip(toolbar.rows[0].suffix(actionButtons.count), actionButtons).allSatisfy { $0 === $1 }
@@ -628,15 +672,18 @@ private final class PorcelainPreview: NSView {
         try require(items.allSatisfy { StickerCatalog.hasVector($0.id) }, "A bundled sticker PDF cannot be read")
         let (_, controls, _) = fixture()
         controls.choose(tool: .sticker)
-        let visible = controls.rows.flatMap { $0 }
+        let visible = controls.rows(maxWidth: 720).flatMap { $0 }
         let inline = controls.stickerButtons.filter { button in visible.contains { $0 === button } }
-        try require(inline.count == 10 && visible.contains { $0 === controls.moreStickerButton },
+        try require(!inline.isEmpty && inline.count < items.count && visible.contains { $0 === controls.moreStickerButton },
                     "Expanded library crowds the persistent toolbar or lacks More")
         var picked: String?
         let picker = StickerPickerController(items: items, selected: "🌼") { picked = $0 }
         let root = picker.view
         let buttons = root.subviews.compactMap { $0 as? NSButton }
         try require(buttons.count == items.count, "More picker does not show the whole library")
+        try require(root.bounds.size == CGSize(width: 328, height: 222)
+                    && Set(buttons.map { $0.frame.minX }).count == 8 && Set(buttons.map { $0.frame.minY }).count == 4,
+                    "The 32-pattern picker must occupy eight complete columns and four rows")
         for (index, button) in buttons.enumerated() {
             try require(root.bounds.contains(button.frame), "Picker clips a sticker hit target")
             try require(button.frame.width >= 30 && button.frame.height >= 28, "Picker hit target is too small")
@@ -731,7 +778,7 @@ private final class PorcelainPreview: NSView {
                         [ordinaryFont, selectedFont, ordinaryLine, selectedLine]]
         let host = SolidBackdrop(frame: CGRect(x: 0, y: 0, width: 600, height: 130))
         host.color = NSColor(srgbRed: 0.10, green: 0.13, blue: 0.18, alpha: 1)
-        host.appearance = NSAppearance(named: .darkAqua)
+        host.appearance = NSAppearance(named: .aqua)
         host.addSubview(toolbar)
         arrange(toolbar, width: 560)
         toolbar.frame.origin = CGPoint(x: 20, y: 24)
@@ -758,7 +805,7 @@ private final class PorcelainPreview: NSView {
                         "Rendered \(name) has insufficient contrast on its actual white/selected surface")
         }
         try require(toolbar.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua,
-                    "A dark host changed the porcelain panel's readable light appearance")
+                    "Toolbar did not inherit the light host appearance")
         try writePreview(host, name: "toolbar-content-contrast.png")
     }
 
@@ -771,6 +818,7 @@ private final class PorcelainPreview: NSView {
                         ? OpaqueToolbarMaterial(role: role, blendingMode: mode)
                         : StandardToolbarMaterial(role: role, blendingMode: mode)
                     material.frame = CGRect(x: 16, y: 16, width: 208, height: 58)
+                    root.appearance = NSAppearance(named: .aqua)
                     root.addSubview(material)
                     let window = NSWindow(contentRect: root.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
                     window.isReleasedWhenClosed = false
@@ -822,7 +870,7 @@ private final class PorcelainPreview: NSView {
         try require(controls.stickerButtons.count >= 10, "Sticker resources are not available for preview")
         controls.stickerButtons[5].performClick(nil)
         let toolbar = SelectionToolbar()
-        toolbar.rows = controls.rows(appendingActions: actions())
+        toolbar.rows = controls.rows(appendingActions: actions(), maxWidth: 600)
         arrange(toolbar, width: 600)
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: toolbar.frame.size), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -856,7 +904,7 @@ private final class PorcelainPreview: NSView {
                 sampleControls.choose(tool: tool)
                 if tool == .sticker { sampleControls.stickerButtons[5].performClick(nil) }
                 let sampleToolbar = SelectionToolbar(blendingMode: .withinWindow)
-                sampleToolbar.rows = sampleControls.rows(appendingActions: actions())
+                sampleToolbar.rows = sampleControls.rows(appendingActions: actions(), maxWidth: PorcelainPreview.columnWidth - 48)
                 arrange(sampleToolbar, width: PorcelainPreview.columnWidth - 48)
                 sampleToolbar.frame.origin = CGPoint(x: x, y: top - 30 - sampleToolbar.frame.height)
                 root.addSubview(sampleToolbar)

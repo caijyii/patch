@@ -1,0 +1,2 @@
+"CFBundleDisplayName" = "Patch";
+"NSMicrophoneUsageDescription" = "Patch records your voice in videos only when you enable microphone recording.";

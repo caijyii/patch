@@ -1,19 +1,20 @@
 {
-  "author": "caijyii",
-  "collection": "Patch original hand-drawn-style stickers",
-  "compatibility": "Legacy fluent-* identifiers and Unicode emoji are lookup aliases only.",
-  "copyright": "Copyright (c) 2026 caijyii",
-  "count": 32,
-  "created": "2026-10-22",
-  "generator": "scripts/generate-stickers.sh",
-  "license": "MIT",
-  "origin": "Original vector paths authored with Codex for this project, following the user-approved six-icon style preview. Not derived from Fluent Emoji artwork.",
-  "source_directory": "scripts/sticker-artwork",
-  "source_sha256": {
-    "animals.json": "d8dd80c7c91aa8d55ec52c31ea09df1e84e0379cafbcb565ebe72100cb995455",
-    "approved.json": "3658afbf5d38e1ba6f6a152c86eea17626d5c4798b5e02bc315de4797fc4dd23",
-    "catalog.json": "26c29e4705bac7dfadec6526dbe773d65039400eb1e7376b8b31a4f97e31d572",
-    "expressions-objects.json": "e3f85bd6d7f1e0adf63e451ec558540d4e6ba15e0ad08f4685ad28df1033ca17",
-    "nature.json": "9798692df9d7676d806ae15d1dccdc9ec3e4b015ab1f894210dd04ec8d8c21fb"
+  "author" : "caijyii",
+  "collection" : "Patch original hand-drawn-style stickers",
+  "compatibility" : "Legacy fluent-* identifiers and Unicode emoji are lookup aliases only.",
+  "copyright" : "Copyright (c) 2026 caijyii",
+  "count" : 33,
+  "created" : "2026-10-22",
+  "generator" : "scripts/generate-stickers.sh",
+  "license" : "MIT",
+  "origin" : "Original vector paths authored with Codex for this project, following the user-approved six-icon style preview. Not derived from Fluent Emoji artwork.",
+  "selectable_count" : 32,
+  "source_directory" : "scripts/sticker-artwork",
+  "source_sha256" : {
+    "animals.json" : "c52c1721ec7807a95f52c53ce5f0a445c350fee26445722e1d6bf63ada923999",
+    "approved.json" : "3658afbf5d38e1ba6f6a152c86eea17626d5c4798b5e02bc315de4797fc4dd23",
+    "catalog.json" : "d99ee1d244d2f46791810cd3cdddfa321dd06255f5f00f8ac75b4e1898d81157",
+    "expressions-objects.json" : "e3f85bd6d7f1e0adf63e451ec558540d4e6ba15e0ad08f4685ad28df1033ca17",
+    "nature.json" : "9798692df9d7676d806ae15d1dccdc9ec3e4b015ab1f894210dd04ec8d8c21fb"
   }
 }

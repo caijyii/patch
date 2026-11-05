@@ -88,7 +88,8 @@ import Darwin
         require(!titles.contains("完成"), "Home exposes the obsolete Done label")
         require(titles.contains("恢复默认") && titles.contains("保存") == editing && titles.contains("取消") == editing && titles.contains("关闭") != editing,
                 "footer does not follow the edit session")
-        require(home.tiles.filter { $0.key != .togglePins }.values.allSatisfy { $0.launchButton.isEnabled != editing }, "feature launch state disagrees with editing")
+        require(home.tiles.filter { $0.key != .togglePins && $0.key != .pinRecent }.values.allSatisfy { $0.launchButton.isEnabled != editing }, "feature launch state disagrees with editing")
+        require(!editing || home.tiles.values.allSatisfy { !$0.launchButton.isEnabled }, "a history-dependent feature remains enabled while editing")
     }
     @MainActor static func status(_ home: HomeWindowController) -> String {
         descendants(home.window!.contentView!).compactMap { $0 as? NSTextField }
@@ -102,20 +103,20 @@ import Darwin
     @MainActor static func fixedLayout(_ home: HomeWindowController) {
         let window = home.window!, content = window.contentView!
         content.layoutSubtreeIfNeeded()
-        require(abs(content.bounds.width - 648) < 0.1 && abs(content.bounds.height - 536) < 0.1,
-                "Home changed its fixed 648 by 536 content size")
+        require(abs(content.bounds.width - 800) < 0.1 && abs(content.bounds.height - 536) < 0.1,
+                "Home changed its fixed 800 by 536 content size")
         require(!window.styleMask.contains(.resizable), "Home unexpectedly allows resizing")
         for control in buttons(content) {
             let frame = control.convert(control.bounds, to: content)
             require(content.bounds.contains(frame), "a visible control is clipped: \(control.title)")
         }
-        let footerControls = buttons(content).filter { ["恢复默认", "保存", "取消", "关闭"].contains($0.title) }
+        let footerControls = buttons(content).filter { ["恢复默认", "保存", "取消", "关闭", "更多设置"].contains($0.title) }
         require(footerControls.allSatisfy { $0.image != nil && $0.imagePosition == .imageLeading },
                 "footer actions do not share icon-and-title presentation")
         let restore = footerControls.first { $0.title == "恢复默认" }!
         let restoreRect = restore.convert(restore.bounds, to: content)
-        require(abs(restoreRect.minX - 24) < 1 && restoreRect.minY >= 484,
-                "Restore Defaults moved away from the fixed page margin")
+        require(restoreRect.minX > content.bounds.midX && restoreRect.minY >= 484,
+                "Restore Defaults moved away from the trailing footer group")
         for (index, control) in footerControls.enumerated() {
             for other in footerControls.dropFirst(index + 1) {
                 require(!control.convert(control.bounds, to: content).intersects(other.convert(other.bounds, to: content)),
@@ -143,7 +144,7 @@ import Darwin
         guard let data = bitmap.representation(using: .png, properties: [:]) else { fatalError("native render encoding failed") }
         do { try data.write(to: directory.appendingPathComponent(name + ".png")) }
         catch { require(false, "native preview write failed: \(error)") }
-        require(bitmap.pixelsWide >= 648 && bitmap.pixelsHigh >= 536, "native preview is incomplete")
+        require(bitmap.pixelsWide >= 800 && bitmap.pixelsHigh >= 536, "native preview is incomplete")
     }
     @MainActor static func counts(_ home: HomeWindowController) -> [ShortcutAction: Int] {
         Dictionary(uniqueKeysWithValues: ShortcutAction.displayOrder.map { ($0, home.tiles[$0]!.polishCount) })
@@ -157,13 +158,14 @@ import Darwin
         }
     }
     @MainActor static func main() {
+        AppLocalization.language = .simplifiedChinese
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let directory = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? ".build/verification/reopen")
         do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
         catch { require(false, "verification directory creation failed: \(error)") }
         let store = PreferencesStore(storage: MemoryPreferencesStorage())
-        let delegate = AppDelegate(preferences: store, hotKeyBackend: ReopenHotKeyBackend())
+        let delegate = AppDelegate(preferences: store, hotKeyBackend: ReopenHotKeyBackend(), monitorsClipboard: false, captureService: CaptureService(permission: ScreenCapturePermission(check: { true })))
         app.delegate = delegate
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         guard let window = app.windows.first(where: { $0.identifier?.rawValue == "patch.home" }),
@@ -187,21 +189,21 @@ import Darwin
                 "Home chrome or opacity is incorrect")
         let names = ["截图", "长截图", "主体截图", "录屏", "提取文字", "贴图"]
         let tiles = home.allTiles
-        require(tiles.count == 8 && Array(tiles.prefix(6)).map { $0.launchButton.title } == names, "eight panes do not follow the requested order")
-        require(buttons(content).count == 18, "idle Home must expose eight launches, eight keycaps, Restore Defaults and Close")
-        require(Array(delegate.verificationMenuTitles.prefix(6)) == ShortcutAction.displayOrder.map {
+        require(tiles.count == 10 && Array(tiles.prefix(6)).map { $0.launchButton.title } == names, "ten panes do not follow the requested order")
+        require(buttons(content).count == 23, "idle Home must expose ten launches, ten keycaps and three footer actions")
+        require(Array(delegate.verificationMenuTitles.prefix(6)) == ShortcutAction.displayOrder.prefix(6).map {
             "\($0.title)"
         }, "status menu feature order disagrees with Home")
         for (index, tile) in tiles.enumerated() {
             let rect = tile.convert(tile.bounds, to: content)
             require(content.bounds.contains(rect) && tile.fixedFrame.frame == tile.bounds && tile.bounds.contains(tile.surface.frame), "tile is clipped")
             require(tile.surface.frame.minX > 1 && tile.surface.frame.minY > 1, "glass does not leave clearance for stationary frame")
-            require(tile.frame.minY == tiles[index / 4 * 4].frame.minY, "tile is not in its grid row")
-            if index % 4 > 0 { require(tile.frame.minX > tiles[index - 1].frame.maxX, "grid columns overlap") }
-            if index >= 4 { require(tile.frame.minY > tiles[index - 4].frame.maxY, "grid rows overlap") }
+            require(tile.frame.minY == tiles[index / 5 * 5].frame.minY, "tile is not in its grid row")
+            if index % 5 > 0 { require(tile.frame.minX > tiles[index - 1].frame.maxX, "grid columns overlap") }
+            if index >= 5 { require(tile.frame.minY > tiles[index - 5].frame.maxY, "grid rows overlap") }
             require(!tile.launchButton.isBordered && !tile.shortcutButton.isBordered, "native controls gained separate chrome")
         }
-        require(home.tiles[.subject]?.shortcutButton.title == "⌥6" && delegate.responds(to: Selector(("subjectScreenshot"))),
+        require(home.tiles[.subject]?.shortcutButton.title == "⌥3" && delegate.responds(to: Selector(("subjectScreenshot"))),
                 "subject screenshot lacks its default key or delegate action")
         controls(home, editing: false); preview(home, "home-idle", directory)
         func hover(_ tile: HomeFeatureTile, over control: NSButton) {
@@ -221,6 +223,7 @@ import Darwin
         emptyPins.resetInteraction()
         let capture = home.tiles[.screenshot]!
         let restingFont = capture.launchButton.font!
+        let restingTint = capture.launchButton.contentTintColor
         hover(capture, over: capture.launchButton)
         require(capture.isLaunchHovered && !capture.isShortcutHovered, "function hover is missing")
         require(capture.launchButton.superview === capture && capture.shortcutButton.superview === capture,
@@ -236,8 +239,8 @@ import Darwin
             let glassFrontZ = capture.bounds.width * abs(sash.transform.m13)
             require(capture.launchButton.layer!.zPosition > glassFrontZ && capture.shortcutButton.layer!.zPosition > glassFrontZ,
                     "lifted glass can wash out the enabled controls")
-            require(capture.launchButton.isEnabled && capture.launchButton.contentTintColor!.usingColorSpace(.sRGB)!.redComponent < 0.21,
-                    "hovered launch is disabled or lighter than its normal color")
+            require(capture.launchButton.isEnabled && capture.launchButton.contentTintColor == restingTint,
+                    "hover changes the enabled launch control's theme color")
             require(sash.transform.m13 > 0 && sash.transform.m14 < 0,
                     "free edge must lift toward the viewer, not away")
             require(CATransform3DIsIdentity(capture.fixedFrame.transform), "fixed frame rotates with glass")
@@ -280,7 +283,7 @@ import Darwin
                 "fixed Command-Q appears editable")
         home.quitTile.resetInteraction()
         require(!home.quitTile.isHovered, "quit hover was not cleared")
-        passed("opaque fixed-size Home lays out eight native controls in the approved four-by-two order")
+        passed("opaque fixed-size Home lays out ten native controls in the approved five-by-two order")
 
         let statusMenu = delegate.verificationStatusMenu
         for (action, item) in zip(ShortcutAction.displayOrder, statusMenu.items.prefix(6)) {
@@ -337,10 +340,10 @@ import Darwin
         coordinator.pinImage(generatedImage)
         coordinator.pinImage(generatedImage)
         coordinator.pinText("仅用于菜单验证的文字贴图。")
-        let pinTitles: Set<String> = ["小贴 · 图片贴图", "小贴 · 文字贴图"]
+        let pinTitles: Set<String> = ["Patch · 图片贴图", "Patch · 文字贴图"]
         let pins = app.windows.filter { !existingWindowIDs.contains(ObjectIdentifier($0)) && pinTitles.contains($0.title) }
-        require(pins.count == 3 && pins.filter { $0.title == "小贴 · 图片贴图" }.count == 2 &&
-                pins.filter { $0.title == "小贴 · 文字贴图" }.count == 1 && pins.allSatisfy(\.isVisible),
+        require(pins.count == 3 && pins.filter { $0.title == "Patch · 图片贴图" }.count == 2 &&
+                pins.filter { $0.title == "Patch · 文字贴图" }.count == 1 && pins.allSatisfy(\.isVisible),
                 "two generated image pins and one text pin did not coexist visibly")
         requirePinAction("隐藏全部贴图", enabled: true, hidden: false)
         invoke(pinItem, in: statusMenu)
@@ -354,8 +357,8 @@ import Darwin
         let beforeNewPin = Set(app.windows.map(ObjectIdentifier.init))
         coordinator.pinImage(generatedImage)
         let newPins = app.windows.filter { !beforeNewPin.contains(ObjectIdentifier($0)) && pinTitles.contains($0.title) }
-        require(newPins.count == 1 && newPins[0].isVisible && pins.allSatisfy(\.isVisible),
-                "adding a pin while hidden did not restore the existing pins")
+        require(newPins.count == 1 && newPins[0].isVisible && pins.allSatisfy { !$0.isVisible },
+                "adding a pin while hidden unexpectedly restored the existing pins")
         requirePinAction("隐藏全部贴图", enabled: true, hidden: false)
         let allPins = pins + newPins
         for (index, pin) in allPins.enumerated() {
@@ -397,7 +400,7 @@ import Darwin
             fixture.cancelEditing(); controls(fixture, editing: false)
         }
         require(launches == ShortcutAction.displayOrder, "shortcut editing dispatched a feature")
-        passed("actual hit tests reach native controls; six launches open their sash and keycaps retain independent focus")
+        passed("actual hit tests reach native controls; eight launches open their sash and keycaps retain independent focus")
 
         let initialSaved = fixtureStore.shortcuts, initialWrites = memory.writeCount
         let tile = fixture.tiles[.screenshot]!, beforeManual = counts(fixture)
@@ -641,14 +644,14 @@ import Darwin
         auto.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification, object: autoWindow))
         require(!auto.isEditing && autoStore.shortcuts[.pin]?.keyCode == 28, "Focus loss discarded a valid draft")
         auto.beginEditing(.togglePins); fixedLayout(auto); preview(auto, "home-visibility-edit", directory)
-        outsideClick(); require(!auto.isEditing, "Unchanged seventh shortcut did not exit editing")
+        outsideClick(); require(!auto.isEditing, "Unchanged ninth shortcut did not exit editing")
         let previous = autoStore.shortcuts
         autoBackend.blocked.insert(KeyboardShortcut(keyCode: 29, modifiers: [.control, .option]))
         enter(auto, .togglePins, 29, "0"); outsideClick()
         require(auto.isEditing && autoStore.shortcuts == previous && auto.editor.hasIssue(.togglePins),
                 "Failed auto-save lost its draft or overwrote saved keys")
         auto.cancelEditing(); auto.close()
-        passed("outside clicks and focus loss save valid changes; seventh shortcut fits and failed saves retain drafts")
+        passed("outside clicks and focus loss save valid changes; ninth shortcut fits and failed saves retain drafts")
         require(completedGroups == 13, "Home probe skipped a verification group")
         print("Native previews: \(directory.path)")
         print("PASS: 13 Home/reopen groups; 0 failures"); fflush(stdout)

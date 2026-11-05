@@ -9,10 +9,11 @@ import CoreImage
 final class SubjectSelectionController: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
     var onPin: ((CGImage) -> Void)?
+    private let pixelScale: CGFloat?
     private let source: CGImage
     private let original = SubjectPreviewView()
     private let preview = SubjectPreviewView()
-    private let status = NSTextField(wrappingLabelWithString: "正在识别画面里的主体…")
+    private let status = NSTextField(wrappingLabelWithString: L("正在识别画面里的主体…"))
     private let progress = NSProgressIndicator()
     private let worker = DispatchQueue(label: "dev.screenleaf.subject-selection", qos: .userInitiated)
     private var extraction: SubjectExtractionResult?
@@ -26,13 +27,14 @@ final class SubjectSelectionController: NSWindowController, NSWindowDelegate {
     private var resetButton: NSButton!
     private var outputButtons: [NSButton] = []
 
-    init(image: CGImage) {
+    init(image: CGImage, pixelScale: CGFloat? = nil) {
+        self.pixelScale = pixelScale
         source = image
         let visible = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1280, height: 800)
         let window = SubjectSelectionWindow(contentRect: CGRect(x: 0, y: 0,
             width: min(960, visible.width - 60), height: min(640, visible.height - 60)),
             styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = "小贴 · 抠出主体"
+        PatchWindowTitle.apply(to: window, title: L("Patch · 主体截图"))
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         window.minSize = CGSize(width: 650, height: 420)
@@ -47,11 +49,16 @@ final class SubjectSelectionController: NSWindowController, NSWindowDelegate {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    override func showWindow(_ sender: Any?) {
+        if let window { WindowActivationCoordinator.shared.register(window) }
+        super.showWindow(sender)
+    }
+
     private func buildContent() {
         guard let content = window?.contentView else { return }
-        let title = NSTextField(labelWithString: "把画面里的小东西，贴到桌面上")
+        let title = NSTextField(labelWithString: L("把画面里的小东西，贴到桌面上"))
         title.font = .systemFont(ofSize: 18, weight: .semibold)
-        let hint = NSTextField(wrappingLabelWithString: "在左侧点击主体，加入或移除；右侧预览透明结果。")
+        let hint = NSTextField(wrappingLabelWithString: L("在左侧点击主体，加入或移除；右侧预览透明结果。"))
         hint.textColor = .secondaryLabelColor
         status.font = .systemFont(ofSize: 12)
         status.textColor = .secondaryLabelColor
@@ -66,18 +73,18 @@ final class SubjectSelectionController: NSWindowController, NSWindowDelegate {
         preview.checkerboard = true
         original.onClick = { [weak self] point in self?.toggle(at: point) }
         original.onHover = { [weak self] point in self?.hover(at: point) }
-        let columns = NSStackView(views: [column("原图 · 点击选主体", original), column("透明结果", preview)])
+        let columns = NSStackView(views: [column(L("原图 · 点击选主体"), original), column(L("透明结果"), preview)])
         columns.spacing = 16
         columns.distribution = .fillEqually
         columns.setContentHuggingPriority(.defaultLow, for: .vertical)
-        undoButton = SelectionButton("撤销", symbol: "arrow.uturn.backward") { [weak self] in self?.undo() }
-        resetButton = SelectionButton("重置", symbol: "arrow.counterclockwise") { [weak self] in self?.reset() }
-        let copy = SelectionButton("复制", symbol: "doc.on.doc") { [weak self] in self?.copyImage() }
-        copy.toolTip = "复制透明 PNG（⌘C）"
-        let save = SelectionButton("保存", symbol: "square.and.arrow.down") { [weak self] in self?.save() }
-        save.toolTip = "保存透明 PNG（⌘S）"
-        let pin = SelectionButton("贴到桌面", symbol: "pin") { [weak self] in self?.pin() }
-        let close = SelectionButton("关闭", symbol: "xmark") { [weak self] in self?.close() }
+        undoButton = SelectionButton(L("撤销"), symbol: "arrow.uturn.backward") { [weak self] in self?.undo() }
+        resetButton = SelectionButton(L("重置"), symbol: "arrow.counterclockwise") { [weak self] in self?.reset() }
+        let copy = SelectionButton(L("复制"), symbol: "doc.on.doc") { [weak self] in self?.copyImage() }
+        copy.toolTip = L("复制透明 PNG（⌘C）")
+        let save = SelectionButton(L("保存"), symbol: "square.and.arrow.down") { [weak self] in self?.save() }
+        save.toolTip = L("保存透明 PNG（⌘S）")
+        let pin = SelectionButton(L("贴到桌面"), symbol: "pin") { [weak self] in self?.pin() }
+        let close = SelectionButton(L("关闭"), symbol: "xmark") { [weak self] in self?.close() }
         outputButtons = [copy, save, pin]
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -171,7 +178,7 @@ final class SubjectSelectionController: NSWindowController, NSWindowDelegate {
         output = nil
         rendering = true
         progress.startAnimation(nil)
-        status.stringValue = "正在更新透明结果…"
+        status.stringValue = L("正在更新透明结果…")
         updateButtons()
         worker.async { [weak self] in
             let result = Result { () -> (CGImage?, CGImage?) in
@@ -186,7 +193,7 @@ final class SubjectSelectionController: NSWindowController, NSWindowDelegate {
                 case .success(let images):
                     self.output = images.1
                     self.preview.result = images.0
-                    self.status.stringValue = selection.isEmpty ? "还没有选中主体，请在左侧点击加入。" : "已选 \(selection.count) / \(extraction.instances.count) 个主体 · 再点一次可移除"
+                    self.status.stringValue = selection.isEmpty ? L("还没有选中主体，请在左侧点击加入。") : LF("已选 %d / %d 个主体 · 再点一次可移除", selection.count, extraction.instances.count)
                     self.updateButtons()
                 case .failure(let error): self.fail(error)
                 }
@@ -215,8 +222,8 @@ final class SubjectSelectionController: NSWindowController, NSWindowDelegate {
 
     private func copyImage() {
         guard !rendering, let output else { return }
-        do { try ImageToolsUI.copyPNG(output); status.stringValue = "已复制透明 PNG" }
-        catch { showError(error, title: "复制未完成") }
+        do { try ImageToolsUI.copyPNG(output, pixelScale: pixelScale); status.stringValue = L("已复制透明 PNG") }
+        catch { showError(error, title: L("复制未完成")) }
     }
 
     private func save() {
@@ -226,8 +233,8 @@ final class SubjectSelectionController: NSWindowController, NSWindowDelegate {
         panel.nameFieldStringValue = "Patch-主体-\(ImageToolsUI.timestamp()).png"
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            do { try ImageToolsUI.png(output).write(to: url, options: .atomic); self?.status.stringValue = "已保存透明 PNG" }
-            catch { showError(error, title: "保存未完成") }
+            do { try ImageToolsUI.png(output).write(to: url, options: .atomic); self?.status.stringValue = L("已保存透明 PNG"); ImageToolsUI.onCompletedImage?(output, self?.pixelScale) }
+            catch { showError(error, title: L("保存未完成")) }
         }
     }
 

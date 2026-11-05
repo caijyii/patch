@@ -1,0 +1,2 @@
+"CFBundleDisplayName" = "Patch";
+"NSMicrophoneUsageDescription" = "只有你开启麦克风录音时，小贴才会把你的讲解录入视频。";

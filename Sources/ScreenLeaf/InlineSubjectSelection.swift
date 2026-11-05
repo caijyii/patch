@@ -15,7 +15,7 @@ final class InlineSubjectSelection: NSView {
     private(set) var isAnalyzing = false
     private(set) var isRendering = false
     private(set) var isActive = false
-    private(set) var status = "切到主体模式后自动识别 · 点击增减主体 · 拖动限定范围"
+    private(set) var status = L("切到主体模式后自动识别 · 点击增减主体 · 拖动限定范围")
     var canExport: Bool { isActive && !isAnalyzing && !isRendering && !selected.isEmpty && output != nil }
     var canUndo: Bool { !history.isEmpty && !isAnalyzing }
     var isReady: Bool { extraction != nil && !isAnalyzing }
@@ -64,7 +64,7 @@ final class InlineSubjectSelection: NSView {
             imageSize: CGSize(width: source.width, height: source.height))
         guard rect.width >= 16, rect.height >= 16,
               let image = source.cropping(to: pixels) else {
-            status = "识别范围太小，请重新拖动框选。"
+            status = L("识别范围太小，请重新拖动框选。")
             changed()
             return
         }
@@ -77,7 +77,7 @@ final class InlineSubjectSelection: NSView {
         analysisRect = rect
         isActive = true
         isAnalyzing = true
-        status = "正在识别主体… · 可以重新框选或按 Esc 取消"
+        status = L("正在识别主体… · 可以重新框选或按 Esc 取消")
         let ticket = InlineSubjectWorkToken()
         session = ticket
         changed()
@@ -91,18 +91,18 @@ final class InlineSubjectSelection: NSView {
                 case .success(let extraction):
                     if selectingAll && extraction.instances.isEmpty {
                         self.restorePreservedResult()
-                        self.status = "范围内未识别到主体 · 保留原结果 · 可重新拖动范围"
+                        self.status = L("范围内未识别到主体 · 保留原结果 · 可重新拖动范围")
                         self.changed()
                         return
                     }
                     self.extraction = extraction
                     self.selected = selectingAll ? extraction.instances : []
                     if selectingAll { self.renderSelection() }
-                    else { self.status = "移动鼠标预览主体 · 点击选中 · 拖动限定识别范围"; self.changed() }
+                    else { self.status = L("移动鼠标预览主体 · 点击选中 · 拖动限定识别范围"); self.changed() }
                     self.hover(at: self.lastHover)
                 case .failure(let error):
                     self.restorePreservedResult()
-                    self.status = error.localizedDescription + " · 可重新框选或切回矩形"
+                    self.status = error.localizedDescription + L(" · 可重新框选或切回矩形")
                     self.changed()
                 }
             }
@@ -111,7 +111,7 @@ final class InlineSubjectSelection: NSView {
 
     func previewRange(_ rect: CGRect) {
         dragRect = rect.intersection(bounds)
-        status = "松开鼠标识别框内主体"
+        status = L("松开鼠标识别框内主体")
         changed()
     }
 
@@ -119,7 +119,7 @@ final class InlineSubjectSelection: NSView {
         guard dragRect != nil else { return }
         dragRect = nil
         if !isAnalyzing && !isRendering {
-            status = selected.isEmpty ? "点击增减主体 · 拖动限定识别范围" : "已选 \(selected.count) 个主体 · 点击增减 · 拖动重新限定范围"
+            status = selected.isEmpty ? L("点击增减主体 · 拖动限定识别范围") : LF("已选 %d 个主体 · 点击增减 · 拖动重新限定范围", selected.count)
         }
         changed()
     }
@@ -184,7 +184,7 @@ final class InlineSubjectSelection: NSView {
         analysisRect = nil; dragRect = nil
         preservedResult = nil
         isActive = false; isAnalyzing = false; isRendering = false
-        status = "切到主体模式后自动识别 · 点击增减主体 · 拖动限定范围"
+        status = L("切到主体模式后自动识别 · 点击增减主体 · 拖动限定范围")
         changed()
     }
 
@@ -202,12 +202,12 @@ final class InlineSubjectSelection: NSView {
         guard let extraction else { changed(); return }
         if selected.isEmpty {
             isRendering = false
-            status = "尚未选中主体 · 点击画面加入 · 拖动重新限定范围"
+            status = L("尚未选中主体 · 点击画面加入 · 拖动重新限定范围")
             changed()
             return
         }
         isRendering = true
-        status = "正在更新透明结果…"
+        status = L("正在更新透明结果…")
         let selection = selected, currentSession = session, ticket = InlineSubjectWorkToken()
         let outlineWidth = 1.5 * CGFloat(extraction.source.width) / max(1, analysisRect?.width ?? bounds.width)
         renderWork = ticket
@@ -233,7 +233,7 @@ final class InlineSubjectSelection: NSView {
                     self.selectedOutline = images.3
                     if images.1 != nil { self.preservedResult = nil }
                     else { self.restorePreservedResult() }
-                    self.status = "已选 \(selection.count) 个主体 · 再点移除 · Enter 复制透明 PNG"
+                    self.status = LF("已选 %d 个主体 · 再点移除 · Enter 复制透明 PNG", selection.count)
                 case .failure(let error):
                     self.restorePreservedResult()
                     self.status = error.localizedDescription

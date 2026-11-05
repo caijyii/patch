@@ -26,6 +26,7 @@ cp "$binary_dir/Patch" "$app_path/Contents/MacOS/Patch"
 cp Resources/Info.plist "$app_path/Contents/Info.plist"
 cp Resources/PrivacyInfo.xcprivacy "$app_path/Contents/Resources/PrivacyInfo.xcprivacy"
 cp Resources/ArtworkNotices.json "$app_path/Contents/Resources/ArtworkNotices.json"
+cp -R Resources/en.lproj Resources/zh-Hans.lproj "$app_path/Contents/Resources/"
 cp LICENSE "$app_path/Contents/Resources/LICENSE"
 cp "$icon_dir/AppIcon.icns" "$app_path/Contents/Resources/AppIcon.icns"
 # Preserve original vector stickers and their source record for offline rendering.

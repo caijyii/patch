@@ -17,8 +17,8 @@ source = Path(sys.argv[1]).read_text()
 marker = '@MainActor\nfinal class AppDelegate'
 Path(sys.argv[2]).write_text('import AppKit\nimport Carbon\nimport Darwin\n\n' + source[source.index(marker):] + '''
 extension AppDelegate {
-    var verificationMenuTitles: [String] { statusItem.menu?.items.map(\\.title) ?? [] }
-    var verificationStatusMenu: NSMenu { statusItem.menu! }
+    var verificationMenuTitles: [String] { statusControls.menu.items.map(\\.title) }
+    var verificationStatusMenu: NSMenu { statusControls.menu }
     var verificationImageTools: ImageToolsCoordinator { imageTools }
 }
 ''')

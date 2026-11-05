@@ -65,11 +65,12 @@ extension ImageToolsOCRController {
             }
             await check("selected image renders an inner highlight without covering its viewport or mouse targets") {
                 guard let content = firstWindow.contentView else { throw PinUIFailure(description: "Missing image content") }
-                try require(first.nativeOutline.frame == first.nativeViewportFrame && first.nativeOutline.frame == content.bounds,
-                            "Selection outline added an outer margin or does not match the image viewport")
-                for point in [CGPoint(x: 0.75, y: content.bounds.midY),
-                              CGPoint(x: content.bounds.midX, y: content.bounds.midY),
-                              CGPoint(x: content.bounds.maxX - 0.75, y: content.bounds.midY)] {
+                try require(first.nativeOutline.frame == first.nativeViewportFrame
+                            && first.nativeViewportFrame == content.bounds.insetBy(dx: 1, dy: 1) && firstWindow.hasShadow,
+                            "Pin presentation changed the image viewport or lost its shadow")
+                for point in [CGPoint(x: 0.75, y: first.nativeOutline.bounds.midY),
+                              CGPoint(x: first.nativeOutline.bounds.midX, y: first.nativeOutline.bounds.midY),
+                              CGPoint(x: first.nativeOutline.bounds.maxX - 0.75, y: first.nativeOutline.bounds.midY)] {
                     try require(first.nativeOutline.hitTest(point) == nil, "Selection outline intercepts image interaction")
                 }
                 try verifyOutlinePixels(firstWindow, selected: true,
@@ -195,10 +196,11 @@ extension ImageToolsOCRController {
             }
             return color
         }
-        for point in [CGPoint(x: 0.75, y: content.bounds.midY),
-                      CGPoint(x: content.bounds.maxX - 0.75, y: content.bounds.midY),
-                      CGPoint(x: content.bounds.midX, y: 0.75),
-                      CGPoint(x: content.bounds.midX, y: content.bounds.maxY - 0.75)] {
+        let viewport = content.bounds.insetBy(dx: 1, dy: 1)
+        for point in [CGPoint(x: viewport.minX + 0.75, y: viewport.midY),
+                      CGPoint(x: viewport.maxX - 0.75, y: viewport.midY),
+                      CGPoint(x: viewport.midX, y: viewport.minY + 0.75),
+                      CGPoint(x: viewport.midX, y: viewport.maxY - 0.75)] {
             let color = try pixel(point)
             if selected {
                 try require(color.alphaComponent > 0.99 && color.redComponent < 0.8

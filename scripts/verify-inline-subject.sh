@@ -16,6 +16,6 @@ xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     Sources/ScreenLeaf/CaptureRegion.swift Sources/ScreenLeaf/SelectionGeometry.swift \
     Sources/ScreenLeaf/ScrollEventRouting.swift Sources/ScreenLeaf/ImageTools.swift \
     Sources/ScreenLeaf/SubjectExtraction.swift Sources/ScreenLeaf/SubjectSelection.swift \
-    Sources/ScreenLeaf/Preferences.swift Sources/ScreenLeaf/AnnotationControls.swift \
+    Sources/ScreenLeaf/Localization.swift Sources/ScreenLeaf/WindowTitle.swift Sources/ScreenLeaf/WindowActivation.swift Sources/ScreenLeaf/WindowAmbientBackground.swift Sources/ScreenLeaf/Preferences.swift Sources/ScreenLeaf/AnnotationControls.swift \
     "$inline_work/InlineSubjectVerification.swift" -o "$inline_work/probe"
 "$inline_work/probe" "$1" "$inline_work"

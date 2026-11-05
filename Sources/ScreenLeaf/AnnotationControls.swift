@@ -4,15 +4,15 @@
 import AppKit
 
 enum ToolbarPalette {
-    static let accent = NSColor(srgbRed: 82 / 255, green: 108 / 255, blue: 131 / 255, alpha: 1)
-    static let ink = NSColor(srgbRed: 45 / 255, green: 57 / 255, blue: 68 / 255, alpha: 1)
-    static let secondaryInk = NSColor(srgbRed: 89 / 255, green: 106 / 255, blue: 121 / 255, alpha: 1)
-    static let selectedInk = NSColor(srgbRed: 20 / 255, green: 43 / 255, blue: 63 / 255, alpha: 1)
-    static let surface = NSColor.white
-    static let border = NSColor(srgbRed: 224 / 255, green: 229 / 255, blue: 233 / 255, alpha: 1)
-    static let selectedFill = NSColor(srgbRed: 231 / 255, green: 234 / 255, blue: 238 / 255, alpha: 1)
-    static let hoverFill = NSColor(srgbRed: 245 / 255, green: 246 / 255, blue: 248 / 255, alpha: 1)
-    static let pressedFill = NSColor(srgbRed: 220 / 255, green: 226 / 255, blue: 230 / 255, alpha: 1)
+    static let accent = AppTheme.color(NSColor(srgbRed: 82 / 255, green: 108 / 255, blue: 131 / 255, alpha: 1), NSColor(srgbRed: 0.55, green: 0.72, blue: 0.87, alpha: 1))
+    static let ink = AppTheme.color(NSColor(srgbRed: 45 / 255, green: 57 / 255, blue: 68 / 255, alpha: 1), NSColor(srgbRed: 0.88, green: 0.91, blue: 0.94, alpha: 1))
+    static let secondaryInk = AppTheme.color(NSColor(srgbRed: 89 / 255, green: 106 / 255, blue: 121 / 255, alpha: 1), NSColor(srgbRed: 0.69, green: 0.75, blue: 0.81, alpha: 1))
+    static let selectedInk = AppTheme.color(NSColor(srgbRed: 20 / 255, green: 43 / 255, blue: 63 / 255, alpha: 1), NSColor(srgbRed: 0.93, green: 0.97, blue: 1, alpha: 1))
+    static let surface = AppTheme.color(NSColor.white, NSColor(srgbRed: 0.14, green: 0.16, blue: 0.18, alpha: 1))
+    static let border = AppTheme.color(NSColor(srgbRed: 224 / 255, green: 229 / 255, blue: 233 / 255, alpha: 1), NSColor(srgbRed: 0.32, green: 0.36, blue: 0.40, alpha: 1))
+    static let selectedFill = AppTheme.color(NSColor(srgbRed: 231 / 255, green: 234 / 255, blue: 238 / 255, alpha: 1), NSColor(srgbRed: 0.27, green: 0.38, blue: 0.48, alpha: 1))
+    static let hoverFill = AppTheme.color(NSColor(srgbRed: 245 / 255, green: 246 / 255, blue: 248 / 255, alpha: 1), NSColor(srgbRed: 0.23, green: 0.27, blue: 0.31, alpha: 1))
+    static let pressedFill = AppTheme.color(NSColor(srgbRed: 220 / 255, green: 226 / 255, blue: 230 / 255, alpha: 1), NSColor(srgbRed: 0.33, green: 0.43, blue: 0.52, alpha: 1))
 }
 
 /// Original Patch sticker PDFs stay vector through preview and export. Legacy identifiers and emoji still resolve.
@@ -24,6 +24,17 @@ enum StickerCatalog {
         let emoji: String
         let category: String
         let file: String
+        let retired: Bool?
+        var groupRank: Int {
+            if category == "动物" { return 0 }
+            if category == "表情" { return 1 }
+            if ["patch-sun", "patch-rainbow"].contains(id) { return 2 }
+            if category == "树木" { return 3 }
+            if ["patch-seedling", "patch-leaf-fluttering-in-wind", "patch-four-leaf-clover", "patch-maple-leaf", "patch-cactus", "patch-herb"].contains(id) { return 4 }
+            if ["patch-blossom", "patch-tulip", "patch-sunflower", "patch-cherry-blossom"].contains(id) { return 5 }
+            return 6
+        }
+        var groupTitle: String { ["动物", "表情", "天气", "树木", "草叶", "花朵", "其他"][groupRank] }
     }
     private static let directory: URL? = {
         var candidates: [URL] = []
@@ -35,14 +46,19 @@ enum StickerCatalog {
         }
         return candidates.first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("manifest.json").path) }
     }()
-    static let items: [Item] = {
+    private static let allItems: [Item] = {
         guard let directory, let data = try? Data(contentsOf: directory.appendingPathComponent("manifest.json")),
               let items = try? JSONDecoder().decode([Item].self, from: data) else { return [] }
         return items
     }()
+    static let items: [Item] = {
+        allItems.filter { $0.retired != true }.enumerated().sorted {
+            $0.element.groupRank == $1.element.groupRank ? $0.offset < $1.offset : $0.element.groupRank < $1.element.groupRank
+        }.map(\.element)
+    }()
     static var defaultIdentifier: String { item(for: "🌼")?.id ?? "🌼" }
     static func item(for value: String) -> Item? {
-        items.first { $0.id == value || $0.emoji == value || $0.legacyIDs.contains(value) }
+        allItems.first { $0.id == value || $0.emoji == value || $0.legacyIDs.contains(value) }
     }
     static func canonicalIdentifier(_ value: String) -> String { item(for: value)?.id ?? value }
     private static var documents: [String: CGPDFDocument] = [:]
@@ -86,7 +102,6 @@ class ToolbarMaterialView: NSView {
         self.role = role
         self.blendingMode = blendingMode
         super.init(frame: .zero)
-        appearance = NSAppearance(named: .aqua)
         wantsLayer = true
         layer?.cornerRadius = role == .primary ? 7 : 6
         layer?.masksToBounds = true
@@ -104,7 +119,15 @@ class ToolbarMaterialView: NSView {
 
     @objc private func accessibilityChanged(_ notification: Notification) { refreshMaterial() }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance(); refreshMaterial()
+    }
+
     func refreshMaterial() {
+        effectiveAppearance.performAsCurrentDrawingAppearance { updateMaterialColors() }
+    }
+
+    private func updateMaterialColors() {
         layer?.backgroundColor = ToolbarPalette.surface.cgColor
         layer?.borderWidth = 1
         layer?.borderColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
@@ -126,7 +149,18 @@ final class ToolbarSeparator: NSView {
 
 class SelectionButton: NSButton {
     static let annotationSymbol = "pencil.tip"
-    static func confirmation(_ title: String = "完成", toolTip: String, action: @escaping () -> Void) -> SelectionButton {
+    /// A template T has the same shape in every app/system language. SF textformat localizes its artwork.
+    static var textAnnotationImage: NSImage {
+        let image = NSImage(size: CGSize(width: 16, height: 16), flipped: false) { bounds in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: CGRect(x: 2, y: 11.5, width: 12, height: 2), xRadius: 0.6, yRadius: 0.6).fill()
+            NSBezierPath(roundedRect: CGRect(x: 7, y: 2.5, width: 2, height: 10), xRadius: 0.6, yRadius: 0.6).fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+    static func confirmation(_ title: String = L("完成"), toolTip: String, action: @escaping () -> Void) -> SelectionButton {
         let button = SelectionButton(title, symbol: "checkmark", action: action)
         button.imagePosition = .imageOnly
         button.isPrimaryAction = true
@@ -135,7 +169,7 @@ class SelectionButton: NSButton {
     }
 
     static func cancellation(toolTip: String, action: @escaping () -> Void) -> SelectionButton {
-        let button = SelectionButton("取消", symbol: "xmark", action: action)
+        let button = SelectionButton(L("取消"), symbol: "xmark", action: action)
         button.imagePosition = .imageOnly
         button.toolTip = toolTip
         return button
@@ -166,9 +200,9 @@ class SelectionButton: NSButton {
         super.init(frame: .zero)
         // Commands must not latch; mode and option controls opt into toggling explicitly.
         setButtonType(.momentaryPushIn)
-        self.title = title
-        toolTip = title
-        setAccessibilityLabel(title)
+        self.title = L(title)
+        toolTip = L(title)
+        setAccessibilityLabel(L(title))
         bezelStyle = .rounded
         controlSize = .small
         focusRingType = .none
@@ -186,7 +220,7 @@ class SelectionButton: NSButton {
         addSubview(caption)
         imagePosition = symbol == nil ? .noImage : .imageLeading
         if let symbol {
-            image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            image = NSImage(systemSymbolName: symbol, accessibilityDescription: L(title))
             imagePosition = .imageLeading
         }
         actionBlock = action
@@ -283,6 +317,10 @@ class SelectionButton: NSButton {
     }
 
     private func updateInteraction() {
+        effectiveAppearance.performAsCurrentDrawingAppearance { updateInteractionColors() }
+    }
+
+    private func updateInteractionColors() {
         needsDisplay = true
         let hovered = hoverIsReady && isPointerInside && isEnabled && !isHighlighted
         let opacity: Float = hovered ? 1 : 0
@@ -395,8 +433,8 @@ final class AnnotationSizeControl: NSControl {
     var onChange: ((Double) -> Void)?
     var onBegin: (() -> Void)?
     var onEnd: (() -> Void)?
-    lazy var minus = SelectionButton("减小", symbol: "minus") { [weak self] in self?.adjust(-1) }
-    lazy var plus = SelectionButton("增大", symbol: "plus") { [weak self] in self?.adjust(1) }
+    lazy var minus = SelectionButton(L("减小"), symbol: "minus") { [weak self] in self?.adjust(-1) }
+    lazy var plus = SelectionButton(L("增大"), symbol: "plus") { [weak self] in self?.adjust(1) }
     override var intrinsicContentSize: NSSize { NSSize(width: 218, height: 28) }
     override var isEnabled: Bool { didSet { slider.isEnabled = isEnabled; minus.isEnabled = isEnabled; plus.isEnabled = isEnabled; sync() } }
     override init(frame: NSRect) {
@@ -434,8 +472,8 @@ final class AnnotationSizeControl: NSControl {
         currentValue = value
         slider.doubleValue = min(range.upperBound, max(range.lowerBound, value))
         slider.setAccessibilityLabel(category)
-        minus.setAccessibilityLabel(category + ":减小"); plus.setAccessibilityLabel(category + ":增大")
-        minus.toolTip = "减小" + category; plus.toolTip = "增大" + category
+        minus.setAccessibilityLabel(LF("减小%@", category)); plus.setAccessibilityLabel(LF("增大%@", category))
+        minus.toolTip = LF("减小%@", category); plus.toolTip = LF("增大%@", category)
         sync()
     }
     private func sync() {
@@ -460,6 +498,7 @@ final class AnnotationSizeControl: NSControl {
 /// Shared screenshot/editor controls. Stored defaults and selected-object values are separate.
 @MainActor
 final class AnnotationControls {
+    static let displayOrder: [ImageToolsTool] = [.arrow, .pen, .rectangle, .ellipse, .text, .number, .sticker, .mosaic]
     let canvas: ImageToolsCanvas
     private let preferences: PreferencesStore
     private let scale: () -> CGFloat
@@ -471,42 +510,49 @@ final class AnnotationControls {
     private(set) var stickerButtons: [NSButton] = []
     let sizeControl = AnnotationSizeControl(frame: .zero)
     private let colors: [NSColor] = [.systemRed, .systemYellow, .systemGreen, .systemBlue, .white]
-    private let stickers = StickerCatalog.items
+    private var stickers: [StickerCatalog.Item] = []
+    var orderedStickerIdentifiers: [String] { stickers.map(\.id) }
     private var defaultSticker = StickerCatalog.defaultIdentifier
     private var stickerPopover: NSPopover?
+    private weak var stickerPicker: StickerPickerController?
+    private var stickerOrderObserver: NSObjectProtocol?
     private let parameterSeparator = ToolbarSeparator()
     private let actionSeparator = ToolbarSeparator()
-    private(set) lazy var moreStickerButton: NSButton = SelectionButton("更多", symbol: "ellipsis") { [weak self] in
+    private(set) lazy var moreStickerButton: NSButton = SelectionButton(L("更多"), symbol: "ellipsis") { [weak self] in
         self?.showStickerPicker()
     }
 
     init(canvas: ImageToolsCanvas, preferences: PreferencesStore? = nil,
          scale: @escaping () -> CGFloat = { 1 }, onUndo: (() -> Void)? = nil) {
         self.canvas = canvas; self.preferences = preferences ?? .shared; self.scale = scale
-        undoButton = SelectionButton("撤销", symbol: "arrow.uturn.backward") { [weak canvas] in
+        undoButton = SelectionButton(L("撤销"), symbol: "arrow.uturn.backward") { [weak canvas] in
             if let onUndo { onUndo() } else { canvas?.undoAnnotation() }
         }
         undoButton.imagePosition = .imageOnly
-        undoButton.toolTip = "撤销标注（⌘Z）"
+        undoButton.toolTip = L("撤销标注（⌘Z）")
         let symbols: [ImageToolsTool: String] = [.arrow: "arrow.up.right", .rectangle: "rectangle", .ellipse: "circle",
-            .text: "textformat", .number: "number.circle", .pen: SelectionButton.annotationSymbol, .mosaic: "square.grid.3x3.fill", .sticker: "leaf"]
-        for tool in ImageToolsTool.allCases {
+            .number: "number.circle", .pen: SelectionButton.annotationSymbol, .mosaic: "square.grid.3x3.fill", .sticker: "leaf"]
+        for tool in Self.displayOrder {
             let button = SelectionButton(tool.rawValue, symbol: symbols[tool]) { [weak self] in self?.choose(tool: tool) }
+            if tool == .text { button.image = SelectionButton.textAnnotationImage }
             button.setButtonType(.pushOnPushOff)
             button.imagePosition = .imageOnly
-            button.toolTip = "\(tool.rawValue) · 再点一次结束绘制"
+            button.toolTip = LF("%@ · 再点一次结束绘制", L(tool.rawValue))
             toolButtons[tool] = button
         }
         for (index, color) in colors.enumerated() {
-            let names = ["红色", "黄色", "绿色", "蓝色", "白色"]
-            colorButtons.append(SelectionOptionButton(sample: .color(color), label: "标注颜色:\(names[index])") { [weak self] in
+            let names = [L("红色"), L("黄色"), L("绿色"), L("蓝色"), L("白色")]
+            colorButtons.append(SelectionOptionButton(sample: .color(color), label: LF("标注颜色:%@", names[index])) { [weak self] in
                 self?.change({ $0.colorID = index }, edit: { $0.updateSelectedAnnotation(color: color) })
             })
         }
-        for sticker in stickers {
-            stickerButtons.append(SelectionOptionButton(sample: .sticker(sticker.id), label: "贴纸图案:\(sticker.title)") { [weak self] in
-                self?.chooseSticker(sticker.id)
-            })
+        rebuildStickers()
+        stickerOrderObserver = NotificationCenter.default.addObserver(forName: PreferencesStore.stickerOrderDidChange, object: self.preferences, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.rebuildStickers(); self.stickerPicker?.replaceItems(self.stickers)
+                self.refresh(); self.onUpdate?()
+            }
         }
         sizeControl.onChange = { [weak self] value in self?.changeSize(value) }
         sizeControl.onBegin = { [weak canvas] in canvas?.beginParameterEditing() }
@@ -520,24 +566,47 @@ final class AnnotationControls {
         canvas.isDrawingEnabled = false
         refresh()
     }
+    deinit { if let stickerOrderObserver { NotificationCenter.default.removeObserver(stickerOrderObserver) } }
 
-    var rows: [[NSView]] {
-        var rows: [[NSView]] = [ImageToolsTool.allCases.compactMap { toolButtons[$0] } + [undoButton]]
+    private func rebuildStickers() {
+        let catalog = StickerCatalog.items
+        let order = preferences.orderedStickerIdentifiers(defaults: catalog.map(\.id), canonicalize: StickerCatalog.canonicalIdentifier)
+        let byID = Dictionary(uniqueKeysWithValues: catalog.map { ($0.id, $0) })
+        stickers = order.compactMap { byID[$0] }
+        stickerButtons = stickers.map { sticker in
+            let button = SelectionOptionButton(sample: .sticker(sticker.id), label: LF("贴纸图案:%@", L(sticker.title))) { [weak self] in
+                self?.chooseSticker(sticker.id)
+            }
+            button.identifier = NSUserInterfaceItemIdentifier(sticker.id)
+            return button
+        }
+    }
+
+    var rows: [[NSView]] { rows(maxWidth: .greatestFiniteMagnitude) }
+
+    func rows(maxWidth: CGFloat) -> [[NSView]] {
+        var rows: [[NSView]] = [Self.displayOrder.compactMap { toolButtons[$0] } + [undoButton]]
         guard let activeTool else { return rows }
         switch activeTool {
-        case .arrow, .rectangle, .ellipse, .pen: rows.append(group("颜色", colorButtons) + [parameterSeparator] + group("粗细", [sizeControl]))
-        case .text: rows.append(group("颜色", colorButtons) + [parameterSeparator] + group("字号", [sizeControl]))
-        case .number: rows.append(group("颜色", colorButtons) + [parameterSeparator] + group("大小", [sizeControl]))
-        case .mosaic: rows.append(group("块大小", [sizeControl]))
+        case .arrow, .rectangle, .ellipse, .pen: rows.append(group(L("颜色"), colorButtons) + [parameterSeparator] + group(L("粗细"), [sizeControl]))
+        case .text: rows.append(group(L("颜色"), colorButtons) + [parameterSeparator] + group(L("字号"), [sizeControl]))
+        case .number: rows.append(group(L("颜色"), colorButtons) + [parameterSeparator] + group(L("大小"), [sizeControl]))
+        case .mosaic: rows.append(group(L("块大小"), [sizeControl]))
         case .sticker:
-            rows.append(group("图案", Array(stickerButtons.prefix(10))) + [moreStickerButton, parameterSeparator]
-                + group("大小", [sizeControl]))
+            let prefix = group(L("图案"), [])
+            let suffix = [moreStickerButton, parameterSeparator] + group(L("大小"), [sizeControl])
+            var inline: [NSView] = []
+            for button in stickerButtons {
+                guard SelectionToolbar.singleLineWidth(prefix + inline + [button] + suffix) <= maxWidth else { break }
+                inline.append(button)
+            }
+            rows.append(prefix + inline + suffix)
         }
         return rows
     }
 
-    func rows(appendingActions actions: [NSView]) -> [[NSView]] {
-        let controlRows = rows
+    func rows(appendingActions actions: [NSView], maxWidth: CGFloat = .greatestFiniteMagnitude) -> [[NSView]] {
+        let controlRows = rows(maxWidth: maxWidth)
         let main = (controlRows.first ?? []) + (actions.isEmpty ? [] : [actionSeparator] + actions)
         return [main] + Array(controlRows.dropFirst())
     }
@@ -581,11 +650,11 @@ final class AnnotationControls {
         }
         let category: String; let current: Double; let range: ClosedRange<Double>; let step: Double
         switch activeTool {
-        case .text: category = "文字大小"; current = value.fontSize; range = 8...72; step = 1
-        case .sticker: category = "贴纸大小"; current = value.fontSize; range = 8...96; step = 1
-        case .number: category = "序号大小"; current = value.numberSize; range = 8...64; step = 1
-        case .mosaic: category = "马赛克大小"; current = value.mosaicBlockSize; range = 1...32; step = 1
-        default: category = "标注粗细"; current = value.width; range = 0.5...12; step = 0.5
+        case .text: category = L("文字大小"); current = value.fontSize; range = 8...72; step = 1
+        case .sticker: category = L("贴纸大小"); current = value.fontSize; range = 8...96; step = 1
+        case .number: category = L("序号大小"); current = value.numberSize; range = 8...64; step = 1
+        case .mosaic: category = L("马赛克大小"); current = value.mosaicBlockSize; range = 1...32; step = 1
+        default: category = L("标注粗细"); current = value.width; range = 0.5...12; step = 0.5
         }
         sizeControl.configure(category: category, value: current, range: range, step: step)
         let selectedSticker = canvas.selectedAnnotation?.tool == .sticker ? canvas.selectedAnnotation?.text : defaultSticker
@@ -621,7 +690,10 @@ final class AnnotationControls {
         guard moreStickerButton.window != nil else { return }
         stickerPopover?.close()
         let selected = canvas.selectedAnnotation?.tool == .sticker ? canvas.selectedAnnotation!.text : defaultSticker
-        let controller = StickerPickerController(items: stickers, selected: selected) { [weak self] identifier in
+        let controller = StickerPickerController(items: stickers, selected: selected,
+            availableWidth: moreStickerButton.window?.screen.map { max(62, $0.visibleFrame.width - 16) }, onReorder: { [weak self] identifiers in
+            self?.preferences.setStickerOrder(identifiers, defaults: StickerCatalog.items.map(\.id), canonicalize: StickerCatalog.canonicalIdentifier)
+        }) { [weak self] identifier in
             self?.chooseSticker(identifier)
         }
         let popover = NSPopover()
@@ -629,6 +701,7 @@ final class AnnotationControls {
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         popover.contentViewController = controller
         stickerPopover = popover
+        stickerPicker = controller
         popover.show(relativeTo: moreStickerButton.bounds, of: moreStickerButton, preferredEdge: .minY)
     }
 
@@ -664,7 +737,7 @@ final class AnnotationControls {
     }
 }
 
-final class SelectionOptionButton: SelectionButton {
+class SelectionOptionButton: SelectionButton {
     enum Sample {
         case color(NSColor), line(CGFloat), font(CGFloat), number(CGFloat), mosaic(CGFloat), sticker(String)
     }
@@ -783,40 +856,167 @@ final class SelectionOptionButton: SelectionButton {
 
 /// A compact picker keeps the expanded library out of the persistent toolbar.
 final class StickerPickerController: NSViewController {
-    private let items: [StickerCatalog.Item]
+    private(set) var items: [StickerCatalog.Item]
     private let selected: String
     private let onPick: (String) -> Void
-    init(items: [StickerCatalog.Item], selected: String, onPick: @escaping (String) -> Void) {
-        self.items = items; self.selected = StickerCatalog.canonicalIdentifier(selected); self.onPick = onPick
+    private let onReorder: (([String]) -> Void)?
+    private var buttons: [StickerDragButton] = []
+    private var insertionIndex: Int?
+    private let columns: Int
+    private static let pitch: CGFloat = 38
+    init(items: [StickerCatalog.Item], selected: String, availableWidth: CGFloat? = nil, onReorder: (([String]) -> Void)? = nil,
+         onPick: @escaping (String) -> Void) {
+        self.items = items; self.selected = StickerCatalog.canonicalIdentifier(selected)
+        columns = max(1, min(8, Int(floor(((availableWidth ?? 328) - 24) / Self.pitch))))
+        self.onPick = onPick; self.onReorder = onReorder
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func loadView() {
-        let columns = 6
-        let rows = (items.count + columns - 1) / columns
-        let size = CGSize(width: 252, height: 48 + CGFloat(rows) * 38)
-        let root = ToolbarMaterialView()
-        root.frame = CGRect(origin: .zero, size: size)
-        let title = NSTextField(labelWithString: "更多贴纸")
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
-        title.textColor = ToolbarPalette.ink
-        title.frame = CGRect(x: 14, y: size.height - 30, width: 200, height: 20)
-        root.addSubview(title)
-        for (index, item) in items.enumerated() {
-            let button = SelectionOptionButton(sample: .sticker(item.id), label: "贴纸图案:\(item.title)") { [weak self] in
-                self?.onPick(item.id)
-            }
-            button.toolTip = "\(item.category) · \(item.title)"
-            button.state = item.id == selected ? .on : .off
-            button.frame = CGRect(x: 12 + CGFloat(index % columns) * 38,
-                                  y: size.height - 42 - CGFloat(index / columns + 1) * 38, width: 36, height: 34)
-            root.addSubview(button)
-        }
+        let root = StickerPickerRoot()
+        root.owner = self
         view = root
+        renderItems()
+    }
+    func replaceItems(_ items: [StickerCatalog.Item]) {
+        self.items = items
+        if isViewLoaded { renderItems() }
+    }
+    private func renderItems() {
+        view.subviews.forEach { $0.removeFromSuperview() }; buttons.removeAll()
+        let rows = (items.count + columns - 1) / columns
+        let size = CGSize(width: 24 + CGFloat(columns) * Self.pitch, height: 70 + CGFloat(rows) * Self.pitch)
+        view.frame.size = size
+        let title = NSTextField(labelWithString: L("更多贴纸"))
+        title.font = .systemFont(ofSize: 13, weight: .semibold); title.textColor = ToolbarPalette.ink
+        title.frame = CGRect(x: 14, y: size.height - 29, width: size.width - 28, height: 20)
+        view.addSubview(title)
+        let hint = NSTextField(labelWithString: L("拖动图案可调整顺序"))
+        hint.font = .systemFont(ofSize: 11); hint.textColor = ToolbarPalette.secondaryInk
+        hint.frame = CGRect(x: 14, y: size.height - 48, width: size.width - 28, height: 18)
+        view.addSubview(hint)
+        for (index, item) in items.enumerated() {
+            let button = StickerDragButton(item: item) { [weak self] in self?.onPick(item.id) }
+            button.owner = self; button.identifier = NSUserInterfaceItemIdentifier(item.id)
+            button.toolTip = "\(L(item.groupTitle)) · \(L(item.title))"
+            button.state = item.id == selected ? .on : .off
+            button.frame = CGRect(x: 12 + CGFloat(index % columns) * Self.pitch,
+                                  y: size.height - 62 - CGFloat(index / columns + 1) * Self.pitch, width: 36, height: 34)
+            buttons.append(button); view.addSubview(button)
+        }
+        clearDropIndicator()
+    }
+    /// The insertion slot is measured before removing the source, just like the drag indicator.
+    @discardableResult func moveSticker(_ identifier: String, toInsertionIndex index: Int) -> Bool {
+        guard let source = items.firstIndex(where: { $0.id == identifier }), (0...items.count).contains(index) else { return false }
+        let destination = index > source ? index - 1 : index
+        guard source != destination else { return false }
+        var reordered = items
+        let item = reordered.remove(at: source); reordered.insert(item, at: destination)
+        replaceItems(reordered)
+        onReorder?(reordered.map(\.id))
+        return true
+    }
+    @discardableResult fileprivate func updateReorder(_ identifier: String, at point: CGPoint) -> Bool {
+        guard let source = items.firstIndex(where: { $0.id == identifier }),
+              view.bounds.contains(point), point.y <= view.bounds.height - 58 else { clearDropIndicator(); return false }
+        let row = max(0, Int((view.bounds.height - 62 - point.y) / Self.pitch))
+        let column = min(columns, max(0, Int(floor((point.x - 12 + 18) / Self.pitch))))
+        var index = min(items.count, row * columns + column)
+        // A drop over an item's centre moves past it in the travel direction.
+        // In particular, dragging onto the next item must swap the two items.
+        if let target = buttons.firstIndex(where: { $0.frame.contains(point) }) {
+            index = target > source ? target + 1 : target
+        }
+        insertionIndex = index
+        let rect: CGRect
+        if index < buttons.count { rect = buttons[index].frame }
+        else if let last = buttons.last { rect = last.frame.offsetBy(dx: Self.pitch, dy: 0) }
+        else { return false }
+        (view as? StickerPickerRoot)?.dropIndicator = CGRect(x: rect.minX - 2, y: rect.minY, width: 2, height: rect.height)
+        return true
+    }
+    fileprivate func finishReorder(_ identifier: String, at point: CGPoint) {
+        guard updateReorder(identifier, at: point), let index = insertionIndex else { return }
+        moveSticker(identifier, toInsertionIndex: index)
+        clearDropIndicator()
+    }
+    fileprivate func clearDropIndicator() {
+        insertionIndex = nil; (viewIfLoaded as? StickerPickerRoot)?.dropIndicator = nil
+    }
+}
+
+private final class StickerPickerRoot: ToolbarMaterialView {
+    weak var owner: StickerPickerController?
+    var dropIndicator: CGRect? { didSet { needsDisplay = true } }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        if let dropIndicator { ToolbarPalette.accent.setFill(); NSBezierPath(roundedRect: dropIndicator, xRadius: 1, yRadius: 1).fill() }
+    }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+}
+
+private final class StickerDragButton: SelectionOptionButton {
+    weak var owner: StickerPickerController?
+    private let item: StickerCatalog.Item
+    private var cursorTracking: NSTrackingArea?
+    private var isReordering = false
+    init(item: StickerCatalog.Item, action: @escaping () -> Void) {
+        self.item = item
+        super.init(sample: .sticker(item.id), label: LF("贴纸图案:%@", L(item.title)), action: action)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let cursorTracking { removeTrackingArea(cursorTracking) }
+        let tracking = NSTrackingArea(rect: .zero, options: [.cursorUpdate, .mouseMoved, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(tracking); cursorTracking = tracking
+    }
+    override func cursorUpdate(with event: NSEvent) { (isReordering ? NSCursor.closedHand : .openHand).set() }
+    override func mouseMoved(with event: NSEvent) { cursorUpdate(with: event) }
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled, let window, let owner else { return }
+        func pickerPoint(_ event: NSEvent) -> CGPoint {
+            var point = event.locationInWindow
+            if let eventWindow = event.window, eventWindow !== window {
+                point = window.convertPoint(fromScreen: eventWindow.convertPoint(toScreen: point))
+            }
+            return owner.view.convert(point, from: nil)
+        }
+        let start = pickerPoint(event)
+        var lastPoint = start
+        defer {
+            isReordering = false; alphaValue = 1; highlight(false)
+            owner.clearDropIndicator()
+            (owner.view.window?.isVisible == true && owner.view.bounds.contains(lastPoint) ? NSCursor.openHand : .arrow).set()
+        }
+        highlight(true)
+        // Reordering never leaves this picker, so retain the pointer gesture here
+        // through mouse-up instead of handing it to a separate system drag session.
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp, .keyDown]) {
+            if next.type == .keyDown {
+                if next.keyCode == 53 { return }
+                continue
+            }
+            lastPoint = pickerPoint(next)
+            if next.type == .leftMouseUp {
+                if isReordering { owner.finishReorder(item.id, at: lastPoint) }
+                else if bounds.contains(convert(lastPoint, from: owner.view)) { performClick(nil) }
+                return
+            }
+            if !isReordering, hypot(lastPoint.x - start.x, lastPoint.y - start.y) >= 5 {
+                isReordering = true; highlight(false); alphaValue = 0.5
+            }
+            if isReordering { NSCursor.closedHand.set(); owner.updateReorder(item.id, at: lastPoint) }
+        }
     }
 }
 
 final class SelectionToolbar: NSView {
+    private static let horizontalInset: CGFloat = 8
+    private static let itemGap: CGFloat = 2
     var rows: [[NSView]] = []
     /// Reserve the upper-right corner for final actions while other tools wrap below.
     var trailingActions: [NSView] = []
@@ -828,7 +1028,6 @@ final class SelectionToolbar: NSView {
     init(blendingMode: NSVisualEffectView.BlendingMode = .withinWindow) {
         self.blendingMode = blendingMode
         super.init(frame: .zero)
-        appearance = NSAppearance(named: .aqua)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
     }
@@ -851,8 +1050,8 @@ final class SelectionToolbar: NSView {
         installedItems.filter { child in !visible.contains(where: { $0 === child }) }.forEach { $0.removeFromSuperview() }
         installedItems = visible
         let widthLimit = max(40, maxWidth)
-        let horizontalInset: CGFloat = 8
-        let itemGap: CGFloat = 2
+        let horizontalInset = Self.horizontalInset
+        let itemGap = Self.itemGap
         var placements: [(NSView, CGRect)] = []
         var rowFrames: [CGRect] = []
         var top: CGFloat = 0
@@ -950,7 +1149,17 @@ final class SelectionToolbar: NSView {
     }
 
     private func itemWidth(_ item: NSView, limit: CGFloat) -> CGFloat {
+        min(limit - Self.horizontalInset * 2, Self.idealItemWidth(item))
+    }
+
+    /// The same widths and spacing used during placement, before any wrapping.
+    static func singleLineWidth(_ items: [NSView]) -> CGFloat {
+        horizontalInset * 2 + items.reduce(CGFloat(0)) { $0 + idealItemWidth($1) }
+            + CGFloat(max(0, items.count - 1)) * itemGap
+    }
+
+    private static func idealItemWidth(_ item: NSView) -> CGFloat {
         if item is ToolbarSeparator { return 8 }
-        return min(limit - 16, max(item is NSTextField ? 22 : 30, item.fittingSize.width))
+        return max(item is NSTextField ? 22 : 30, item.fittingSize.width)
     }
 }

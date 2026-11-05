@@ -27,7 +27,7 @@ xcrun swiftc -parse-as-library -swift-version 5 -sdk "$task_sdk" \
     "$task_root/Sources/ScreenLeaf/ScrollEventRouting.swift" \
     "$task_root/Sources/ScreenLeaf/ImageTools.swift" \
     "$task_root/Sources/ScreenLeaf/SubjectExtraction.swift" "$task_root/Sources/ScreenLeaf/SubjectSelection.swift" \
-    "$task_root/Sources/ScreenLeaf/Preferences.swift" \
+    "$task_root/Sources/ScreenLeaf/Localization.swift" "$task_root/Sources/ScreenLeaf/WindowTitle.swift" "$task_root/Sources/ScreenLeaf/WindowActivation.swift" "$task_root/Sources/ScreenLeaf/WindowAmbientBackground.swift" "$task_root/Sources/ScreenLeaf/Preferences.swift" \
     "$task_root/Sources/ScreenLeaf/AnnotationControls.swift" \
     "$task_root/Sources/ScreenLeaf/DemoImage.swift" \
     "$task_work/SelectionUIVerification.swift" -o "$task_work/verify-selection-ui"

@@ -3,12 +3,15 @@
 
 import AppKit
 
-private enum HomeWindowPalette {
-    static let ink = NSColor(srgbRed: 0.21, green: 0.28, blue: 0.25, alpha: 1)
-    static let muted = NSColor(srgbRed: 0.40, green: 0.46, blue: 0.42, alpha: 1)
-    static let wood = NSColor(srgbRed: 0.97, green: 0.98, blue: 0.97, alpha: 1)
-    static let edge = NSColor(srgbRed: 0.58, green: 0.64, blue: 0.60, alpha: 1)
-    static let shade = NSColor(srgbRed: 0.86, green: 0.89, blue: 0.87, alpha: 1)
+enum HomeWindowPalette {
+    static let ink = AppTheme.color(NSColor(srgbRed: 0.21, green: 0.28, blue: 0.25, alpha: 1), NSColor(srgbRed: 0.94, green: 0.92, blue: 0.88, alpha: 1))
+    static let muted = AppTheme.color(NSColor(srgbRed: 0.40, green: 0.46, blue: 0.42, alpha: 1), NSColor(srgbRed: 0.73, green: 0.70, blue: 0.66, alpha: 1))
+    static let wood = AppTheme.color(NSColor(srgbRed: 0.97, green: 0.98, blue: 0.97, alpha: 1), NSColor(srgbRed: 0.235, green: 0.225, blue: 0.210, alpha: 1))
+    static let edge = AppTheme.color(NSColor(srgbRed: 0.58, green: 0.64, blue: 0.60, alpha: 1), NSColor(srgbRed: 0.66, green: 0.62, blue: 0.55, alpha: 1))
+    static let shade = AppTheme.color(NSColor(srgbRed: 0.86, green: 0.89, blue: 0.87, alpha: 1), NSColor(srgbRed: 0.08, green: 0.08, blue: 0.08, alpha: 1))
+    static let background = WindowAmbientBackground.color
+    static let glass = AppTheme.color(.white, NSColor(srgbRed: 0.14, green: 0.14, blue: 0.14, alpha: 1))
+    static let highlight = AppTheme.color(.white, NSColor(srgbRed: 0.93, green: 0.86, blue: 0.72, alpha: 1))
     static func arch(_ rect: CGRect, rise: CGFloat) -> CGPath {
         let p = CGMutablePath(), x = rect.minX, y = rect.minY, w = rect.width, h = rect.height
         p.move(to: CGPoint(x: x, y: y + h)); p.addLine(to: CGPoint(x: x, y: y + rise))
@@ -20,7 +23,10 @@ private enum HomeWindowPalette {
 }
 
 @MainActor
-private class HomeFlippedView: NSView { override var isFlipped: Bool { true } }
+private class HomeFlippedView: NSView {
+    override var isFlipped: Bool { true }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
+}
 
 @MainActor private final class HomeUtilityView: HomeFlippedView {
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -64,14 +70,16 @@ final class HomeFeatureTile: NSView {
     var onEdit: (() -> Void)?
     private let launch: HomeActionButton
     private let keycap: HomeActionButton
+    private let reducedTransparency: () -> Bool
 
-    init(action: ShortcutAction? = nil) {
+    init(action: ShortcutAction? = nil, reducedTransparency: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency }) {
+        self.reducedTransparency = reducedTransparency
         let symbols: [ShortcutAction: String] = [.screenshot: "viewfinder", .scroll: "arrow.down.document", .text: "text.viewfinder", .pin: "pin", .record: "video", .subject: "person.crop.rectangle", .togglePins: "rectangle.on.rectangle"]
         launch = HomeActionButton(frame: .zero)
         keycap = HomeActionButton(frame: .zero)
         launch.cell = HomeLaunchCell()
         launch.target = launch; launch.action = #selector(HomeActionButton.invoke)
-        launch.title = action?.title ?? "退出"
+        launch.title = action?.title ?? L("退出")
         launchButton = launch; shortcutButton = keycap
         super.init(frame: .zero)
         wantsLayer = true; glassStage.wantsLayer = true; moving.wantsLayer = true
@@ -82,7 +90,7 @@ final class HomeFeatureTile: NSView {
         fixedFrame.borderColor = HomeWindowPalette.edge.withAlphaComponent(0.6).cgColor
         fixedFrame.borderWidth = 1; fixedFrame.zPosition = 200
         layer?.addSublayer(fixedFrame)
-        surface.borderColor = HomeWindowPalette.edge.withAlphaComponent(0.25).cgColor
+        surface.borderColor = AppTheme.color(HomeWindowPalette.edge.withAlphaComponent(0.25), HomeWindowPalette.highlight.withAlphaComponent(0.32)).cgColor
         surface.borderWidth = 0.5
         moving.layer?.shadowColor = HomeWindowPalette.ink.cgColor
         moving.layer?.shadowRadius = 3
@@ -104,7 +112,12 @@ final class HomeFeatureTile: NSView {
         // Keep controls in a separate, frontmost plane, beyond the sash's positive-Z lift.
         for button in [launch, keycap] { button.wantsLayer = true; button.layer?.zPosition = 100 }
         launch.image = NSImage(systemSymbolName: action.flatMap { symbols[$0] } ?? "power", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 24, weight: .regular))
+        if action == .recentContent { launch.image = WindowGlyph.image(.records) }
+        if action == .pinRecent { launch.image = WindowGlyph.image(.batch) }
+        if action == .recentContent || action == .pinRecent { launch.image?.size = NSSize(width: 28, height: 28) }
         launch.imagePosition = .imageAbove
+        launch.cell?.wraps = true; launch.cell?.usesSingleLineMode = false
+        launch.cell?.lineBreakMode = .byWordWrapping
         launch.font = .systemFont(ofSize: 14, weight: .medium)
         launch.contentTintColor = HomeWindowPalette.ink
         keycap.font = .systemFont(ofSize: 12, weight: .medium)
@@ -113,13 +126,13 @@ final class HomeFeatureTile: NSView {
         for button in [launch, keycap] { button.isBordered = false; button.bezelStyle = .regularSquare }
         launch.identifier = NSUserInterfaceItemIdentifier("home.launch.\(action?.rawValue ?? "quit")")
         keycap.identifier = NSUserInterfaceItemIdentifier("home.shortcut.\(action?.rawValue ?? "quit")")
-        if action == .pin { launch.toolTip = "贴出剪贴板中的图片或文字" }
+        if action == .pin { launch.toolTip = L("贴出剪贴板中的图片或文字") }
         launch.setAccessibilityLabel(launch.title)
-        keycap.setAccessibilityLabel(action == nil ? "退出快捷键，固定为 ⌘Q" : "修改\(launch.title)快捷键")
+        keycap.setAccessibilityLabel(action == nil ? L("退出快捷键，固定为 ⌘Q") : LF("修改%@快捷键", launch.title))
         launch.onPress = { [weak self] in self?.updateSurface() }
         launch.onClick = { [weak self] in self?.openSash(); self?.onLaunch?() }
         keycap.onClick = { [weak self] in self?.onEdit?() }
-        keycap.toolTip = action == nil ? "退出当前应用（⌘Q）" : "修改快捷键"
+        keycap.toolTip = action == nil ? L("退出当前应用（⌘Q）") : L("修改快捷键")
         keycap.isEnabled = action != nil
         updateSurface()
     }
@@ -140,7 +153,7 @@ final class HomeFeatureTile: NSView {
         CATransaction.commit()
         let center = topInset + (bounds.height - topInset) * 0.48
         launch.frame = bounds
-        (launch.cell as? HomeLaunchCell)?.contentRect = backingAlignedRect(CGRect(x: 8, y: center - 47, width: bounds.width - 16, height: 73), options: .alignAllEdgesNearest)
+        (launch.cell as? HomeLaunchCell)?.contentRect = backingAlignedRect(CGRect(x: 12, y: center - 47, width: bounds.width - 24, height: 73), options: .alignAllEdgesNearest)
         let keyWidth = min(bounds.width - 20, max(40, keycap.intrinsicContentSize.width + 16))
         keycap.frame = backingAlignedRect(CGRect(x: (bounds.width - keyWidth) / 2, y: center + 28, width: keyWidth, height: 28), options: .alignAllEdgesNearest)
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -152,7 +165,7 @@ final class HomeFeatureTile: NSView {
         shortcutHasError = hasError
         needsLayout = true
         launch.isEnabled = launchesEnabled; isEditingShortcut = editing
-        keycap.setAccessibilityValue(editing ? "\(shortcut)，正在编辑" : shortcut)
+        keycap.setAccessibilityValue(editing ? LF("%@，正在编辑", shortcut) : shortcut)
         updateSurface()
     }
     override func updateTrackingAreas() {
@@ -172,12 +185,23 @@ final class HomeFeatureTile: NSView {
     override func mouseExited(with event: NSEvent) { isHovered = false; pointerOverShortcut = false; updateSurface() }
     func resetInteraction() { isHovered = false; pointerOverShortcut = false; launch.highlight(false); keycap.highlight(false); moving.layer?.removeAnimation(forKey: "open"); updateSurface() }
     func stopFeedback() { fogMask.removeAllAnimations(); polish.removeAllAnimations() }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance(); updateSurface()
+    }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); updateSurface() }
     private func updateSurface() {
+        effectiveAppearance.performAsCurrentDrawingAppearance { updateSurfaceColors() }
+    }
+    private func updateSurfaceColors() {
+        surface.borderColor = AppTheme.color(HomeWindowPalette.edge.withAlphaComponent(0.25), HomeWindowPalette.highlight.withAlphaComponent(0.32)).cgColor
+        latch.backgroundColor = HomeWindowPalette.wood.cgColor
+        latch.borderColor = HomeWindowPalette.edge.cgColor
+        shortcutFill.backgroundColor = HomeWindowPalette.edge.withAlphaComponent(0.25).cgColor
         isShortcutHovered = isHovered && pointerOverShortcut && keycap.isEnabled
         isLaunchHovered = isHovered && !pointerOverShortcut && launch.isEnabled
         let emphasized = isEditingShortcut || isHovered || launch.isHighlighted
         launch.font = .systemFont(ofSize: 14, weight: .medium)
-        launch.contentTintColor = isLaunchHovered ? NSColor(srgbRed: 0.12, green: 0.21, blue: 0.17, alpha: 1) : HomeWindowPalette.ink
+        launch.contentTintColor = HomeWindowPalette.ink
         keycap.contentTintColor = shortcutHasError ? .systemOrange : isShortcutHovered ? HomeWindowPalette.ink : HomeWindowPalette.muted
         let fillOpacity: Float = isShortcutHovered ? 1 : 0
         if shortcutFill.opacity != fillOpacity {
@@ -189,7 +213,7 @@ final class HomeFeatureTile: NSView {
         }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         shortcutFill.opacity = fillOpacity
-        surface.backgroundColor = NSColor.white.withAlphaComponent(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? 1 : emphasized ? 0.48 : 0.64).cgColor
+        surface.backgroundColor = HomeWindowPalette.glass.withAlphaComponent(reducedTransparency() ? 1 : emphasized ? 0.48 : 0.64).cgColor
         fixedFrame.borderColor = HomeWindowPalette.edge.withAlphaComponent(emphasized ? 0.95 : 0.6).cgColor
         CATransaction.commit()
         updateSash()
@@ -246,7 +270,7 @@ final class HomeFeatureTile: NSView {
     func polishGlass() {
         polishCount += 1; stopFeedback()
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency else { return }
+              !reducedTransparency() else { return }
         // Keep the glass mask in place: uncovering the scenery makes a "wipe" look darker.
         let shine = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shine.values = [-bounds.width, bounds.width]; shine.duration = 0.72
@@ -278,12 +302,12 @@ final class HomeFeatureTile: NSView {
 @MainActor private final class HomeMullions: HomeFlippedView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) {
-        let width = (bounds.width - 33) / 4
-        let vertical = (1...3).map { CGRect(x: CGFloat($0) * width + CGFloat($0 - 1) * 11, y: 0, width: 11, height: bounds.height) }
+        let width = (bounds.width - 44) / 5
+        let vertical = (1...4).map { CGRect(x: CGFloat($0) * width + CGFloat($0 - 1) * 11, y: 0, width: 11, height: bounds.height) }
         for rect in vertical + [CGRect(x: 0, y: 205, width: bounds.width, height: 11)] {
             HomeWindowPalette.wood.setFill(); rect.fill()
             HomeWindowPalette.edge.setStroke(); NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5)).stroke()
-            NSColor.white.setFill(); CGRect(x: rect.minX + 1, y: rect.minY + 1, width: rect.width > 11 ? rect.width - 2 : 2, height: rect.height > 11 ? rect.height - 2 : 2).fill()
+            AppTheme.color(.white, HomeWindowPalette.highlight.withAlphaComponent(0.45)).setFill(); CGRect(x: rect.minX + 1, y: rect.minY + 1, width: rect.width > 11 ? rect.width - 2 : 2, height: rect.height > 11 ? rect.height - 2 : 2).fill()
         }
     }
 }
@@ -314,6 +338,13 @@ final class HomeFeatureTile: NSView {
         c.setFillColor(HomeWindowPalette.shade.withAlphaComponent(0.4).cgColor); c.fillPath()
         c.addPath(HomeWindowPalette.arch(CGRect(x: 11, y: 0, width: bounds.width - 22, height: 402), rise: 100))
         c.setFillColor(HomeWindowPalette.wood.cgColor); c.setStrokeColor(HomeWindowPalette.edge.cgColor); c.setLineWidth(1.5); c.drawPath(using: .fillStroke)
+        if effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua {
+            c.saveGState()
+            c.setShadow(offset: .zero, blur: 4, color: HomeWindowPalette.highlight.withAlphaComponent(0.18).cgColor)
+            c.addPath(HomeWindowPalette.arch(CGRect(x: 12, y: 1, width: bounds.width - 24, height: 400), rise: 99))
+            c.setStrokeColor(HomeWindowPalette.highlight.withAlphaComponent(0.35).cgColor); c.setLineWidth(0.7); c.strokePath()
+            c.restoreGState()
+        }
         let sill = CGRect(x: 1, y: 402, width: bounds.width - 2, height: 13)
         HomeWindowPalette.wood.setFill(); sill.fill()
         HomeWindowPalette.edge.setStroke(); NSBezierPath(roundedRect: sill, xRadius: 2, yRadius: 2).stroke()
@@ -324,7 +355,7 @@ final class HomeFeatureTile: NSView {
 @MainActor private final class HomeContentView: HomeFlippedView {
     var onLayout: (() -> Void)?
     override var isOpaque: Bool { true }
-    override func draw(_ dirtyRect: NSRect) { NSColor.white.setFill(); bounds.fill() }
+    override func draw(_ dirtyRect: NSRect) { WindowAmbientBackground.draw(in: self) }
     override func layout() { super.layout(); onLayout?() }
 }
 
@@ -340,26 +371,44 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     private let arch = HomeArchView()
     private let footer = HomeFlippedView()
     private let feedback = NSTextField(labelWithString: "")
-    private let defaults = NSButton(title: "恢复默认", target: nil, action: nil)
-    private let done = NSButton(title: "保存", target: nil, action: nil)
-    private let cancelEdit = NSButton(title: "取消", target: nil, action: nil)
-    private let closeHome = NSButton(title: "关闭", target: nil, action: nil)
+    private let defaults = NSButton(title: L("恢复默认"), target: nil, action: nil)
+    private let done = NSButton(title: L("保存"), target: nil, action: nil)
+    private let cancelEdit = NSButton(title: L("取消"), target: nil, action: nil)
+    private let closeHome = NSButton(title: L("关闭"), target: nil, action: nil)
+    private let optionsButton = NSButton(title: L("更多设置"), target: nil, action: nil)
+    private let screenPermission: () -> Bool
+    private let onRequestScreenPermission: () -> Void
+    private let onOptionsChanged: () -> Void
+    private let permissionBanner = HomeFlippedView()
+    private let permissionLabel = NSTextField(wrappingLabelWithString: L("需要屏幕录制权限"))
+    private let permissionButton = NSButton(title: L("去授权"), target: nil, action: nil)
+    private var optionsPage: AppOptionsView!
+    private(set) var isShowingOptions = false
     private var isRefreshing = false
     let quitTile = HomeFeatureTile()
     var allTiles: [HomeFeatureTile] { ShortcutAction.settingsOrder.compactMap { tiles[$0] } + [quitTile] }
     private let pinState: () -> (hasPins: Bool, hidden: Bool)
+    private let hasRecentContent: () -> Bool
     private let onQuit: () -> Void
 
     init(hotKeys: HotKeys, store: PreferencesStore, onSave: @escaping () -> Void, onLaunch: @escaping (ShortcutAction) -> Void,
          pinState: @escaping () -> (hasPins: Bool, hidden: Bool) = { (false, false) },
-         onQuit: @escaping () -> Void = {}) {
+         onQuit: @escaping () -> Void = {}, onRecentContent: @escaping () -> Void = {},
+         onOptions: @escaping () -> Void = {},
+         screenPermission: @escaping () -> Bool = { true },
+         onRequestScreenPermission: @escaping () -> Void = {},
+         onOptionsChanged: @escaping () -> Void = {},
+         hasRecentContent: @escaping () -> Bool = { true }) {
+        self.hasRecentContent = hasRecentContent
+        self.screenPermission = screenPermission; self.onRequestScreenPermission = onRequestScreenPermission
+        self.onOptionsChanged = onOptionsChanged
         editor = ShortcutEditorSession(hotKeys: hotKeys, store: store, keepsRecordingUntilFinished: true, onSave: onSave)
         self.store = store; self.onLaunch = onLaunch; self.pinState = pinState; self.onQuit = onQuit
-        let window = ShortcutSettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 648, height: 536), styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
+        let window = ShortcutSettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 536), styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.identifier = NSUserInterfaceItemIdentifier("patch.home")
-        window.title = "Patch"; window.titlebarAppearsTransparent = true
+        PatchWindowTitle.apply(to: window, title: L("Patch · 设置")); window.titlebarAppearsTransparent = true
         window.level = .normal; window.isReleasedWhenClosed = false; window.isOpaque = true
-        window.backgroundColor = .white; window.appearance = NSAppearance(named: .aqua)
+        window.backgroundColor = HomeWindowPalette.background
         window.contentView = content
         super.init(window: window); window.delegate = self
         window.onRecordingKey = { [weak self] event in
@@ -371,6 +420,26 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         window.onCancelRequest = { [weak self] in self?.cancelRequest() }
         window.onPointerDown = { [weak self] in self?.finishEditingForClick($0) ?? false }
         content.addSubview(arch)
+        footer.addSubview(permissionBanner)
+        permissionBanner.addSubview(permissionLabel); permissionBanner.addSubview(permissionButton)
+        permissionLabel.alignment = .left
+        permissionLabel.identifier = NSUserInterfaceItemIdentifier("home.permission-status")
+        permissionLabel.font = .systemFont(ofSize: 12); permissionLabel.textColor = .systemOrange
+        permissionButton.bezelStyle = .rounded; permissionButton.font = .systemFont(ofSize: 12)
+        permissionButton.image = WindowGlyph.image(.authorize); permissionButton.imagePosition = .imageLeading
+        permissionButton.contentTintColor = HomeWindowPalette.ink
+        permissionButton.target = self; permissionButton.action = #selector(requestPermission)
+        permissionButton.identifier = NSUserInterfaceItemIdentifier("home.authorize")
+        optionsPage = AppOptionsView(preferences: store, onBack: { [weak self] in self?.showHomePage() },
+            onChange: { [weak self] in
+                guard let self else { return }
+                self.onOptionsChanged()
+                self.window?.appearance = self.store.appearancePreference.appearance
+                self.content.needsDisplay = true
+                self.refreshShortcuts()
+            },
+            onRequestPermission: { [weak self] in self?.requestPermission() })
+        content.addSubview(optionsPage); optionsPage.isHidden = true
         for action in ShortcutAction.settingsOrder {
             let tile = HomeFeatureTile(action: action)
             tile.onLaunch = { [weak self] in
@@ -387,31 +456,63 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         feedback.isSelectable = true
         feedback.identifier = NSUserInterfaceItemIdentifier("home.shortcut-status")
         footer.addSubview(feedback)
-        for button in [defaults, done, cancelEdit, closeHome] {
+        for button in [defaults, done, cancelEdit, closeHome, optionsButton] {
             button.bezelStyle = .rounded; button.imagePosition = .imageLeading; button.target = self
             button.font = .systemFont(ofSize: 12); button.contentTintColor = HomeWindowPalette.ink
             footer.addSubview(button)
         }
         defaults.image = Self.handleImage(reset: true); done.image = Self.handleImage(reset: false)
         cancelEdit.image = Self.dismissImage(closing: false); closeHome.image = Self.dismissImage(closing: true)
+        optionsButton.image = WindowGlyph.image(.settings)
+        optionsButton.target = self; optionsButton.action = #selector(optionsClicked)
         defaults.action = #selector(defaultsClicked); done.action = #selector(doneClicked)
         cancelEdit.action = #selector(cancelClicked); closeHome.action = #selector(closeClicked)
         content.onLayout = { [weak self] in self?.layoutContent() }
         editor.onUpdate = { [weak self] in self?.refreshShortcuts() }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(accessibilityChanged),
             name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
-        refreshShortcuts(); window.center()
+        refreshShortcuts(); refreshPermissions(); window.center()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     deinit { NSWorkspace.shared.notificationCenter.removeObserver(self) }
     override func showWindow(_ sender: Any?) {
+        if let window { WindowActivationCoordinator.shared.register(window) }
         if window?.isVisible != true && !isEditing { editor.reset() }
         allTiles.forEach { $0.resetInteraction() }
         window?.deminiaturize(nil); super.showWindow(sender)
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-        arch.scenery.setMotionActive(true)
+        refreshPermissions()
+        arch.scenery.setMotionActive(!isShowingOptions)
+    }
+    func showOptions() {
+        guard finishEditing() else { return }
+        isShowingOptions = true
+        if let window { PatchWindowTitle.apply(to: window, title: L("Patch · 更多设置")) }
+        arch.isHidden = true; footer.isHidden = true; permissionBanner.isHidden = true
+        optionsPage.isHidden = false; optionsPage.refreshAppearanceSelection()
+        refreshPermissions(); layoutContent()
+        arch.scenery.setMotionActive(false)
+        window?.makeFirstResponder(nil)
+    }
+    func showHomePage() {
+        isShowingOptions = false
+        if let window { PatchWindowTitle.apply(to: window, title: L("Patch · 设置")) }
+        optionsPage.isHidden = true; arch.isHidden = false; footer.isHidden = false
+        refreshShortcuts(); refreshPermissions()
+        window?.makeFirstResponder(nil)
+        arch.scenery.setMotionActive(window?.isVisible == true)
+    }
+    func refreshPermissions() {
+        let granted = screenPermission()
+        permissionBanner.isHidden = granted || isShowingOptions || isEditing || !feedback.stringValue.isEmpty
+        optionsPage?.refreshPermissions(granted: granted)
+        permissionButton.toolTip = L("允许小贴截图、识别屏幕文字和录屏")
+    }
+    @objc private func requestPermission() {
+        onRequestScreenPermission(); refreshPermissions()
     }
     func beginEditing(_ action: ShortcutAction? = nil) {
+        if isShowingOptions { showHomePage() }
         if !isEditing { isEditing = true; editor.reset() }
         tiles.values.forEach { $0.stopFeedback() }
         if let action {
@@ -434,12 +535,16 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         let previousFeedback = feedback.stringValue
         for action in ShortcutAction.settingsOrder {
             let recording = editor.recordingAction == action
-            let title = recording && editor.recordingTitle(action).contains("录入中") ? "按组合键" : editor.recordingTitle(action)
+            let title = recording && editor.recordingTitle(action).contains(L("录入中")) ? L("按组合键") : editor.recordingTitle(action)
             tiles[action]?.configure(shortcut: title, editing: isEditing && editingAction == action, launchesEnabled: !isEditing, hasError: editor.hasIssue(action))
         }
         let state = pinState()
-        tiles[.togglePins]?.launchButton.title = state.hidden ? "显示全部贴图" : "隐藏全部贴图"
+        tiles[.togglePins]?.launchButton.title = state.hidden ? L("显示全部贴图") : L("隐藏全部贴图")
         tiles[.togglePins]?.launchButton.isEnabled = state.hasPins && !isEditing
+        let recentTitle = store.pinRecentTitle
+        tiles[.pinRecent]?.launchButton.title = recentTitle
+        tiles[.pinRecent]?.launchButton.setAccessibilityLabel(recentTitle)
+        tiles[.pinRecent]?.launchButton.isEnabled = hasRecentContent() && !isEditing
         quitTile.configure(shortcut: "⌘Q", editing: false, launchesEnabled: !isEditing, hasError: false)
         let issues = ShortcutAction.settingsOrder.filter { editor.hasIssue($0) }
         let issue = editingAction.flatMap { issues.contains($0) ? $0 : nil } ?? issues.first
@@ -448,7 +553,9 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
             feedback.stringValue = ""
             feedback.textColor = HomeWindowPalette.muted
         }
-        footer.isHidden = false
+        optionsButton.isHidden = isEditing
+        refreshPermissions()
+        footer.isHidden = isShowingOptions
         feedback.isHidden = feedback.stringValue.isEmpty
         defaults.isHidden = false; done.isHidden = !isEditing
         cancelEdit.isHidden = !isEditing; closeHome.isHidden = isEditing
@@ -460,19 +567,41 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         }
     }
     private func layoutContent() {
-        arch.frame = CGRect(x: (content.bounds.width - 562) / 2, y: 54, width: 562, height: 420)
+        optionsPage.frame = CGRect(x: HomeFooterLayout.horizontalInset, y: 48,
+            width: content.bounds.width - HomeFooterLayout.horizontalInset * 2, height: content.bounds.height - 48)
+        arch.frame = CGRect(x: 42, y: 54, width: content.bounds.width - 84, height: 420)
         arch.layoutSubtreeIfNeeded()
-        let width = (arch.aperture.bounds.width - 33) / 4
+        let width = (arch.aperture.bounds.width - 44) / 5
         for (index, tile) in allTiles.enumerated() {
-            tile.topInset = index < 4 ? 55 : 0
-            tile.frame = CGRect(x: CGFloat(index % 4) * (width + 11), y: index < 4 ? 0 : 216, width: width, height: index < 4 ? 205 : 156)
+            tile.topInset = index < 5 ? 55 : 0
+            tile.frame = CGRect(x: CGFloat(index % 5) * (width + 11), y: index < 5 ? 0 : 216, width: width, height: index < 5 ? 205 : 156)
         }
-        footer.frame = CGRect(x: 24, y: 484, width: content.bounds.width - 48, height: 44)
-        defaults.frame = CGRect(x: 0, y: 3, width: 124, height: 34)
-        done.frame = CGRect(x: footer.bounds.width - 84, y: 3, width: 84, height: 34)
+        let buttonHeight = HomeFooterLayout.buttonHeight
+        footer.frame = CGRect(x: HomeFooterLayout.horizontalInset, y: HomeFooterLayout.buttonY(in: content.bounds) - 3,
+            width: content.bounds.width - HomeFooterLayout.horizontalInset * 2, height: 44)
+        let trailingWidth = max(84, max(done.fittingSize.width, closeHome.fittingSize.width))
+        done.frame = CGRect(x: footer.bounds.width - trailingWidth, y: 3, width: trailingWidth, height: buttonHeight)
         closeHome.frame = done.frame
-        cancelEdit.frame = CGRect(x: done.frame.minX - 92, y: 3, width: 84, height: 34)
-        feedback.frame = CGRect(x: 140, y: 0, width: footer.bounds.width - 332, height: ceil(feedback.fittingSize.height))
+        let cancelWidth = max(84, cancelEdit.fittingSize.width)
+        cancelEdit.frame = CGRect(x: done.frame.minX - 8 - cancelWidth, y: 3, width: cancelWidth, height: buttonHeight)
+        let restoreWidth = max(124, defaults.fittingSize.width)
+        defaults.frame = CGRect(x: (isEditing ? cancelEdit.frame.minX : closeHome.frame.minX) - 12 - restoreWidth,
+                                y: 3, width: restoreWidth, height: buttonHeight)
+        optionsButton.frame = CGRect(x: 0, y: 3, width: max(110, optionsButton.fittingSize.width), height: buttonHeight)
+        let contentStart = isEditing ? 0 : optionsButton.frame.maxX + 16
+        let availableWidth = max(0, defaults.frame.minX - 16 - contentStart)
+        feedback.frame = CGRect(x: contentStart, y: 0, width: availableWidth, height: ceil(feedback.fittingSize.height))
+        permissionBanner.frame = CGRect(x: contentStart, y: 3, width: availableWidth, height: buttonHeight)
+        let permissionWidth = max(106, permissionButton.fittingSize.width)
+        permissionButton.frame = CGRect(x: 0, y: 0, width: permissionWidth, height: buttonHeight)
+        permissionLabel.frame = CGRect(x: permissionWidth + 8, y: 1,
+                                       width: max(0, availableWidth - permissionWidth - 8), height: 32)
+        let permissionHeight = ceil(permissionLabel.cell?.cellSize(forBounds: CGRect(x: 0, y: 0,
+            width: permissionLabel.bounds.width, height: 1000)).height ?? 18)
+        permissionLabel.frame.size.height = permissionHeight
+        if let caption = permissionButton.cell?.titleRect(forBounds: permissionButton.bounds) {
+            permissionLabel.frame.origin.y = caption.midY - permissionHeight / 2
+        }
         // Rounded NSButton's reported baseline omits its bezel offset. Use the actual
         // title-cell rect; both captions share the same font and native text height.
         if let titleRect = defaults.cell?.titleRect(forBounds: defaults.bounds) {
@@ -480,7 +609,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
             feedback.frame.origin.y = caption.midY - feedback.bounds.height / 2
         }
     }
-    private func cancelRequest() { if isEditing { cancelEditing() } else { window?.close() } }
+    private func cancelRequest() { if isShowingOptions { showHomePage() } else if isEditing { cancelEditing() } else { window?.close() } }
     @discardableResult
     func finishEditing(resumingInput: Bool = true) -> Bool {
         guard isEditing else { return true }
@@ -502,6 +631,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
             window?.makeFirstResponder(tiles[action]?.shortcutButton)
         }
     }
+    @objc private func optionsClicked() { showOptions() }
     @objc private func doneClicked() { _ = finishEditing() }
     @objc private func cancelClicked() { cancelEditing() }
     @objc private func closeClicked() { window?.performClose(nil) }
@@ -529,8 +659,8 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool { finishEditing() }
     func windowWillClose(_ notification: Notification) { cancelEditing(); arch.scenery.setMotionActive(false) }
     func windowDidResignKey(_ notification: Notification) { _ = finishEditing(resumingInput: false); allTiles.forEach { $0.resetInteraction() }; arch.scenery.setMotionActive(false) }
-    func windowDidBecomeKey(_ notification: Notification) { refreshShortcuts(); resumeEditingInput(); arch.scenery.setMotionActive(true) }
-    func windowDidChangeOcclusionState(_ notification: Notification) { arch.scenery.setMotionActive(window?.isKeyWindow == true) }
+    func windowDidBecomeKey(_ notification: Notification) { refreshShortcuts(); refreshPermissions(); resumeEditingInput(); arch.scenery.setMotionActive(!isShowingOptions) }
+    func windowDidChangeOcclusionState(_ notification: Notification) { arch.scenery.setMotionActive(window?.isKeyWindow == true && !isShowingOptions) }
     @objc private func accessibilityChanged() {
         allTiles.forEach { $0.resetInteraction(); $0.stopFeedback() }
         refreshShortcuts()

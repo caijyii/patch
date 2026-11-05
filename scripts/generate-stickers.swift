@@ -14,7 +14,7 @@ private struct Shape: Decodable {
     let width: CGFloat
 }
 private struct Artwork: Decodable { let key: String; let shapes: [Shape] }
-private struct CatalogItem: Decodable { let id: String; let title: String; let file: String }
+private struct CatalogItem: Decodable { let id: String; let title: String; let file: String; let retired: Bool? }
 private struct GenerationFailure: Error { let message: String }
 
 @main private struct GenerateStickers {
@@ -28,6 +28,7 @@ private struct GenerationFailure: Error { let message: String }
         }
         let catalogData = try Data(contentsOf: source.appendingPathComponent("catalog.json"))
         let items = try JSONDecoder().decode([CatalogItem].self, from: catalogData)
+        let selectable = items.filter { $0.retired != true }
         let sourceFiles = ["approved.json", "nature.json", "animals.json", "expressions-objects.json"]
         var artwork: [String: Artwork] = [:]
         for file in sourceFiles {
@@ -36,12 +37,23 @@ private struct GenerationFailure: Error { let message: String }
                 artwork[entry.key] = entry
             }
         }
-        guard items.count == 32, artwork.count == 32 else { throw GenerationFailure(message: "Expected 32 catalog entries and originals") }
+        guard items.count == artwork.count, Set(items.map(\.id)).count == items.count else {
+            throw GenerationFailure(message: "Catalog entries and original artwork must match uniquely")
+        }
         for item in items {
             let key = String(item.id.dropFirst("patch-".count))
             guard let art = artwork[key] else { throw GenerationFailure(message: "Missing artwork: \(key)") }
             // Parsing validates every command before exporting the resource.
             for shape in art.shapes { _ = try path(shape.path) }
+            let paths = art.shapes.map { shape in
+                "  <path d=\"\(shape.path)\" fill=\"\(shape.fill ?? "none")\" stroke=\"\(shape.stroke ?? "none")\" stroke-width=\"\(shape.width)\"/>"
+            }.joined(separator: "\n")
+            let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n\(paths)\n</svg>\n"
+            let svgURL = output.appendingPathComponent("svg/\(item.id).svg")
+            // CoreGraphics embeds creation metadata in PDFs. Preserve unchanged
+            // originals so adding one sticker does not rewrite the whole library.
+            if (try? String(contentsOf: svgURL, encoding: .utf8)) == svg,
+               FileManager.default.fileExists(atPath: output.appendingPathComponent(item.file).path) { continue }
             var box = CGRect(x: 0, y: 0, width: 96, height: 96)
             guard let pdf = CGContext(output.appendingPathComponent(item.file) as CFURL, mediaBox: &box,
                 [kCGPDFContextTitle: "Patch original sticker: \(item.title)",
@@ -50,18 +62,14 @@ private struct GenerationFailure: Error { let message: String }
             }
             pdf.beginPDFPage(nil); pdf.translateBy(x: 0, y: 96); pdf.scaleBy(x: 1, y: -1)
             try draw(art, in: pdf, rect: box); pdf.endPDFPage(); pdf.closePDF()
-            let paths = art.shapes.map { shape in
-                "  <path d=\"\(shape.path)\" fill=\"\(shape.fill ?? "none")\" stroke=\"\(shape.stroke ?? "none")\" stroke-width=\"\(shape.width)\"/>"
-            }.joined(separator: "\n")
-            let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n\(paths)\n</svg>\n"
-            try svg.write(to: output.appendingPathComponent("svg/\(item.id).svg"), atomically: true, encoding: .utf8)
+            try svg.write(to: svgURL, atomically: true, encoding: .utf8)
         }
         try catalogData.write(to: output.appendingPathComponent("manifest.json"))
         try writePNG(preview.appendingPathComponent("all-stickers.png"), width: 1200, height: 990) { c in
             c.setFillColor(color("#f7f6f2")); c.fill(CGRect(x: 0, y: 0, width: 1200, height: 990))
             label("小贴 · 原创手绘贴纸", x: 40, y: 24, size: 26, in: c)
-            label("32 个透明底矢量图案  ·  每格下方展示 16 / 24 点", x: 40, y: 66, size: 14, in: c, hex: "#85877b")
-            for (index, item) in items.enumerated() {
+            label("\(selectable.count) 个透明底矢量图案  ·  每格下方展示 16 / 24 点", x: 40, y: 66, size: 14, in: c, hex: "#85877b")
+            for (index, item) in selectable.enumerated() {
                 let x = CGFloat(30 + index % 8 * 144), y = CGFloat(112 + index / 8 * 198)
                 c.setFillColor(color("#ffffff")); c.fill(CGRect(x: x, y: y, width: 136, height: 184))
                 let art = artwork[String(item.id.dropFirst(6))]!
@@ -80,7 +88,7 @@ private struct GenerationFailure: Error { let message: String }
                 for dark in [false, true] {
                     let y: CGFloat = dark ? 244 : 66
                     c.setFillColor(color(dark ? "#363f3b" : "#ffffff")); c.fill(CGRect(x: x, y: y, width: 475, height: 168))
-                    for (index, item) in items.enumerated() {
+                    for (index, item) in selectable.enumerated() {
                         let art = artwork[String(item.id.dropFirst(6))]!
                         try draw(art, in: c, rect: CGRect(x: x + 18 + CGFloat(index % 8) * 58,
                             y: y + 13 + CGFloat(index / 8) * 40, width: size, height: size))
@@ -98,14 +106,15 @@ private struct GenerationFailure: Error { let message: String }
             "compatibility": "Legacy fluent-* identifiers and Unicode emoji are lookup aliases only.",
             "generator": "scripts/generate-stickers.sh",
             "source_directory": "scripts/sticker-artwork",
-            "count": items.count
+            "count": items.count,
+            "selectable_count": selectable.count
         ]
         provenance["source_sha256"] = try Dictionary(uniqueKeysWithValues: (sourceFiles + ["catalog.json"]).map { file in
             (file, SHA256.hash(data: try Data(contentsOf: source.appendingPathComponent(file))).map { String(format: "%02x", $0) }.joined())
         })
         try JSONSerialization.data(withJSONObject: provenance, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
             .write(to: output.appendingPathComponent("sources.json"))
-        print("PASS: generated 32 original SVG/PDF pairs, compatible manifest, provenance and full-size/16/24-point previews")
+        print("PASS: generated \(items.count) original SVG/PDF pairs (\(selectable.count) selectable), compatible manifest, provenance and full-size/16/24-point previews")
     }
 
     private static func color(_ value: String) -> CGColor {

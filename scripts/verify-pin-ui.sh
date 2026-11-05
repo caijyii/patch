@@ -7,7 +7,7 @@ mkdir -p "$task_work/module-cache"
 cat Sources/ScreenLeaf/ImageTools.swift scripts/verify-pin-ui.swift > "$task_work/PinUIVerification.swift"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$task_work/module-cache" -target "$(uname -m)-apple-macosx15.0" \
-    Sources/ScreenLeaf/CaptureRegion.swift Sources/ScreenLeaf/Preferences.swift \
+    Sources/ScreenLeaf/CaptureRegion.swift Sources/ScreenLeaf/Localization.swift Sources/ScreenLeaf/WindowTitle.swift Sources/ScreenLeaf/WindowActivation.swift Sources/ScreenLeaf/WindowAmbientBackground.swift Sources/ScreenLeaf/Preferences.swift \
     Sources/ScreenLeaf/AnnotationControls.swift Sources/ScreenLeaf/DemoImage.swift \
     Sources/ScreenLeaf/SubjectExtraction.swift Sources/ScreenLeaf/SubjectSelection.swift \
     "$task_work/PinUIVerification.swift" -o "$task_work/verify-pin-ui"

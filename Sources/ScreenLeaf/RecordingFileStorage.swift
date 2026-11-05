@@ -4,6 +4,18 @@
 import Foundation
 
 enum RecordingFileStorage {
+    /// A recovery export can omit a damaged or unconfirmed last segment. Never
+    /// delete files that were not part of the successfully saved recording.
+    static func removeSavedSegments(_ segments: [URL], in directory: URL?) -> URL? {
+        guard let directory else { return nil }
+        let manager = FileManager.default
+        for segment in segments { try? manager.removeItem(at: segment) }
+        guard let remaining = try? manager.contentsOfDirectory(atPath: directory.path) else { return directory }
+        guard remaining.isEmpty else { return directory }
+        try? manager.removeItem(at: directory)
+        return manager.fileExists(atPath: directory.path) ? directory : nil
+    }
+
     static func makeWorkingURL() -> URL {
         // A save-panel grant covers the selected file, not arbitrary siblings.
         FileManager.default.temporaryDirectory
