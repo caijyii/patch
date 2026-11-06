@@ -1,4 +1,4 @@
-# 小贴 · Patch
+# Patch
 
 [![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.1)
 [![Platform: macOS 15+](https://img.shields.io/badge/Platform-macOS%2015%2B-607D8B?style=flat)](docs/install.md)
@@ -9,8 +9,6 @@
 [简体中文](README.md) · [English](README.en.md)
 
 **截图、长截图、录屏、标注、贴图，一个 Patch 就够。**
-
-一款原生 macOS 工具，集成截图、长截图、录屏、标注与桌面贴图。
 
 ## 功能
 

@@ -10,8 +10,6 @@
 
 **Screenshots, scrolling captures, recording, annotations, and desktop pins—all in Patch.**
 
-A native macOS utility for screen capture, recording, annotation, and desktop reference images.
-
 ## Features
 
 - **Screenshots**: Capture a region, window, or full screen, then copy or save it.
