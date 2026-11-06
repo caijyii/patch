@@ -1,6 +1,6 @@
 # Patch
 
-[![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.0)
+[![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.1)
 [![Platform: macOS 15+](https://img.shields.io/badge/Platform-macOS%2015%2B-607D8B?style=flat)](docs/install.en.md)
 [![Architecture: Apple Silicon](https://img.shields.io/badge/Architecture-Apple%20Silicon-607D8B?style=flat)](docs/install.en.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6B8E6E?style=flat)](LICENSE)
@@ -30,7 +30,7 @@ Content is processed locally, with no accounts, ads, or cloud uploads. The inter
 
 Requires **macOS 15+ and Apple Silicon (M-series chips)**.
 
-- **Download**: Get the **DMG or ZIP** from the [GitHub release](https://github.com/caijyii/patch/releases/tag/v0.1.0). Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. No developer tools are required.
+- **Download**: Get the **DMG or ZIP** from the [GitHub release](https://github.com/caijyii/patch/releases/tag/v0.1.1). Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. No developer tools are required.
 - **Ask an agent to install**: Give your agent this instruction:
 
 > Download the Patch installer compatible with my Mac from the GitHub Releases at https://github.com/caijyii/patch and install it.
@@ -53,6 +53,8 @@ Output: `.build/distribution-check/Patch.app` (Patch Development). This is an ad
 - While running, Patch automatically collects clipboard images, text, and video file references. Clipboard history and desktop pins are cleared when you quit. Closing the home window leaves the app running in the menu bar.
 - Scrolling captures may not stitch reliably with dynamic layouts or multiple scrollable areas. Fixed headers and overlays may remain visible or appear more than once.
 
+Scrolling captures retain the original pixels and use lossless PNG export. The stitching budget is estimated at 1/32 of physical memory, with a 128 MiB minimum and 512 MiB maximum (256 MiB on an 8 GiB Mac; 512 MiB on Macs with 16 GiB or more). The height limit is 60,000 pixels; wider regions may reach the memory budget sooner. This budget is not a hard cap on total app memory. At either limit, the current result is preserved and the app prompts you to save it before starting another segment.
+
 See the [usage guide](docs/usage.en.md) and [privacy notice](docs/privacy-policy.en.md).
 
 ## Default shortcuts
@@ -74,7 +76,7 @@ See the [usage guide](docs/usage.en.md) and [privacy notice](docs/privacy-policy
 
 ## Recent updates
 
-Scrolling captures can now be saved, pinned, or used for text extraction directly, and can be started from a regular screenshot selection. This update also improves trackpad zoom interaction for image pins and refreshes the DMG installer layout.
+Longer scrolling captures preserve the original pixels. When the memory budget or height limit is reached, the app clearly explains why stitching stopped and prompts you to save the current segment.
 
 See the [release notes](docs/release-notes.en.md).
 

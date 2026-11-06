@@ -118,12 +118,21 @@ enum CoreVerification {
             equalImage(stitcher.image(), image(height: 148, top: 0))
             equal(stitcher.append(image(top: 27)), .revisited(height: 148), "回正后反向恢复")
         }
+        verify("长图预算按设备内存缩放并保留安全边界") {
+            let mib = 1024 * 1024
+            for (gib, expected) in [(0, 128), (4, 128), (8, 256), (16, 512), (64, 512)] {
+                let limits = ScrollStitcher.Limits(physicalMemory: UInt64(gib) * 1024 * 1024 * 1024)
+                equal(limits.maximumWorkingBytes, expected * mib, "设备内存预算")
+                equal(limits.maximumHeight, 60_000, "原像素高度保护")
+            }
+            equal(ScrollStitcher.Limits.maximumInputBytes, 32 * mib, "单帧预算不随长图增长")
+        }
         verify("高度上限保留已有可导出结果") {
             var limits = ScrollStitcher.Limits()
             limits.maximumHeight = 110
             let stitcher = ScrollStitcher(limits: limits)
             _ = stitcher.append(image(top: 0))
-            if case .limitReached = stitcher.append(image(top: 30)) {} else {
+            if case .limitReached(.height) = stitcher.append(image(top: 30)) {} else {
                 fail("达到高度上限必须停止增长")
             }
             equalImage(stitcher.image(), image(top: 0))

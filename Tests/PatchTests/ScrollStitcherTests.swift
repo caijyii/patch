@@ -80,7 +80,7 @@ final class ScrollStitcherTests: XCTestCase {
         limits.maximumHeight = 110
         let stitcher = ScrollStitcher(limits: limits)
         _ = stitcher.append(image(top: 0))
-        guard case .limitReached = stitcher.append(image(top: 30)) else {
+        guard case .limitReached(.height) = stitcher.append(image(top: 30)) else {
             return XCTFail("The configured height limit should stop appending")
         }
         XCTAssertEqual(stitcher.image()?.height, 90)
@@ -129,7 +129,7 @@ final class ScrollStitcherTests: XCTestCase {
         limits.maximumWorkingBytes = 190_000
         let stitcher = ScrollStitcher(limits: limits)
         _ = stitcher.append(image(top: 0))
-        guard case .limitReached = stitcher.append(image(top: -30)) else { return XCTFail("Prepend must respect memory limit") }
+        guard case .limitReached(.memory) = stitcher.append(image(top: -30)) else { return XCTFail("Prepend must respect memory limit") }
         XCTAssertEqual(stitcher.lastOrigin, 0)
         XCTAssertEqual(stitcher.minOrigin, 0)
         XCTAssertEqual(stitcher.height, 90)

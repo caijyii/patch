@@ -40,3 +40,5 @@ Swift 模块与源码目录统一为 `Patch`（`Sources/Patch`），测试模块
 贴图手势诊断另需 `dev.screenleaf.development` 标识和布尔值 `PatchPinGestureDiagnosticsEnabled=true`。日志写入该应用临时目录的 `patch-pin-gestures.log`，最多 2000 行，记录应用、窗口、图片视图及缩放四层的手势类型与数值，不记录文字、图像、键盘或坐标。默认构建关闭；仅在定位真实触控板事件时显式启用。
 
 `bash scripts/verify-pin-gestures.sh --interactive` 显示蓝色普通图和橙色合成长图，供真实触控板捏合诊断，180 秒自动关闭；仅输出手势类型、窗口编号和缩放比例，不采集图像或文字。`--verify` 同时覆盖普通、6,000 与 24,000 像素高的合成图，但模拟事件不能替代硬件事件派发验收。
+
+`bash scripts/verify-scroll-budget.sh --verify` 用合成的 2400 像素宽 Retina 场景对比 128／256／512 MiB 预算，并验证窄图达到 60,000 像素高度。逐像素检查拼接及 PNG 编码解码往返，记录测试进程在拼接和导出阶段的累计常驻内存峰值；这些数字不代表整个应用含 OCR、标注、历史记录的总峰值。支持 `--build-only`。

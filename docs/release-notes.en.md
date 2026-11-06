@@ -1,6 +1,17 @@
-# Patch 0.1.0
+# Patch 0.1.1
 
 [简体中文](release-notes.md) · [English](release-notes.en.md)
+
+This update improves scrolling capture capacity and explains what to do when a limit is reached:
+
+- Original pixels are preserved without reducing resolution. PNG export remains lossless.
+- The stitching budget scales with physical memory, increasing its maximum from 128 MiB to 512 MiB. The height limit increases from 20,000 to 60,000 pixels. Actual capacity still depends on selection width and the memory budget.
+- Separate messages explain memory, height, and oversized-region limits. At a limit, stitching stops, Continue is hidden, and automatic scrolling is disabled. Save or finish the current segment, then start a new capture from the remaining page content.
+- Existing results remain available to save, pin, extract text, or annotate. Cancelling reselection or saving preserves the correct limit message.
+
+Requires Apple Silicon and macOS 15+. Quit the old version and replace Patch.app in its existing installation location. Preferences are retained; permissions may need to be granted again. The app remains ad-hoc signed and is not notarized by Apple. See the [installation guide](install.en.md).
+
+## Patch 0.1.0
 
 This first stable release includes the following changes since Preview 5:
 

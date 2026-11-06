@@ -37,7 +37,7 @@ You can give your agent this instruction:
 Run this in the download directory, using the filename for the selected release:
 
 ```sh
-shasum -a 256 Patch-0.1.0-macOS-arm64.zip
+shasum -a 256 Patch-0.1.1-macOS-arm64.zip
 ```
 
 Compare the result with `SHA256SUMS.txt` from the same release. For a DMG, use `shasum -a 256 filename.dmg`. Both current installer formats are listed in `SHA256SUMS.txt`; only the DMG added later to `v0.1.0-preview.1` uses a separate `SHA256SUMS-DMG.txt`. You only need to download your preferred format.

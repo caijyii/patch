@@ -35,6 +35,15 @@ enum AppLocalization {
     static func text(_ source: String) -> String { isEnglish ? english[source] ?? source : source }
     // CATALOG_START
     static let english: [String: String] = [
+        "内存预算已满 · 请分段保存": "Memory budget reached · Save this segment",
+        "高度已达上限 · 请分段保存": "Height limit reached · Save this segment",
+        "本段长截图已停止拼接，继续滚动不会追加内容。请先保存或完成，再从页面剩余位置开始新的长截图。": "Stitching has stopped for this segment. Further scrolling will not add content. Save or finish it, then start a new scrolling capture from the remaining page content.",
+        "请先保存当前长图，再重新框选开始下一段；Esc 保留当前结果": "Save the current image before selecting the next segment; Esc keeps the current result",
+        "截图区域过大 · 请重新框选": "Capture region too large · Select again",
+        "已达高度上限 · 请完成": "Height limit reached · Finish",
+        "已达内存预算 · 请完成": "Memory budget reached · Finish",
+        "已达到长截图高度上限。原始像素和已有结果已保留，请保存后分段截图。": "The scrolling capture reached its height limit. Original pixels and the current result are preserved. Save it, then capture the rest in sections.",
+        "继续拼接将超过内存预算。原始像素和已有结果已保留，请保存后分段截图。": "Further stitching would exceed the memory budget. Original pixels and the current result are preserved. Save it, then capture the rest in sections.",
         "拖动移动 · 滚轮缩放 · 单击后捏合缩放 · 右键操作": "Drag to move · Scroll to zoom · Click before pinching · Right-click for actions",
         "进入长截图将清除当前标注": "Starting a scrolling capture will clear current annotations",
         "保留当前选区重新捕获，完成拼接后可重新标注。": "Capture the current region again. You can annotate after stitching is complete.",

@@ -7,18 +7,29 @@ import CoreGraphics
 /// Tracks a viewport in document coordinates. Rejected frames never change pixels or position.
 final class ScrollStitcher {
     enum Direction: Equatable { case down, up }
+    enum LimitReason: Equatable { case regionTooLarge, height, memory }
+
     enum Update: Equatable {
         case started(height: Int)
         case appended(rows: Int, height: Int)
         case revisited(height: Int)
         case duplicate
         case paused(String)
-        case limitReached(String)
+        case limitReached(LimitReason)
     }
 
     struct Limits {
-        var maximumHeight = 20_000
-        var maximumWorkingBytes = 128 * 1_024 * 1_024
+        // Keep capture-frame cost bounded independently of the assembled-image budget.
+        static let maximumInputBytes = 32 * 1_024 * 1_024
+        var maximumHeight = 60_000
+        var maximumWorkingBytes: Int
+
+        init(physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) {
+            // A per-session estimate, not a reservation or a measurement of free RAM.
+            // 8 GiB -> 256 MiB; 16 GiB+ -> 512 MiB. Unknown memory retains the old floor.
+            maximumWorkingBytes = Int(min(512 * 1_024 * 1_024,
+                max(128 * 1_024 * 1_024, physicalMemory / 32)))
+        }
     }
 
     private struct Frame {
@@ -67,11 +78,11 @@ final class ScrollStitcher {
         guard image.width > 0, image.height > 0,
               image.width <= 8_192, image.height <= limits.maximumHeight,
               image.height <= Int.max / max(1, image.width * 4) else {
-            return .limitReached("截图区域过大，请缩小区域后重新开始。")
+            return .limitReached(.regionTooLarge)
         }
         let inputBytes = image.width * image.height * 4
-        guard inputBytes <= limits.maximumWorkingBytes / 4 else {
-            return .limitReached("截图区域过大，请缩小区域后重新开始。")
+        guard inputBytes <= min(Limits.maximumInputBytes, limits.maximumWorkingBytes / 4) else {
+            return .limitReached(.regionTooLarge)
         }
         guard let frame = decode(image) else { return .paused("无法读取这一帧，请重试。") }
         guard let previous else {
@@ -98,7 +109,7 @@ final class ScrollStitcher {
         }
 
         guard output.count + fixedScreenPixels.count + inputBytes * 3 <= limits.maximumWorkingBytes else {
-            return .limitReached("已达到长截图高度或内存上限。可以完成并保存已有结果，再分段截图。")
+            return .limitReached(.memory)
         }
         let stationary = stationaryPixels(previous, frame)
         var motionExclusions = motionExclusions(stationary, width: frame.width, height: frame.height)
@@ -346,7 +357,7 @@ final class ScrollStitcher {
         let newMaximum = max(maxOrigin, origin + frame.height)
         let newHeight = newMaximum - newMinimum
         guard newHeight <= limits.maximumHeight else {
-            return .limitReached("已达到长截图高度或内存上限。可以完成并保存已有结果，再分段截图。")
+            return .limitReached(.height)
         }
         if newHeight == height {
             previous = frame; lastOrigin = origin; fixedScreenPixels = fixedMask
@@ -357,7 +368,7 @@ final class ScrollStitcher {
         // Hard seams copy only newly exposed rows, without alpha blending or repair.
         // The export-sized reserve also covers temporary per-input matching masks.
         guard newHeight * width * 12 + inputBytes * 2 <= limits.maximumWorkingBytes else {
-            return .limitReached("已达到长截图高度或内存上限。可以完成并保存已有结果，再分段截图。")
+            return .limitReached(.memory)
         }
         let topRows = minOrigin - newMinimum, bottomRows = newMaximum - maxOrigin
         if topRows > 0 {

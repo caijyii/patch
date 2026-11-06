@@ -309,6 +309,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     private var scrollLock: HorizontalScrollLock?
     private var session = UUID()
     private var run = UUID()
+    private var resourceLimit: ScrollStitcher.LimitReason?
     private var state: State = .preparing
     private var mode: Mode = .manual
     private var hasFirstFrame = false
@@ -380,6 +381,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         region = nil
         scrollScreenAnchor = nil
         sourceDisplayChanged = false
+        resourceLimit = nil
         fallbackHUDBounds = nil
         targetApplication = nil
         processor = ScrollCaptureProcessor()
@@ -480,7 +482,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         upButton.state = mode == .automatic(.up) ? .on : .off
         downButton.state = mode == .automatic(.down) ? .on : .off
         for button in [upButton, downButton] {
-            button.isEnabled = state != .finishing && state != .reselecting && !sourceDisplayChanged
+            button.isEnabled = resourceLimit == nil && state != .finishing && state != .reselecting && !sourceDisplayChanged
             button.contentTintColor = button.state == .on ? ToolbarPalette.selectedInk : nil
         }
         pauseButton.title = state == .paused ? L("继续") : L("暂停自动")
@@ -491,7 +493,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         // AppKit can reset image positioning when the title/image changes.
         pauseButton.imagePosition = .imageOnly
         pauseButton.toolTip = paused ? L("继续捕获已有选区") : L("停止自动滚动，继续手动捕获")
-        pauseButton.isEnabled = !sourceDisplayChanged
+        pauseButton.isEnabled = resourceLimit == nil && !sourceDisplayChanged
             && ((state == .running && mode.isAutomatic) || state == .paused)
         previewButton.state = previewExpanded ? .on : .off
         previewButton.toolTip = previewExpanded ? L("收起长图预览") : L("展开长图预览")
@@ -499,10 +501,13 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         annotateButton.isEnabled = finishButton.isEnabled
         exportButtons.forEach { $0.isEnabled = finishButton.isEnabled }
         reselectButton.isEnabled = state != .finishing && state != .reselecting
+        reselectButton.toolTip = resourceLimit == nil
+            ? L("重新框选：确认新选区后从头开始，Esc 保留当前结果")
+            : L("请先保存当前长图，再重新框选开始下一段；Esc 保留当前结果")
         dimensionsLabel.stringValue = hasFirstFrame ? "\(imageWidth) × \(imageHeight) px" : L("等待首帧")
         previewView.hasImage = hasFirstFrame
         var actions: [NSView] = [upButton, downButton]
-        if state == .paused || (state == .running && mode.isAutomatic) { actions.append(pauseButton) }
+        if resourceLimit == nil && (state == .paused || (state == .running && mode.isAutomatic)) { actions.append(pauseButton) }
         actions += [previewButton]
         if onReselect != nil { actions.append(reselectButton) }
         actions += [annotateButton] + exportButtons + [cancelButton, finishButton]
@@ -576,7 +581,8 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                     self.fallbackHUDBounds = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame
                 }
                 if let content { self.apply(.revisited(height: height), width: content.outputWidth, preview: preview, content: content) }
-                if self.sourceDisplayChanged { self.setStatus(L("显示器已变化 · 请重新框选")) }
+                if let reason = self.resourceLimit { self.pauseAtLimit(reason) }
+                else if self.sourceDisplayChanged { self.setStatus(L("显示器已变化 · 请重新框选")) }
                 else { self.setStatus(L("已保留当前长图 · 点继续")) }
                 if !self.sourceDisplayChanged { self.outline?.orderFrontRegardless() }
                 self.panel?.orderFrontRegardless()
@@ -595,6 +601,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func selectMode(_ requested: Mode) {
+        guard resourceLimit == nil else { return }
         guard state != .finishing, state != .reselecting else { return }
         mode = requested
         if state == .preparing { refreshHUD(); return }
@@ -602,6 +609,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func pauseOrResume() {
+        guard resourceLimit == nil else { return }
         if state == .running, mode.isAutomatic {
             if stopAutomatic() { beginCapture() }
         }
@@ -621,6 +629,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func beginCapture() {
+        guard resourceLimit == nil else { return }
         guard state != .finishing, state != .reselecting, let region else { return }
         guard !sourceDisplayChanged else { return }
         run = UUID()
@@ -807,8 +816,23 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             }
         case .paused(let message):
             waitForOverlap(compactPauseStatus(for: message), detail: localizedStitchingReason(message))
-        case .limitReached(let message):
-            pause(L("已达截图上限 · 请完成"), detail: localizedStitchingReason(message))
+        case .limitReached(let reason):
+            pauseAtLimit(reason)
+        }
+    }
+
+    private func pauseAtLimit(_ reason: ScrollStitcher.LimitReason) {
+        resourceLimit = reason
+        scrollLock?.stop(); scrollLock = nil
+        mode = .manual
+        let detail = L("本段长截图已停止拼接，继续滚动不会追加内容。请先保存或完成，再从页面剩余位置开始新的长截图。")
+        switch reason {
+        case .regionTooLarge:
+            pause(L("截图区域过大 · 请重新框选"), detail: L("截图区域过大，请缩小区域后重新开始。"))
+        case .height:
+            pause(L("高度已达上限 · 请分段保存"), detail: detail)
+        case .memory:
+            pause(L("内存预算已满 · 请分段保存"), detail: detail)
         }
     }
 
@@ -984,7 +1008,8 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                             guard self.session == token else { return }
                             self.state = .paused
                             self.mode = .manual
-                            self.setStatus(L("已保留当前长图"))
+                            if let reason = self.resourceLimit { self.pauseAtLimit(reason) }
+                            else { self.setStatus(L("已保留当前长图")) }
                             return
                         }
                     } else {

@@ -1,6 +1,6 @@
 # 小贴 · Patch
 
-[![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.0)
+[![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.1)
 [![Platform: macOS 15+](https://img.shields.io/badge/Platform-macOS%2015%2B-607D8B?style=flat)](docs/install.md)
 [![Architecture: Apple Silicon](https://img.shields.io/badge/Architecture-Apple%20Silicon-607D8B?style=flat)](docs/install.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6B8E6E?style=flat)](LICENSE)
@@ -30,7 +30,7 @@
 
 需要 **macOS 15+、Apple Silicon（M 系列芯片）**。
 
-- **直接下载**：[GitHub 下载](https://github.com/caijyii/patch/releases/tag/v0.1.0)，提供 **DMG / ZIP**，打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。无需开发工具。
+- **直接下载**：[GitHub 下载](https://github.com/caijyii/patch/releases/tag/v0.1.1)，提供 **DMG / ZIP**，打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。无需开发工具。
 - **让 Agent 安装**：把下面这句话交给自己的 Agent。
 
 > 请从 https://github.com/caijyii/patch 的 GitHub Releases 下载适合我的 Mac 的 Patch 安装包并安装。
@@ -53,6 +53,8 @@ bash scripts/build-sandbox-app.sh
 - 运行期间自动收录剪贴板图片、文字与视频文件引用；剪贴记录和贴图在退出后清空。关闭首页后，应用仍在菜单栏运行。
 - 长截图遇到动态布局或多个滚动区域时可能无法可靠拼接，固定栏与浮层可能保留或重复。
 
+长截图保留原始像素，PNG 无损导出。拼接工作预算按整机内存的 1/32 估算，最低 128 MiB、最高 512 MiB（8 GiB 内存对应 256 MiB，16 GiB 及以上对应 512 MiB），总高度最多 60,000 像素；宽选区可能先达到内存预算。预算不是进程总内存硬限制。触及限制时分别提示原因，保留已有结果，并提示保存后开始新一段。
+
 详细操作见[使用说明](docs/usage.md)，数据处理见[隐私说明](docs/privacy-policy.md)。
 
 ## 默认快捷键
@@ -74,7 +76,7 @@ bash scripts/build-sandbox-app.sh
 
 ## 近期更新
 
-长截图支持直接保存、贴图和提取文字，也可从普通截图选区进入。优化图片贴图的触控板缩放交互，并更新 DMG 安装界面。
+长截图可在保留原始像素的前提下截得更长。达到内存预算或高度上限时，明确说明停止拼接的原因，并提示先保存当前段。
 
 详见[更新说明](docs/release-notes.md)。
 

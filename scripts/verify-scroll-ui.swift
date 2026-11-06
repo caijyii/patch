@@ -24,6 +24,9 @@ extension ScrollCaptureCoordinator {
     fileprivate var verificationHUD: NSView? { panel?.contentView }
     fileprivate var verificationHasFirstFrame: Bool { hasFirstFrame }
     fileprivate var verificationHeight: Int { imageHeight }
+    fileprivate var verificationStatus: String { statusLabel.stringValue }
+    fileprivate var verificationDetail: String? { statusLabel.toolTip }
+    fileprivate func verificationRetryCapture() { pauseOrResume(); selectMode(.automatic(.down)); beginCapture() }
     fileprivate var verificationRunning: Bool { state == .running }
     fileprivate var verificationFinishing: Bool { state == .finishing }
     fileprivate var verificationTask: Task<Void, Never>? { task }
@@ -52,7 +55,7 @@ extension ScrollCaptureCoordinator {
         fallbackHUDBounds = fallback
         pause("显示器已变化 · 请重新框选")
     }
-    fileprivate func verificationLimit() { apply(.limitReached("test limit"), width: imageWidth) }
+    fileprivate func verificationLimit(_ reason: ScrollStitcher.LimitReason = .memory) { apply(.limitReached(reason), width: imageWidth) }
     fileprivate func verificationReject(_ reason: String) { apply(.paused(reason), width: imageWidth) }
     fileprivate func verificationStopAutomatic() -> Bool { stopAutomatic() }
     fileprivate func verificationApplyGeometry(_ preview: ScrollCapturePreview, height: Int, renderPreview: Bool = true) {
@@ -426,6 +429,27 @@ private struct ScrollUIVerification {
         let retained = await coordinator.verificationImage()
         try require(retained?.dataProvider?.data as Data? == image(height: 117, top: 0).dataProvider?.data as Data?,
                     "Safety or resource pause changed retained output")
+        for (reason, expected) in [(ScrollStitcher.LimitReason.memory, "内存预算已满 · 请分段保存"),
+                                   (.height, "高度已达上限 · 请分段保存"), (.regionTooLarge, "截图区域过大 · 请重新框选")] {
+            coordinator.verificationLimit(reason)
+            try require(coordinator.verificationStatus == expected, "Resource limit does not explain its cause")
+            try require(!buttons(coordinator).contains { $0.title == "继续" }, "Reached limit still offers Continue")
+            for title in ["自动上", "自动下"] {
+                let control = try button(title, in: coordinator)
+                try require(!control.isEnabled, "Reached limit still offers automatic scrolling")
+            }
+            for title in ["保存", "贴图", "提取文字", "标注", "完成"] {
+                let control = try button(title, in: coordinator)
+                try require(control.isEnabled, "Reached limit disables an existing-result action")
+            }
+            coordinator.verificationRetryCapture()
+            try require(coordinator.verificationStatus == expected && !coordinator.verificationRunning,
+                        "Retry replaced the limit hint or restarted capture")
+            if reason != .regionTooLarge {
+                try require(coordinator.verificationDetail?.contains("继续滚动不会追加内容") == true,
+                            "Limit guidance fails to explain that scrolling no longer appends")
+            }
+        }
     }
 
     @MainActor private static func verifyVisibleReason() async throws {
@@ -801,6 +825,15 @@ private struct ScrollUIVerification {
         try require(!coordinator.verificationReselecting && !coordinator.verificationRunning
                     && resume.isEnabled && finish.isEnabled,
                     "Esc resumed automatic input or left no completion/resume action")
+        coordinator.verificationLimit()
+        try button("重新框选", in: coordinator).performClick(nil)
+        restore?()
+        await coordinator.verificationWaitForCompletion()
+        let limited = await coordinator.verificationImage()
+        try require(limited?.dataProvider?.data as Data? == original?.dataProvider?.data as Data?
+                    && coordinator.verificationStatus == "内存预算已满 · 请分段保存"
+                    && !buttons(coordinator).contains { $0.title == "继续" },
+                    "Cancelling reselection lost the retained pixels or revived a limited capture")
         try button("重新框选", in: coordinator).performClick(nil)
         let staleRestore = restore
         staleRestore?()
@@ -811,6 +844,8 @@ private struct ScrollUIVerification {
         await restoringTask?.value
         staleRestore?()
         let fresh = await coordinator.verificationImage()
+        let freshAuto = try button("自动下", in: coordinator)
+        try require(freshAuto.isEnabled, "A new session inherited the previous resource limit")
         try require(fresh?.dataProvider?.data as Data? == image(top: 210).dataProvider?.data as Data?
                     && coordinator.verificationHeight == 90 && coordinator.verificationRunning,
                     "A stale reselection callback restored old state into the replacement capture")
