@@ -80,9 +80,7 @@ bash scripts/build-sandbox-app.sh
 
 ## 反馈与贡献
 
-欢迎通过 [Issues](https://github.com/caijyii/patch/issues) 反馈问题或建议，也可联系 [caijyii@163.com](mailto:caijyii@163.com)。
-
-[开发与测试](CONTRIBUTING.md) · [隐私说明](docs/privacy-policy.md) · [发布进度](docs/release-checklist.md)
+欢迎通过 [Issues](https://github.com/caijyii/patch/issues) 反馈问题或建议，也可发送邮件至 [caijyii@163.com](mailto:caijyii@163.com)。
 
 ## 许可证
 

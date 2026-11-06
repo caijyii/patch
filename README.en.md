@@ -80,9 +80,7 @@ See the [release notes](docs/release-notes.en.md).
 
 ## Feedback and contributions
 
-Report bugs or suggest improvements through [Issues](https://github.com/caijyii/patch/issues), or contact [caijyii@163.com](mailto:caijyii@163.com).
-
-[Development and testing (Chinese)](CONTRIBUTING.md) · [Privacy notice](docs/privacy-policy.en.md) · [Release checklist (Chinese)](docs/release-checklist.md)
+Report bugs or suggest improvements through [Issues](https://github.com/caijyii/patch/issues), or email [caijyii@163.com](mailto:caijyii@163.com).
 
 ## License
 

@@ -25,7 +25,7 @@
 
 ## 内容表面与清晰度
 
-[使用说明](usage.md) 已明确：普通图文贴图采用小圆角、细边线和柔和阴影；透明主体贴图保留透明轮廓。文字贴图正文为 16 pt，OCR 结果正文为 14 pt，具体实现见 [ImageTools.swift](../Sources/Patch/ImageTools.swift)。这些是特定内容表面的设置，不是所有正文的统一字号。
+[当前实现](../Sources/Patch/ImageTools.swift) 中，普通图文贴图采用小圆角、细边线和柔和阴影；透明主体贴图保留透明轮廓。文字贴图正文为 16 pt，OCR 结果正文为 14 pt，具体实现见 [ImageTools.swift](../Sources/Patch/ImageTools.swift)。这些是特定内容表面的设置，不是所有正文的统一字号。
 
 工具栏在 1× 显示器使用较大的原生图标与点击区，2× 保持紧凑，空间不足时换行。复用 `ToolbarMetrics`，避免将紧凑位图整体放大来替代清晰度适配。
 
