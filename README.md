@@ -24,12 +24,12 @@
 
 需要 **macOS 15+、Apple Silicon（M 系列芯片）**。
 
-- **直接下载**：[GitHub 预览版](https://github.com/caijyii/patch/releases/tag/v0.1.0-preview.5)，提供 **DMG / ZIP**，打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。无需开发工具。
+- **直接下载**：[GitHub 下载](https://github.com/caijyii/patch/releases/tag/v0.1.0)，提供 **DMG / ZIP**，打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。无需开发工具。
 - **让 Agent 安装**：把下面这句话交给自己的 Agent。
 
 > 请从 https://github.com/caijyii/patch 的 GitHub Releases 下载适合我的 Mac 的 Patch 安装包并安装。
 
-当前为临时签名、未公证的预览包，首次打开可能需要你在系统设置中确认。[安装与权限说明](docs/install.md)
+当前安装包采用临时签名，尚未公证，首次打开可能需要你在系统设置中确认。[安装与权限说明](docs/install.md)
 
 ### 从源码构建
 
@@ -47,7 +47,7 @@ bash scripts/build-sandbox-app.sh
 - 运行期间自动收录剪贴板图片、文字与视频文件引用；剪贴记录和贴图在退出后清空。关闭首页后，应用仍在菜单栏运行。
 - 长截图遇到动态布局或多个滚动区域时可能无法可靠拼接，固定栏与浮层可能保留或重复。
 
-详细操作见[使用说明](docs/usage.md)，数据处理见[隐私说明草稿](docs/privacy-policy.md)。
+详细操作见[使用说明](docs/usage.md)，数据处理见[隐私说明](docs/privacy-policy.md)。
 
 ## 默认快捷键
 
@@ -76,7 +76,7 @@ bash scripts/build-sandbox-app.sh
 
 欢迎通过 [Issues](https://github.com/caijyii/patch/issues) 反馈问题或建议，也可联系 [caijyii@163.com](mailto:caijyii@163.com)。
 
-[开发与测试](CONTRIBUTING.md) · [隐私说明草稿](docs/privacy-policy.md) · [发布进度](docs/release-checklist.md)
+[开发与测试](CONTRIBUTING.md) · [隐私说明](docs/privacy-policy.md) · [发布进度](docs/release-checklist.md)
 
 ## 许可证
 

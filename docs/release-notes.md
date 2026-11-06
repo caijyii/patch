@@ -1,6 +1,8 @@
-# 更新说明（待发布）
+# Patch 0.1.0
 
-本次更新基于 Preview 5，包含以下调整：
+[简体中文](release-notes.md) · [English](release-notes.en.md)
+
+首个正式版本，在 Preview 5 基础上包含以下调整：
 
 - 长截图支持直接保存、贴图和提取文字；标注后的长图也可贴出或提取文字。
 - 普通截图可从工具栏进入长截图；长截图默认识别窗口，也可拖动框选。
@@ -8,4 +10,8 @@
 - 统一主页、设置、剪贴记录、录屏和文字结果窗口的背景光晕。
 - 更新 DMG 安装界面，提供应用与 Applications 文件夹的拖放安装入口。
 
-安装与更新步骤见[安装说明](install.md)。历史版本见 [Preview 5 更新说明](preview-5-release-notes.md)。
+- README、更新说明、安装指南、使用说明和隐私说明均提供中英文版本。
+
+支持 Apple Silicon、macOS 15+，提供 DMG 与 ZIP。正式版标记不改变签名状态：本版使用临时签名，尚无 Developer ID 签名，也未经过 Apple 公证。首次打开与授权步骤见[安装说明](install.md)。
+
+退出后会清空剪贴记录和贴图；动态布局及多个滚动区域可能无法可靠拼接。历史版本见 [Preview 5 更新说明](preview-5-release-notes.md)。

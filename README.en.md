@@ -24,12 +24,12 @@ Content is processed locally, with no accounts, ads, or cloud uploads. The inter
 
 Requires **macOS 15+ and Apple Silicon (M-series chips)**.
 
-- **Download**: Get the **DMG or ZIP** from the [GitHub preview release](https://github.com/caijyii/patch/releases/tag/v0.1.0-preview.5). Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. No developer tools are required.
+- **Download**: Get the **DMG or ZIP** from the [GitHub release](https://github.com/caijyii/patch/releases/tag/v0.1.0). Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. No developer tools are required.
 - **Ask an agent to install**: Give your agent this instruction:
 
 > Download the Patch installer compatible with my Mac from the GitHub Releases at https://github.com/caijyii/patch and install it.
 
-The current preview uses ad-hoc signing and is not notarized. You may need to confirm the first launch in System Settings. See the [installation and permissions guide (Chinese)](docs/install.md).
+The current release uses ad-hoc signing and is not notarized. You may need to confirm the first launch in System Settings. See the [installation and permissions guide](docs/install.en.md).
 
 ### Build from source
 
@@ -47,7 +47,7 @@ Output: `.build/distribution-check/Patch.app` (Patch Development). This is an ad
 - While running, Patch automatically collects clipboard images, text, and video file references. Clipboard history and desktop pins are cleared when you quit. Closing the home window leaves the app running in the menu bar.
 - Scrolling captures may not stitch reliably with dynamic layouts or multiple scrollable areas. Fixed headers and overlays may remain visible or appear more than once.
 
-See the [usage guide](docs/usage.md) and [draft privacy notice](docs/privacy-policy.md), both in Chinese.
+See the [usage guide](docs/usage.en.md) and [privacy notice](docs/privacy-policy.en.md).
 
 ## Default shortcuts
 
@@ -70,13 +70,13 @@ See the [usage guide](docs/usage.md) and [draft privacy notice](docs/privacy-pol
 
 Scrolling captures can now be saved, pinned, or used for text extraction directly, and can be started from a regular screenshot selection. This update also improves trackpad zoom interaction for image pins and refreshes the DMG installer layout.
 
-See the [release notes (Chinese)](docs/release-notes.md).
+See the [release notes](docs/release-notes.en.md).
 
 ## Feedback and contributions
 
 Report bugs or suggest improvements through [Issues](https://github.com/caijyii/patch/issues), or contact [caijyii@163.com](mailto:caijyii@163.com).
 
-[Development and testing](CONTRIBUTING.md) · [Draft privacy notice](docs/privacy-policy.md) · [Release checklist](docs/release-checklist.md) — these documents are in Chinese.
+[Development and testing (Chinese)](CONTRIBUTING.md) · [Privacy notice](docs/privacy-policy.en.md) · [Release checklist (Chinese)](docs/release-checklist.md)
 
 ## License
 
