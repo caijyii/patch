@@ -17,11 +17,19 @@ if [[ "$output_path" != *.dmg ]] || [ -e "$output_path" ]; then
     exit 1
 fi
 codesign --verify --deep --strict "$app_path"
-stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/patch-dmg.XXXXXXXX")"
-trap 'rm -rf "$stage_dir"' EXIT
-COPYFILE_DISABLE=1 ditto --norsrc --noextattr "$app_path" "$stage_dir/Patch.app"
-ln -s /Applications "$stage_dir/Applications"
-cp "$(dirname "$0")/../Distribution/INSTALL-preview.txt" "$stage_dir/安装说明.txt"
-hdiutil create -srcfolder "$stage_dir" -volname Patch -fs HFS+ -format UDZO "$output_path"
+source "$(dirname "$0")/environment.sh"
+dmg_python="$screenleaf_root/.build/dmg-tools/bin/python"
+if [[ ! -x "$dmg_python" ]] || ! "$dmg_python" -c 'import dmgbuild, ds_store, mac_alias' >/dev/null 2>&1; then
+    echo 'Run bash scripts/setup-dmg-tools.sh once to install the isolated DMG build tools.' >&2
+    exit 1
+fi
+art_dir="$(mktemp -d "$screenleaf_root/.build/dmg-art.XXXXXXXX")"
+trap 'rm -rf "$art_dir"' EXIT
+xcrun swiftc -module-cache-path "$screenleaf_cache" "$screenleaf_root/scripts/generate-dmg-artwork.swift" -o "$art_dir/generate"
+"$art_dir/generate" "$art_dir/background@2x.png"
+"$dmg_python" -m dmgbuild -s "$screenleaf_root/Distribution/DMG/settings.py" \
+    -D "app=$app_path" \
+    -D "background=$art_dir/background@2x.png" \
+    Patch "$output_path"
 hdiutil verify "$output_path"
 printf 'DMG: %s\n' "$output_path"

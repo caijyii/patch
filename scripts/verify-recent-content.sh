@@ -5,8 +5,8 @@ cd "$screenleaf_root"
 task_work="$screenleaf_root/.build/verification/recent-content"
 mkdir -p "$task_work"
 task_sources=()
-for task_source in Sources/ScreenLeaf/*.swift; do
-    if [[ "$task_source" != Sources/ScreenLeaf/App.swift ]]; then task_sources+=("$task_source"); fi
+for task_source in Sources/Patch/*.swift; do
+    if [[ "$task_source" != Sources/Patch/App.swift ]]; then task_sources+=("$task_source"); fi
 done
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \

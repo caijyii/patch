@@ -201,10 +201,10 @@ private struct ScrollUIVerification {
         defer { coordinator.cancel() }
         coordinator.verificationSetRunning()
         let toolbar = coordinator.verificationToolbar
-        try require(buttons(coordinator).map(\.title) == ["自动上", "自动下", "预览", "标注", "取消", "完成"],
+        try require(buttons(coordinator).map(\.title) == ["自动上", "自动下", "预览", "标注", "保存", "贴图", "提取文字", "取消", "完成"],
                     "Default manual capture still requires a manual or pause button")
         coordinator.verificationSetRunning(automatic: .down)
-        try require(buttons(coordinator).map(\.title) == ["自动上", "自动下", "暂停自动", "预览", "标注", "取消", "完成"],
+        try require(buttons(coordinator).map(\.title) == ["自动上", "自动下", "暂停自动", "预览", "标注", "保存", "贴图", "提取文字", "取消", "完成"],
                     "Automatic capture does not offer a clearly labeled automatic pause action")
         for action in buttons(coordinator) {
             try require(action.image != nil && action.imagePosition == .imageOnly && !action.title.isEmpty
@@ -483,7 +483,7 @@ private struct ScrollUIVerification {
 
     @MainActor private static func verifyCompletionChoices() async throws {
         for (title, expectedAction) in [("完成", ScrollCaptureCoordinator.CompletionAction.copy),
-                                        ("标注", .annotate)] {
+                                        ("标注", .annotate), ("贴图", .pin), ("提取文字", .ocr)] {
             var delivered: [(CGImage, ScrollCaptureCoordinator.CompletionAction)] = []
             let coordinator = fixture(syntheticRegion(), onComplete: { delivered.append(($0, $1)) })
             defer { coordinator.cancel() }
@@ -510,7 +510,7 @@ private struct ScrollUIVerification {
                             "Annotation created a new window or delivered before editing")
                 coordinator.verificationEditor?.complete()
             }
-            try require(delivered.count == 1 && delivered[0].1 == .copy,
+            try require(delivered.count == 1 && delivered[0].1 == (expectedAction == .annotate ? .copy : expectedAction),
                         "Completion delivered to the wrong destination or more than once")
             try require(delivered[0].0.dataProvider?.data as Data? == image(height: 141, top: -24).dataProvider?.data as Data?,
                         "Completion delivered a preview or incomplete stitched image")
@@ -525,7 +525,7 @@ private struct ScrollUIVerification {
             var deliveredAction: ScrollCaptureCoordinator.CompletionAction?
             let coordinator = fixture(syntheticRegion(), onComplete: { _, action in
                 attempts += 1
-                if attempts == 1 { throw ScreenLeafError(message: "Injected clipboard failure") }
+                if attempts == 1 { throw PatchError(message: "Injected clipboard failure") }
                 deliveredAction = action
             })
             defer { coordinator.cancel() }
@@ -665,7 +665,7 @@ private struct ScrollUIVerification {
         var attempts = 0
         let coordinator = fixture(syntheticRegion(), onComplete: { _, action in
             attempts += 1
-            if attempts == 1 { throw ScreenLeafError(message: "Injected inline clipboard failure") }
+            if attempts == 1 { throw PatchError(message: "Injected inline clipboard failure") }
             try require(action == .copy, "Inline completion did not copy the complete image")
         })
         defer { coordinator.cancel() }

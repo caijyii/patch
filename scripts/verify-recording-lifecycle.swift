@@ -77,7 +77,7 @@ extension RecordingCoordinator {
                     "Active recording must show its top status, pause/hide/stop and exclusion explanation")
         try snapshot(compact, name: "controls-recording")
         compact.phase = .idle
-        compact.failure = ScreenLeafError(message: "合成错误")
+        compact.failure = PatchError(message: "合成错误")
         compact.setStatus("未能开始录制，请检查屏幕录制权限后重试。", isError: true)
         compact.updateControls()
         try require((compact.panel?.frame.width ?? 1000) < 400 && compact.settingsButton.superview != nil,
@@ -439,7 +439,7 @@ extension RecordingCoordinator {
             newer.cancelPreparation(id: oldID)
         }
         // Rejected permission and a cancelled chooser also use existing ID guards.
-        newer.fail(ScreenLeafError(message: "Late permission rejection"), id: oldID)
+        newer.fail(PatchError(message: "Late permission rejection"), id: oldID)
         newer.resetAfterCancellation(id: oldID)
         try require(newer.sessionID == newID && newer.phase == .starting && !newer.stopRequested
                     && newer.stream === newStream && newer.destinationURL == newDestination
@@ -506,7 +506,7 @@ extension RecordingCoordinator {
             for name in ["idle", "preparing", "countdown", "recording", "paused", "saved", "error"] {
                 preview.phase = ["preparing": .preparing, "countdown": .countdown, "recording": .recording, "paused": .paused][name] ?? .idle
                 preview.revealURL = ["saved", "error"].contains(name) ? URL(fileURLWithPath: "/tmp/小贴录屏.mp4") : nil
-                preview.failure = name == "error" ? ScreenLeafError(message: "录屏权限不可用") : nil
+                preview.failure = name == "error" ? PatchError(message: "录屏权限不可用") : nil
                 preview.fileLabel.stringValue = preview.revealURL?.path ?? ""
                 let status = ["idle": L("准备录制"), "preparing": L("选择 MP4 保存位置"), "countdown": LF("%d 秒后开始录制", 3),
                     "recording": L("录制中"), "paused": L("已暂停"), "saved": L("录屏已保存。"),

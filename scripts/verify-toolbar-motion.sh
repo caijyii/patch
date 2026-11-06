@@ -10,7 +10,7 @@ if [[ "$#" -gt 1 || ( "$#" -eq 1 && "$1" != "--build-only" ) ]]; then
 fi
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$task_work/module-cache" -target "$(uname -m)-apple-macosx15.0" \
-    Sources/ScreenLeaf/Localization.swift Sources/ScreenLeaf/Preferences.swift Sources/ScreenLeaf/AnnotationControls.swift \
+    Sources/Patch/Localization.swift Sources/Patch/Preferences.swift Sources/Patch/AnnotationControls.swift \
     scripts/verify-toolbar-motion.swift -o "$task_work/verify-toolbar-motion"
 if [[ "${1:-}" == "--build-only" ]]; then
     printf 'BUILT: toolbar verification (not launched)\n'

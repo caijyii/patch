@@ -9,13 +9,13 @@ fi
 inline_work="$screenleaf_root/.build/verification/inline-subject"
 mkdir -p "$inline_work"
 # Local view events only: no screen capture, global input or save panels.
-cat Sources/ScreenLeaf/RegionSelector.swift Sources/ScreenLeaf/InlineSubjectSelection.swift \
+cat Sources/Patch/RegionSelector.swift Sources/Patch/InlineSubjectSelection.swift \
     scripts/verify-inline-subject.swift > "$inline_work/InlineSubjectVerification.swift"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \
-    Sources/ScreenLeaf/CaptureRegion.swift Sources/ScreenLeaf/SelectionGeometry.swift \
-    Sources/ScreenLeaf/ScrollEventRouting.swift Sources/ScreenLeaf/ImageTools.swift \
-    Sources/ScreenLeaf/SubjectExtraction.swift Sources/ScreenLeaf/SubjectSelection.swift \
-    Sources/ScreenLeaf/Localization.swift Sources/ScreenLeaf/WindowTitle.swift Sources/ScreenLeaf/WindowActivation.swift Sources/ScreenLeaf/WindowAmbientBackground.swift Sources/ScreenLeaf/Preferences.swift Sources/ScreenLeaf/AnnotationControls.swift \
+    Sources/Patch/CaptureRegion.swift Sources/Patch/SelectionGeometry.swift \
+    Sources/Patch/ScrollEventRouting.swift Sources/Patch/ImageTools.swift \
+    Sources/Patch/SubjectExtraction.swift Sources/Patch/SubjectSelection.swift \
+    Sources/Patch/Localization.swift Sources/Patch/WindowTitle.swift Sources/Patch/WindowActivation.swift Sources/Patch/HomeSeason.swift Sources/Patch/WindowAmbientBackground.swift Sources/Patch/Preferences.swift Sources/Patch/AnnotationControls.swift \
     "$inline_work/InlineSubjectVerification.swift" -o "$inline_work/probe"
 "$inline_work/probe" "$1" "$inline_work"

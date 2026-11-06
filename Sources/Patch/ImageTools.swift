@@ -85,7 +85,7 @@ final class ImageToolsCoordinator {
         } else if let text = pasteboard.string(forType: .string), !text.isEmpty {
             pinText(text, anchor: point)
         } else {
-            showError(ScreenLeafError(message: L("剪贴板中没有可贴出的图片或文字。")), title: L("无法贴出剪贴板"))
+            showError(PatchError(message: L("剪贴板中没有可贴出的图片或文字。")), title: L("无法贴出剪贴板"))
         }
     }
 
@@ -590,7 +590,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
     /// Updates the underlying subject image without discarding annotations or their undo history.
     func replaceSourcePreservingAnnotations(_ image: CGImage) throws {
         guard image.width == source.width, image.height == source.height else {
-            throw ScreenLeafError(message: L("更新图片的像素尺寸必须保持一致。"))
+            throw PatchError(message: L("更新图片的像素尺寸必须保持一致。"))
         }
         finishTextEditing()
         finishAnnotationDrag()
@@ -614,7 +614,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
 
     private func rasterized(_ items: [ImageToolsAnnotation], croppingTo pixelRect: CGRect? = nil) throws -> CGImage {
         guard items.allSatisfy({ $0.tool != .mosaic || $0.mosaic != nil }) else {
-            throw ScreenLeafError(message: L("马赛克尚未完成，无法导出图片。"))
+            throw PatchError(message: L("马赛克尚未完成，无法导出图片。"))
         }
         let imageBounds = CGRect(x: 0, y: 0, width: source.width, height: source.height)
         let region: CGRect
@@ -622,11 +622,11 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
             guard pixelRect.origin.x.isFinite, pixelRect.origin.y.isFinite,
                   pixelRect.width.isFinite, pixelRect.height.isFinite,
                   pixelRect.width > 0, pixelRect.height > 0 else {
-                throw ScreenLeafError(message: L("无法读取选区，请重新选取。"))
+                throw PatchError(message: L("无法读取选区，请重新选取。"))
             }
             region = pixelRect.integral.intersection(allowsOutsideAnnotations ? bounds : imageBounds)
             guard !region.isNull, !region.isEmpty else {
-                throw ScreenLeafError(message: L("无法读取选区，请重新选取。"))
+                throw PatchError(message: L("无法读取选区，请重新选取。"))
             }
         } else { region = exportBounds(for: items) }
         // CoreGraphics can round stroke coverage differently when the bitmap's
@@ -636,7 +636,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
         guard let context = CGContext(data: nil, width: Int(renderRegion.width), height: Int(renderRegion.height),
                 bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            throw ScreenLeafError(message: L("图片过大，无法分配导出内存。"))
+            throw PatchError(message: L("图片过大，无法分配导出内存。"))
         }
         if allowsOutsideAnnotations {
             context.setFillColor(NSColor.white.cgColor)
@@ -656,7 +656,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
                 bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
                 let input = context.data, let output = cropped.data else {
-                throw ScreenLeafError(message: L("图片过大，无法分配导出内存。"))
+                throw PatchError(message: L("图片过大，无法分配导出内存。"))
             }
             let offset = Int(region.minY - renderRegion.minY) * context.bytesPerRow + Int(region.minX - renderRegion.minX) * 4
             for row in 0..<Int(region.height) {
@@ -664,12 +664,12 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
                     from: input.advanced(by: offset + row * context.bytesPerRow), byteCount: Int(region.width) * 4)
             }
             guard let result = cropped.makeImage() else {
-                throw ScreenLeafError(message: L("无法导出标注后的图片。"))
+                throw PatchError(message: L("无法导出标注后的图片。"))
             }
             return result
         }
         guard let result = context.makeImage() else {
-            throw ScreenLeafError(message: L("无法导出标注后的图片。"))
+            throw PatchError(message: L("无法导出标注后的图片。"))
         }
         return result
     }
@@ -677,12 +677,12 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
     private func mosaicPatch(_ crop: CGImage, blockSize: CGFloat) throws -> CGImage {
         // Work on a copied 8-bit raster so exports contain only the replacement pixels.
         guard blockSize.isFinite, blockSize >= 2, blockSize <= CGFloat(Int.max / 2) else {
-            throw ScreenLeafError(message: L("马赛克块大小无效，请选择有效大小。"))
+            throw PatchError(message: L("马赛克块大小无效，请选择有效大小。"))
         }
         let bitmap = NSBitmapImageRep(cgImage: crop)
         guard let bytes = bitmap.bitmapData, bitmap.bitsPerSample == 8,
               bitmap.bitsPerPixel == bitmap.samplesPerPixel * 8, !bitmap.isPlanar else {
-            throw ScreenLeafError(message: L("无法处理马赛克选区的像素格式。"))
+            throw PatchError(message: L("无法处理马赛克选区的像素格式。"))
         }
         let step = max(2, Int(blockSize.rounded()))
         let channels = bitmap.samplesPerPixel
@@ -708,7 +708,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
             }
         }
         guard let patch = bitmap.cgImage else {
-            throw ScreenLeafError(message: L("无法生成马赛克图片。"))
+            throw PatchError(message: L("无法生成马赛克图片。"))
         }
         return patch
     }
@@ -757,15 +757,15 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
         guard let index = selectedIndex, annotations.indices.contains(index) else { return }
         attempt {
             for value in [width, fontSize, numberSize].compactMap({ $0 }) {
-                guard value.isFinite, value > 0 else { throw ScreenLeafError(message: L("标注大小无效，请选择有效大小。")) }
+                guard value.isFinite, value > 0 else { throw PatchError(message: L("标注大小无效，请选择有效大小。")) }
             }
             if let block = mosaicBlockSize, !block.isFinite || block < 2 {
-                throw ScreenLeafError(message: L("马赛克块大小无效，请选择有效大小。"))
+                throw PatchError(message: L("马赛克块大小无效，请选择有效大小。"))
             }
             var proposed = annotations
             if let sticker, proposed[index].tool == .sticker {
                 guard StickerCatalog.item(for: sticker) != nil || sticker.count == 1 else {
-                    throw ScreenLeafError(message: L("请选择一张有效贴纸。"))
+                    throw PatchError(message: L("请选择一张有效贴纸。"))
                 }
                 proposed[index].text = StickerCatalog.canonicalIdentifier(sticker)
             }
@@ -815,7 +815,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
             if annotation.tool == .mosaic {
                 let rect = annotation.rect.integral.intersection(bounds)
                 guard !rect.isNull, rect.width >= 2, rect.height >= 2 else {
-                    throw ScreenLeafError(message: L("马赛克区域太小或不在图片中，请调整选区。"))
+                    throw PatchError(message: L("马赛克区域太小或不在图片中，请调整选区。"))
                 }
                 annotation.points = [rect.origin, CGPoint(x: rect.maxX, y: rect.maxY)]
                 annotation.mosaic = try mosaicPatch(rasterized(result, croppingTo: rect), blockSize: annotation.mosaicBlockSize)
@@ -1300,7 +1300,8 @@ final class InlineAnnotationView: NSView {
 
     init(image: CGImage, pixelScale: CGFloat? = nil, preferences: PreferencesStore? = nil, moveHandle: NSView? = nil,
          completionHint: String, showsCopyAction: Bool = true, allowsOutsideAnnotations: Bool = false,
-         cancellationHint: String = L("退出标注，保留原图")) {
+         cancellationHint: String = L("退出标注，保留原图"),
+         additionalActions: [(String, String, (CGImage) throws -> Void)] = []) {
         self.pixelScale = pixelScale
         canvas = ImageToolsCanvas(image: image)
         canvas.allowsOutsideAnnotations = allowsOutsideAnnotations
@@ -1333,6 +1334,15 @@ final class InlineAnnotationView: NSView {
                     zoomLabel, icon(L("放大"), "plus.magnifyingglass") { [weak self] in self?.zoom(by: 1.25) },
                     SelectionButton(L("适合宽度")) { [weak self] in self?.fitWidth() },
                     SelectionButton("100%") { [weak self] in self?.setZoom(1) }]
+        for (title, symbol, action) in additionalActions {
+            actions.append(icon(title, symbol) { [weak self] in
+                guard let self else { return }
+                do {
+                    self.canvas.finishTextEditing()
+                    try action(self.canvas.renderedImage())
+                } catch { self.onError(error) }
+            })
+        }
         if showsCopyAction { actions.append(icon(L("复制"), "doc.on.doc") { [weak self] in self?.copyImage() }) }
         actions += [icon(L("保存 PNG"), "square.and.arrow.down") { [weak self] in self?.saveImage() },
                     SelectionButton.cancellation(toolTip: cancellationHint) { [weak self] in self?.onCancel?() },
@@ -1544,7 +1554,7 @@ private final class ImageToolsPinImageView: NSView {
         self.image = image
         imageRect = CGRect(origin: .zero, size: size)
         super.init(frame: CGRect(origin: .zero, size: size))
-        toolTip = L("拖动移动 · 滚轮或捏合缩放 · 右键操作")
+        toolTip = L("拖动移动 · 滚轮缩放 · 单击后捏合缩放 · 右键操作")
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func draw(_ dirtyRect: NSRect) {
@@ -2146,6 +2156,13 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     private func beginMoving(with event: NSEvent) {
         // Selection may resize the viewport to make room for the detached HUD.
         guard let point = screenPoint(for: event) else { return }
+        if imageView != nil && inlineEditor == nil {
+            // A nonactivating panel may be key while its application is still
+            // background. Real pinch events require foreground activation.
+            // Use the running application's state, not NSApp.isActive, which
+            // can already be true when this nonactivating panel takes key focus.
+            NSRunningApplication.current.activate(options: [])
+        }
         selectPin()
         guard let window else { return }
         dragOrigin = (point, inlineEditor == nil ? (imageFrame ?? window.frame) : window.frame)
@@ -2660,7 +2677,7 @@ private enum ImageToolsOCRWorker {
             try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
             try cancellation.checkCancellation()
             let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-            guard !lines.isEmpty else { throw ScreenLeafError(message: L("没有识别到文字。可尝试截取更清晰或更大的文字区域。")) }
+            guard !lines.isEmpty else { throw PatchError(message: L("没有识别到文字。可尝试截取更清晰或更大的文字区域。")) }
             let elapsedMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
             logger.info("recognition completed duration_ms=\(elapsedMilliseconds, privacy: .public)")
             return lines.joined(separator: "\n")
@@ -2792,7 +2809,7 @@ private final class ImageToolsOCRController: NSWindowController, NSWindowDelegat
         hasResult = false
         status.isHidden = true
         textView.isEditable = false
-        textView.string = (error as? ScreenLeafError)?.message ?? L("无法完成文字识别，请重试。")
+        textView.string = (error as? PatchError)?.message ?? L("无法完成文字识别，请重试。")
         copyButton.isEnabled = false
     }
     @objc private func copyText() {
@@ -2854,7 +2871,7 @@ enum ImageToolsUI {
             bitmap.size = CGSize(width: CGFloat(image.width) / pixelScale, height: CGFloat(image.height) / pixelScale)
         }
         guard let data = bitmap.representation(using: .png, properties: [:]) else {
-            throw ScreenLeafError(message: L("无法编码 PNG 图片。"))
+            throw PatchError(message: L("无法编码 PNG 图片。"))
         }
         return data
     }
@@ -2862,7 +2879,7 @@ enum ImageToolsUI {
         let data = try png(image, pixelScale: pixelScale)
         pasteboard.clearContents()
         guard pasteboard.setData(data, forType: .png) else {
-            throw ScreenLeafError(message: L("无法将图片写入剪贴板。"))
+            throw PatchError(message: L("无法将图片写入剪贴板。"))
         }
         if let pixelScale, pixelScale.isFinite, pixelScale > 0 {
             // PNG resolution metadata may round; keep the exact capture scale for our own round-trip.

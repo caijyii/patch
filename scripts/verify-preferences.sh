@@ -18,8 +18,8 @@ mkdir -p "$task_work/module-cache"
 printf 'Verifying preferences and fake hotkeys with SDK: %s\n' "$task_sdk"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$task_sdk" \
     -module-cache-path "$task_work/module-cache" -target "$(uname -m)-apple-macosx15.0" \
-    "$task_root/Sources/ScreenLeaf/Localization.swift" "$task_root/Sources/ScreenLeaf/WindowTitle.swift" "$task_root/Sources/ScreenLeaf/Preferences.swift" \
-    "$task_root/Sources/ScreenLeaf/HotKeys.swift" \
-    "$task_root/Sources/ScreenLeaf/Settings.swift" \
+    "$task_root/Sources/Patch/Localization.swift" "$task_root/Sources/Patch/WindowTitle.swift" "$task_root/Sources/Patch/Preferences.swift" \
+    "$task_root/Sources/Patch/HotKeys.swift" \
+    "$task_root/Sources/Patch/Settings.swift" \
     "$task_root/scripts/verify-preferences.swift" -o "$task_work/verify-preferences"
 "$task_work/verify-preferences" "$task_work" "$@"

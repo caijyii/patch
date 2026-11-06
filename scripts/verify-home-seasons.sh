@@ -18,7 +18,7 @@ mkdir -p "$task_work/module-cache"
 printf 'Verifying local calendar seasons with SDK: %s\n' "$task_sdk"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$task_sdk" \
     -module-cache-path "$task_work/module-cache" -target "$(uname -m)-apple-macosx15.0" \
-    "$task_root/Sources/ScreenLeaf/HomeSeason.swift" \
+    "$task_root/Sources/Patch/HomeSeason.swift" \
     "$task_root/scripts/verify-home-seasons.swift" -o "$task_work/verify-home-seasons"
 "$task_work/verify-home-seasons"
 # Launch arguments override preferences only for this process; no user defaults

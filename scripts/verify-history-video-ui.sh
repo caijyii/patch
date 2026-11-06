@@ -5,8 +5,8 @@ cd "$screenleaf_root"
 video_ui_work="$screenleaf_root/.build/verification/history-video-ui"
 mkdir -p "$video_ui_work"
 video_ui_sources=()
-for video_ui_source in Sources/ScreenLeaf/*.swift; do
-    if [[ "$video_ui_source" != Sources/ScreenLeaf/App.swift ]]; then video_ui_sources+=("$video_ui_source"); fi
+for video_ui_source in Sources/Patch/*.swift; do
+    if [[ "$video_ui_source" != Sources/Patch/App.swift ]]; then video_ui_sources+=("$video_ui_source"); fi
 done
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \

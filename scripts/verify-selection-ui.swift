@@ -214,7 +214,7 @@ private struct SelectionUIVerification {
                 exit(failures == 0 ? 0 : 1)
             }
             if CommandLine.arguments.contains("--scroll-only") {
-                run("scroll selection keeps body dragging and explicit W window selection") { try verifyScrollBodySelection(image) }
+                run("scroll selection supports automatic windows and body dragging") { try verifyScrollBodySelection(image) }
                 run("reselection cancellation fires once and does not run on completion or shutdown") { try verifyReselectionCancellation(image) }
                 print(failures == 0 ? "PASS: scrolling selection checks completed" : "FAIL: scrolling selection checks")
                 exit(failures == 0 ? 0 : 1)
@@ -233,7 +233,7 @@ private struct SelectionUIVerification {
             run("mode changes preserve the old result until a valid new result commits") { try verifyModePreservation(image) }
             run("window and full-screen resize become free rectangle selections") { try verifyModeResize(image) }
             run("default window hover and clicks coexist with direct rectangle dragging") { try verifyCandidate(image) }
-            run("scroll defaults to body dragging, retains explicit window selection and leaves OCR/record defaults unchanged") { try verifyScrollBodySelection(image) }
+            run("scroll defaults to automatic windows and retains body dragging") { try verifyScrollBodySelection(image) }
             run("invalid automatic drags restore mode and retain the last annotated result") { try verifyAutomaticDragPreservation(image) }
             run("drag selection persists and supports movement and all eight handles") { try verifyGestures(image) }
             run("active annotation tool routes hit testing to the canvas") { try verifyCanvasHit(image) }
@@ -400,7 +400,7 @@ private struct SelectionUIVerification {
         for purpose in [CaptureSelectionPurpose.screenshot, .text, .scroll, .record] {
             let f = SelectionUIFixture(source: image, purpose: purpose)
             let initial = purpose == .screenshot
-                ? ["框选", "主体", "窗口", "整屏"] + AnnotationControls.displayOrder.map(\.rawValue) + ["撤销", "保存", "贴图", "文字", "取消", "完成"]
+                ? ["框选", "主体", "窗口", "整屏"] + AnnotationControls.displayOrder.map(\.rawValue) + ["撤销", "保存", "贴图", "文字", "长截图", "取消", "完成"]
                 : (purpose == .record ? ["框选", "窗口", "整屏", "取消"] : [])
             try require(f.actionButtons.map(\.title) == initial && f.configurations.isEmpty && f.menus.isEmpty,
                         "\(purpose) has incorrect initial toolbar actions")
@@ -413,12 +413,12 @@ private struct SelectionUIVerification {
             }
             f.root.verificationSelect(selected)
             let expected = purpose == .screenshot
-                ? AnnotationControls.displayOrder.map(\.rawValue) + ["撤销", "框选", "主体", "窗口", "整屏", "保存", "贴图", "文字", "取消", "完成"]
+                ? AnnotationControls.displayOrder.map(\.rawValue) + ["撤销", "框选", "主体", "窗口", "整屏", "保存", "贴图", "文字", "长截图", "取消", "完成"]
                 : (purpose == .record ? ["框选", "窗口", "整屏", "取消", "确认"] : ["取消", "确认"])
             try require(f.actionButtons.map(\.title).sorted() == expected.sorted(),
                         "\(purpose) has incorrect buttons: \(f.actionButtons.map(\.title))")
             try require(f.configurations.isEmpty && f.menus.isEmpty, "\(purpose) exposes configuration without an active annotation tool")
-            for removed in ["自由框选", "窗口框选", "矩形", "移动", "编辑器", "长截图", "录屏"] {
+            for removed in ["自由框选", "窗口框选", "矩形", "移动", "编辑器", "录屏"] {
                 try require(!f.visibleButtons.contains(where: { $0.title == removed }), "Removed action \(removed) remains visible")
             }
             if purpose != .screenshot {
@@ -446,7 +446,7 @@ private struct SelectionUIVerification {
                     && modes.allSatisfy { $0.imagePosition == .noImage }, "Screenshot modes lost their first compact group")
         try require(tools.map(\.title) == AnnotationControls.displayOrder.map(\.rawValue) + ["撤销"]
                     && tools.allSatisfy { $0.imagePosition == .imageOnly }, "Screenshot tools lost their independent group")
-        try require(actions.map(\.title) == ["保存", "贴图", "文字", "取消", "完成"]
+        try require(actions.map(\.title) == ["保存", "贴图", "文字", "长截图", "取消", "完成"]
                     && actions.allSatisfy { $0.imagePosition == .imageOnly },
                     "Screenshot completion actions lost their icon presentation or accessible titles")
         for button in actions {
@@ -476,7 +476,7 @@ private struct SelectionUIVerification {
         try require(second.root.verificationCanvas.annotationWidth == 16, "New screenshot lost saved point width at Retina scale")
         try require(second.root.verificationCanvas.annotationColor.isEqual(NSColor.systemBlue), "New screenshot lost saved color")
         try second.button("箭头").performClick(nil)
-        try require(second.root.verificationCanvas.annotationWidth == 6, "Rectangle preference leaked into another tool")
+        try require(second.root.verificationCanvas.annotationWidth == 7, "Rectangle preference leaked into another tool")
         // Construct a different old object without a user configuration change.
         let canvas = second.root.verificationCanvas
         canvas.tool = .rectangle; canvas.annotationColor = .systemYellow; canvas.annotationWidth = 3
@@ -508,7 +508,7 @@ private struct SelectionUIVerification {
                 let annotation = ImageToolsTool.allCases.contains(where: { $0.rawValue == button.title }) && button.imagePosition == .imageOnly
                 let mode = (purpose == .screenshot || purpose == .record) && ["框选", "主体", "窗口", "整屏"].contains(button.title)
                 let compactAction = (purpose == .screenshot && ["取消", "确认", "完成"].contains(button.title))
-                    || (purpose == .screenshot && ["保存", "贴图", "文字"].contains(button.title))
+                    || (purpose == .screenshot && ["保存", "贴图", "文字", "长截图"].contains(button.title))
                 if annotation || button.title == "撤销" { try require(button.imagePosition == .imageOnly, "Annotation operations mix text and icon styles") }
                 else if mode { try require(button.imagePosition == .noImage, "Mode selection does not use the compact text group") }
                 else if compactAction { try require(button.imagePosition == .imageOnly, "Compact screenshot actions retain redundant captions") }
@@ -869,12 +869,12 @@ private struct SelectionUIVerification {
     private static func defaultValue(_ category: String) -> String {
         switch category {
         case "标注颜色": return "红色"
-        case "标注粗细": return "3"
+        case "标注粗细": return "3.5"
         case "文字大小": return "18"
         case "序号大小": return "24"
         case "贴纸图案": return "小花"
-        case "贴纸大小": return "16"
-        default: return "12"
+        case "贴纸大小": return "36"
+        default: return "8"
         }
     }
 
@@ -928,7 +928,7 @@ private struct SelectionUIVerification {
                 try require(label == category + ":" + defaultValue(category),
                             "\(tool)'s \(category) inherited configuration from another tool")
                 let values = configurationValues[category]!
-                let defaultIndex = values.firstIndex(of: defaultValue(category))!
+                let defaultIndex = values.firstIndex(of: defaultValue(category)) ?? 1
                 let chosen = category + ":" + values[(defaultIndex + 1) % values.count]
                 try f.setParameter(chosen)
                 selected[category] = chosen
@@ -991,7 +991,7 @@ private struct SelectionUIVerification {
         try require(canvas.selectedAnnotation?.tool == .rectangle && rectangleButton.state == .on,
                     "Object picking did not synchronize the annotation tool")
         let selectedWidth = try f.selectedSample("标注粗细")
-        try require(selectedWidth == "标注粗细:3", "Object picking did not synchronize its width")
+        try require(selectedWidth == "标注粗细:3.5", "Object picking did not synchronize its width")
         try f.setParameter("标注颜色:蓝色")
         try f.setParameter("标注粗细:8")
         try require(canvas.annotations.count == 1 && canvas.selectedAnnotation?.width == 16
@@ -1221,10 +1221,11 @@ private struct SelectionUIVerification {
         let scroll = SelectionUIFixture(source: image, candidates: [candidate], purpose: .scroll)
         scroll.root.mouseMoved(with: scroll.mouse(.mouseMoved, at: point))
         try scroll.routedGesture(from: point, to: point)
-        try require(scroll.root.verificationHover == nil && scroll.root.verificationSelection == nil
-            && scroll.actions.isEmpty, "Default scroll click still selects or starts the whole window")
-        try require(scroll.root.verificationEmptyHint == "拖动框选范围 · W 选择窗口 · Esc 取消",
+        try require(scroll.root.verificationSelection == candidate
+            && scroll.actions.isEmpty, "Default scroll click should select the window without starting capture")
+        try require(scroll.root.verificationEmptyHint == "悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消",
             "Default scroll guidance omits free selection or the explicit window entry")
+        _ = scroll.root.handleShortcut(scroll.key(15, characters: "r"))
         try scroll.routedGesture(from: body.origin, to: CGPoint(x: body.maxX, y: body.maxY))
         try require(scroll.root.verificationSelection == body && scroll.actions.isEmpty,
                     "Scroll drag did not preserve the exact body rectangle for confirmation")
@@ -1234,10 +1235,36 @@ private struct SelectionUIVerification {
             && scroll.actions[0].2?.height == 360,
             "Body confirmation changed the rectangle or invoked another capture purpose")
 
+        let direct = SelectionUIFixture(source: image, candidates: [candidate], purpose: .scroll)
+        try direct.routedGesture(from: body.origin, to: CGPoint(x: body.maxX, y: body.maxY))
+        try require(direct.root.verificationSelection == body, "Default scrolling mode cannot drag a rectangle")
+        let marked = try preparedAnnotationFixture(image, tool: "方框")
+        try marked.routedGesture(from: CGPoint(x: 220, y: 400), to: CGPoint(x: 280, y: 350))
+        let count = marked.root.verificationCanvas.annotations.count
+        var warned = false
+        marked.root.onRequestScroll = { hasMarks in warned = hasMarks; return false }
+        try marked.button("长截图").performClick(nil)
+        try require(warned && count > 0 && marked.root.verificationCanvas.annotations.count == count
+                    && marked.actions.isEmpty, "Cancelled transition must retain annotations")
+        marked.root.onRequestScroll = { hasMarks in warned = hasMarks; return true }
+        try marked.button("长截图").performClick(nil)
+        try require(warned && marked.actions.count == 1 && marked.actions[0].2 == nil,
+                    "Confirmed transition must not bake annotations into the initial frame")
+        let screenshot = SelectionUIFixture(source: image, candidates: [candidate])
+        screenshot.root.verificationSelect(body)
+        screenshot.root.onRequestScroll = { _ in false }
+        try screenshot.button("长截图").performClick(nil)
+        try require(screenshot.actions.isEmpty && screenshot.root.verificationSelection == body,
+                    "Denied scrolling transition lost the screenshot")
+        screenshot.root.onRequestScroll = { _ in true }
+        try screenshot.button("长截图").performClick(nil)
+        try require(screenshot.actions.count == 1 && screenshot.actions[0].0 == .scroll
+                    && screenshot.actions[0].1 == body && screenshot.actions[0].2 == nil,
+                    "Scrolling transition must preserve bounds and request a fresh first frame")
         let explicit = SelectionUIFixture(source: image, candidates: [candidate], purpose: .scroll)
         try require(explicit.root.handleShortcut(explicit.key(13, characters: "w")),
                     "Explicit scroll window shortcut was removed")
-        try require(explicit.root.verificationEmptyHint == "单击选择窗口 · R 自由框选 · Esc 取消",
+        try require(explicit.root.verificationEmptyHint == "悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消",
                     "Explicit window guidance omits the route back to free selection")
         explicit.root.mouseMoved(with: explicit.mouse(.mouseMoved, at: point))
         try require(explicit.root.verificationHover == candidate,
@@ -1610,7 +1637,7 @@ private struct SelectionUIVerification {
         screenshot.root.verificationSelect(selected)
         try screenshot.button("箭头").performClick(nil)
         let arrowWidth = try screenshot.selectedSample("标注粗细")
-        try require(arrowWidth == "标注粗细:3", "Arrow preview does not use the default stroke configuration")
+        try require(arrowWidth == "标注粗细:3.5", "Arrow preview does not use the default stroke configuration")
         try savePreview(screenshot, output: output, name: "selection-preview.png")
         let text = SelectionUIFixture(source: image, size: CGSize(width: 960, height: 600))
         text.root.verificationSelect(selected)

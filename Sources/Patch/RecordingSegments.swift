@@ -7,10 +7,10 @@ import Foundation
 /// Only recorded media is concatenated. Wall-clock pauses never enter this timeline.
 enum RecordingSegments {
     static func assemble(_ files: [URL], at output: URL) async throws -> CMTime {
-        guard !files.isEmpty else { throw ScreenLeafError(message: L("没有可保存的录屏片段。")) }
+        guard !files.isEmpty else { throw PatchError(message: L("没有可保存的录屏片段。")) }
         let composition = AVMutableComposition()
         guard let video = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            throw ScreenLeafError(message: L("无法创建录屏导出轨道。"))
+            throw PatchError(message: L("无法创建录屏导出轨道。"))
         }
         var audio: [AVMutableCompositionTrack] = []
         var cursor = CMTime.zero
@@ -18,11 +18,11 @@ enum RecordingSegments {
         for (index, asset) in assets.enumerated() {
             try Task.checkCancellation()
             guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first else {
-                throw ScreenLeafError(message: L("录屏片段缺少画面，原文件已保留。"))
+                throw PatchError(message: L("录屏片段缺少画面，原文件已保留。"))
             }
             let range = try await sourceVideo.load(.timeRange)
             guard range.isValid, range.duration.isNumeric, range.duration > .zero else {
-                throw ScreenLeafError(message: L("录屏片段为空，原文件已保留。"))
+                throw PatchError(message: L("录屏片段为空，原文件已保留。"))
             }
             try video.insertTimeRange(range, of: sourceVideo, at: cursor)
             if index == 0 { video.preferredTransform = try await sourceVideo.load(.preferredTransform) }
@@ -30,7 +30,7 @@ enum RecordingSegments {
             for (trackIndex, track) in sourceAudio.enumerated() {
                 while audio.count <= trackIndex {
                     guard let target = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-                        throw ScreenLeafError(message: L("无法创建录屏音轨，原文件已保留。"))
+                        throw PatchError(message: L("无法创建录屏音轨，原文件已保留。"))
                     }
                     audio.append(target)
                 }
@@ -45,7 +45,7 @@ enum RecordingSegments {
             cursor = cursor + range.duration
         }
         guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
-            throw ScreenLeafError(message: L("无法准备录屏导出，原文件已保留。"))
+            throw PatchError(message: L("无法准备录屏导出，原文件已保留。"))
         }
         if audio.count > 1 {
             // A file with independent audio tracks is not mixed by every player.

@@ -10,7 +10,7 @@ mkdir -p "$reopen_cache"
 export CLANG_MODULE_CACHE_PATH="$reopen_cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$reopen_cache"
 # Test the real delegate without launching the production @main entry point.
-python3 - "$screenleaf_root/Sources/ScreenLeaf/App.swift" "$reopen_work/AppUnderTest.swift" <<'PY'
+python3 - "$screenleaf_root/Sources/Patch/App.swift" "$reopen_work/AppUnderTest.swift" <<'PY'
 import sys
 from pathlib import Path
 source = Path(sys.argv[1]).read_text()
@@ -25,8 +25,8 @@ extension AppDelegate {
 PY
 
 reopen_inputs=()
-for reopen_source in "$screenleaf_root"/Sources/ScreenLeaf/*.swift; do
-    if [[ "$reopen_source" != "$screenleaf_root/Sources/ScreenLeaf/App.swift" ]]; then
+for reopen_source in "$screenleaf_root"/Sources/Patch/*.swift; do
+    if [[ "$reopen_source" != "$screenleaf_root/Sources/Patch/App.swift" ]]; then
         reopen_inputs+=("$reopen_source")
     fi
 done

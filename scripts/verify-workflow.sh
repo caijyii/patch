@@ -7,7 +7,7 @@ mkdir -p "$task_work"
 python3 - "$task_work/AppUnderTest.swift" <<'PY'
 from pathlib import Path
 import sys
-source = Path('Sources/ScreenLeaf/App.swift').read_text()
+source = Path('Sources/Patch/App.swift').read_text()
 source = source[source.index('@MainActor\nfinal class AppDelegate'):]
 for signature, event in [
     ('func applicationDidFinishLaunching(_ notification: Notification) {', 'did-finish-launching'),
@@ -50,7 +50,7 @@ probe = probe.replace(signature, signature + '''
 probe = probe.replace('            home.close()', '            delegate.workflowTrace("before-home-close")\n            home.close()\n            delegate.workflowTrace("after-home-close")')
 probe = probe.replace('            await settlePolicy(.accessory)', '            await settlePolicy(.accessory)\n            delegate.workflowTrace("after-accessory-wait")')
 Path(sys.argv[1]).with_name('WorkflowVerification.swift').write_text(probe)
-Path(sys.argv[1]).with_name('RecordingUnderTest.swift').write_text(Path('Sources/ScreenLeaf/Recording.swift').read_text() + '''
+Path(sys.argv[1]).with_name('RecordingUnderTest.swift').write_text(Path('Sources/Patch/Recording.swift').read_text() + '''
 extension RecordingCoordinator {
     var workflowPanel: NSPanel? { panel }
     func workflowSetPhase(_ value: String) {
@@ -72,8 +72,8 @@ extension RecordingCoordinator {
 ''')
 PY
 task_sources=()
-for task_source in Sources/ScreenLeaf/*.swift; do
-    if [[ "$task_source" != Sources/ScreenLeaf/App.swift && "$task_source" != Sources/ScreenLeaf/Recording.swift ]]; then task_sources+=("$task_source"); fi
+for task_source in Sources/Patch/*.swift; do
+    if [[ "$task_source" != Sources/Patch/App.swift && "$task_source" != Sources/Patch/Recording.swift ]]; then task_sources+=("$task_source"); fi
 done
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \

@@ -8,7 +8,7 @@ python3 - "$screenleaf_root" "$output/Verification.swift" <<'PY'
 from pathlib import Path
 import sys
 root = Path(sys.argv[1])
-source = (root / "Sources/ScreenLeaf/ImageTools.swift").read_text()
+source = (root / "Sources/Patch/ImageTools.swift").read_text()
 geometry = source.split("// PIN_IMAGE_GEOMETRY_BEGIN\n", 1)[1].split("// PIN_IMAGE_GEOMETRY_END", 1)[0]
 probe = (root / "scripts/verify-pin-image-geometry.swift").read_text()
 Path(sys.argv[2]).write_text("import AppKit\n" + geometry + "\n" + probe)

@@ -16,6 +16,7 @@ enum HomeSceneryArtwork {
         context.fill(CGRect(x: 0, y: 0, width: 720, height: 480))
         context.setLineCap(.round)
         context.setLineJoin(.round)
+        if season == .winter && !dark { drawWinterSun(in: context) }
 
         let horizon = CGMutablePath()
         horizon.move(to: CGPoint(x: 0, y: 412))
@@ -250,6 +251,7 @@ enum HomeSceneryArtwork {
         }
         if season == .winter {
             drawSnowOnGround(in: context, dark: dark)
+            if !dark { drawWinterSnowflakes(in: context) }
             return
         }
         for index in 0..<8 {
@@ -267,6 +269,47 @@ enum HomeSceneryArtwork {
                 context.fillEllipse(in: CGRect(x: x - 2.6, y: y - 3, width: 5.2, height: 4.5))
             }
         }
+    }
+
+    // Low winter sunlight remains behind the tree and the glass controls.
+    private static func drawWinterSun(in context: CGContext) {
+        context.saveGState()
+        let center = CGPoint(x: 145, y: 66)
+        if let glow = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [color(0xffdfa2, alpha: 0.72), color(0xffebc6, alpha: 0.30),
+                     color(0xfff4df, alpha: 0)] as CFArray, locations: [0, 0.35, 1]) {
+            context.drawRadialGradient(glow, startCenter: center, startRadius: 0,
+                endCenter: center, endRadius: 240, options: [])
+        }
+        context.setFillColor(color(0xffedbf, alpha: 0.9))
+        context.fillEllipse(in: CGRect(x: center.x - 23, y: center.y - 23, width: 46, height: 46))
+        context.restoreGState()
+    }
+
+    private static func drawWinterSnowflakes(in context: CGContext) {
+        context.saveGState()
+        // Sparse, fixed flakes avoid introducing an additional animation timer.
+        let flakes: [(CGFloat, CGFloat, CGFloat)] = [(80, 48, 5), (252, 68, 4),
+            (365, 38, 5), (580, 48, 4.5), (658, 128, 5), (54, 280, 5.5),
+            (190, 272, 4), (354, 269, 5), (570, 399, 4.5), (666, 369, 5)]
+        context.setStrokeColor(color(0x8ba8b5, alpha: 0.66))
+        context.setLineWidth(1.1)
+        for (x, y, radius) in flakes {
+            for arm in 0..<6 {
+                let angle = CGFloat(arm) * .pi / 3
+                let dx = cos(angle), dy = sin(angle)
+                let tip = CGPoint(x: x + radius * dx, y: y + radius * dy)
+                let fork = CGPoint(x: x + radius * 0.56 * dx, y: y + radius * 0.56 * dy)
+                context.move(to: CGPoint(x: x, y: y)); context.addLine(to: tip)
+                for side: CGFloat in [-1, 1] {
+                    context.move(to: fork)
+                    context.addLine(to: CGPoint(x: fork.x + radius * 0.28 * (dx - side * dy),
+                        y: fork.y + radius * 0.28 * (dy + side * dx)))
+                }
+            }
+            context.strokePath()
+        }
+        context.restoreGState()
     }
 
     private static func drawSnowOnGround(in context: CGContext, dark: Bool) {

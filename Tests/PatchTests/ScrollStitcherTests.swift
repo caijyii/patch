@@ -1,7 +1,7 @@
 import XCTest
 import Foundation
 import CoreGraphics
-@testable import ScreenLeaf
+@testable import Patch
 
 final class ScrollStitcherTests: XCTestCase {
     private func image(width: Int = 96, height: Int = 90, top: Int, horizontal: Int = 0,

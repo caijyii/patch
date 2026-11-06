@@ -201,7 +201,7 @@ extension ImageToolsOCRController {
                 try verifyOutlinePixels(second, selected: false, output: nil)
             }
         }
-        await check("text input and image annotation keep key focus and toolbar while another app stays frontmost") {
+        await check("text and annotation preserve foreground; image clicks activate for pinch") {
             NSApp.setActivationPolicy(.regular)
             let host = Process()
             host.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
@@ -240,7 +240,7 @@ extension ImageToolsOCRController {
             await settle()
             try require(hostRemainsFrontmost() && firstWindow.isKeyWindow && first.nativeHUD?.isVisible == true
                         && text.nativeHUD?.isVisible == false,
-                        "Selecting an image activates the app or leaves the previous toolbar visible")
+                        "Programmatic image focus activates the app or leaves the previous toolbar visible")
             first.nativeButtons.first(where: { $0.title == "标注" })?.performClick(nil)
             await settle(); await settle()
             guard let canvas = first.nativeCanvas else { throw PinUIFailure(description: "Annotation did not open") }
@@ -252,6 +252,29 @@ extension ImageToolsOCRController {
             await settle()
             try require(hostRemainsFrontmost() && firstWindow.isKeyWindow && firstWindow.firstResponder === canvas,
                         "Inline annotation cannot regain nonactivating key focus")
+            let clicked = ImageToolsPinController(image: source, pixelScale: 2)
+            defer { clicked.close() }
+            guard let clickedWindow = clicked.window, let imageView = clicked.nativeDragView else {
+                throw PinUIFailure(description: "Missing click-activation fixture")
+            }
+            clickedWindow.orderFrontRegardless()
+            await settle()
+            try require(hostRemainsFrontmost(), "Showing an image pin unexpectedly activates Patch")
+            let location = imageView.convert(CGPoint(x: imageView.bounds.midX, y: imageView.bounds.midY), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: 0,
+                    windowNumber: clickedWindow.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+                if type == .leftMouseDown { imageView.mouseDown(with: event) } else { imageView.mouseUp(with: event) }
+            }
+            for _ in 0..<40 {
+                await settle()
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier { break }
+            }
+            try require(NSRunningApplication.current.isActive
+                        && NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+                        && clickedWindow.isKeyWindow && clicked.nativeSelected,
+                        "Clicking an image pin must activate Patch for native pinch events")
+
         }
         ocr.complete("公开测试文字")
         ocrWindow.makeKeyAndOrderFront(nil)
@@ -308,7 +331,7 @@ extension ImageToolsOCRController {
             let bitmapY = content.isFlipped ? point.y : content.bounds.maxY - point.y
             let y = Int(bitmapY / content.bounds.height * CGFloat(bitmap.pixelsHigh))
             guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
-                throw PinUIFailure(description: "Cannot inspect native pin preview pixels")
+                throw PinUIFailure(description: "Cannot inspect native pin preview pixels: sample=\(point) pixel=(\(x),\(y)) bitmap=\(bitmap.pixelsWide)x\(bitmap.pixelsHigh) bounds=\(content.bounds) image=\(imageRect)")
             }
             return color
         }

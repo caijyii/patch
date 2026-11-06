@@ -1,5 +1,16 @@
 import AppKit
 
+@MainActor private final class AmbientProbeView: NSView {
+    var redrawRequests = 0
+    override var needsDisplay: Bool {
+        get { super.needsDisplay }
+        set {
+            if newValue { redrawRequests += 1 }
+            super.needsDisplay = newValue
+        }
+    }
+}
+
 @main
 struct VerifyHomeScenery {
     @MainActor static func main() {
@@ -11,6 +22,9 @@ struct VerifyHomeScenery {
             dateProvider: { now }, timeZoneProvider: { zone })
         precondition(view.season == .winter, "Initial theme must follow the local date")
 
+        var wallSeason = view.season
+        var changes = 0
+        view.onSeasonChanged = { wallSeason = $0; changes += 1 }
         now = iso.date(from: "2026-02-28T16:00:00Z")!
         NotificationCenter.default.post(name: .NSCalendarDayChanged, object: nil)
         precondition(view.season == .spring, "A local day change must refresh the theme")
@@ -37,6 +51,22 @@ struct VerifyHomeScenery {
         precondition(view.season == .spring, "Season updates must not depend on animation being enabled")
         view.setMotionActive(true)
         precondition(view.nextSeasonRefresh == nil, "Detached views should not run timers")
+        precondition(wallSeason == .spring && changes == 5, "The wall must follow each season change, without duplicate updates")
+        let wall = AmbientProbeView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        let image = NSImage(size: wall.bounds.size)
+        image.lockFocus()
+        WindowAmbientBackground.draw(in: wall)
+        image.unlockFocus()
+        for name in [NSNotification.Name.NSCalendarDayChanged, .NSSystemClockDidChange,
+                     .NSSystemTimeZoneDidChange, NSApplication.didBecomeActiveNotification] {
+            wall.redrawRequests = 0
+            NotificationCenter.default.post(name: name, object: nil)
+            precondition(wall.redrawRequests == 1, "Functional windows must refresh after date/context changes")
+        }
+        wall.redrawRequests = 0
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        precondition(wall.redrawRequests == 1, "Functional windows must refresh after waking")
+        print("PASS: shared ambient backgrounds refresh on day, clock, timezone, activation and wake")
         print("PASS: home scenery initialization, day/clock/timezone/wake refresh and inactive lifecycle")
     }
 }

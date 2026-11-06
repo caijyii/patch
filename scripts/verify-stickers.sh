@@ -9,12 +9,12 @@ if [[ "$sticker_mode" != "" && "$sticker_mode" != "--build-only" && "$sticker_mo
     printf 'Usage: scripts/verify-stickers.sh [--build-only|--native-drag-build]\n' >&2
     exit 2
 fi
-cat Sources/ScreenLeaf/ImageTools.swift scripts/verify-stickers.swift > "$sticker_work/StickerVerification.swift"
+cat Sources/Patch/ImageTools.swift scripts/verify-stickers.swift > "$sticker_work/StickerVerification.swift"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \
-    Sources/ScreenLeaf/CaptureRegion.swift Sources/ScreenLeaf/Localization.swift Sources/ScreenLeaf/WindowTitle.swift Sources/ScreenLeaf/WindowActivation.swift Sources/ScreenLeaf/WindowAmbientBackground.swift Sources/ScreenLeaf/Preferences.swift \
-    Sources/ScreenLeaf/AnnotationControls.swift Sources/ScreenLeaf/SubjectExtraction.swift \
-    Sources/ScreenLeaf/SubjectSelection.swift "$sticker_work/StickerVerification.swift" \
+    Sources/Patch/CaptureRegion.swift Sources/Patch/Localization.swift Sources/Patch/WindowTitle.swift Sources/Patch/WindowActivation.swift Sources/Patch/HomeSeason.swift Sources/Patch/WindowAmbientBackground.swift Sources/Patch/Preferences.swift \
+    Sources/Patch/AnnotationControls.swift Sources/Patch/SubjectExtraction.swift \
+    Sources/Patch/SubjectSelection.swift "$sticker_work/StickerVerification.swift" \
     -o "$sticker_work/verify-stickers"
 if [[ "$sticker_mode" == "--native-drag-build" ]]; then
     sticker_app="$sticker_work/StickerDragProbe.app"

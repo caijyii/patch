@@ -7,7 +7,7 @@ status_app="$status_work/Status Recording Check.app"
 mkdir -p "$status_app/Contents/MacOS"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \
-    Sources/ScreenLeaf/Localization.swift Sources/ScreenLeaf/IconArtwork.swift Sources/ScreenLeaf/StatusBarControls.swift \
+    Sources/Patch/Localization.swift Sources/Patch/IconArtwork.swift Sources/Patch/StatusBarControls.swift \
     scripts/verify-status-recording.swift -o "$status_app/Contents/MacOS/StatusRecordingCheck"
 python3 - "$status_app/Contents/Info.plist" <<'PY'
 from pathlib import Path

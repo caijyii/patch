@@ -35,6 +35,13 @@ enum AppLocalization {
     static func text(_ source: String) -> String { isEnglish ? english[source] ?? source : source }
     // CATALOG_START
     static let english: [String: String] = [
+        "拖动移动 · 滚轮缩放 · 单击后捏合缩放 · 右键操作": "Drag to move · Scroll to zoom · Click before pinching · Right-click for actions",
+        "进入长截图将清除当前标注": "Starting a scrolling capture will clear current annotations",
+        "保留当前选区重新捕获，完成拼接后可重新标注。": "Capture the current region again. You can annotate after stitching is complete.",
+        "继续长截图": "Continue scrolling capture",
+        "沿用当前选区开始长截图": "Start scrolling capture in the current region",
+        "已保留当前长图": "Current scrolling capture preserved",
+        "操作未完成 · 可重试": "Action incomplete · Try again",
         "移除这组快捷键": "Remove this shortcut",
         "添加快捷键（最多 2 组）": "Add a shortcut (up to 2)",
         "快捷键暂时不可用": "Shortcut temporarily unavailable",

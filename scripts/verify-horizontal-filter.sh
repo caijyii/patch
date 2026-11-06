@@ -20,7 +20,7 @@ task_compile_arguments=(-parse-as-library -O -swift-version 5 -sdk "$task_sdk"
 if [[ "$#" -eq 1 ]]; then
     task_compile_arguments+=(-D LEGACY_FILTER)
 else
-    task_sources+=("$task_root/Sources/ScreenLeaf/HorizontalScrollFilter.swift")
+    task_sources+=("$task_root/Sources/Patch/HorizontalScrollFilter.swift")
 fi
 xcrun swiftc "${task_compile_arguments[@]}" "${task_sources[@]}" -o "$task_work/verify-horizontal-filter"
 "$task_work/verify-horizontal-filter"

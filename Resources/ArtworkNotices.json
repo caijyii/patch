@@ -7,11 +7,11 @@
   "artwork": [
     {
       "name": "Application and menu bar icons",
-      "source": "Sources/ScreenLeaf/IconArtwork.swift"
+      "source": "Sources/Patch/IconArtwork.swift"
     },
     {
       "name": "Seasonal Home scenery",
-      "source": "Sources/ScreenLeaf/HomeSceneryArtwork.swift"
+      "source": "Sources/Patch/HomeSceneryArtwork.swift"
     },
     {
       "name": "Original vector stickers",

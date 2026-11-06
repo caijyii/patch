@@ -5,7 +5,7 @@ import argparse
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-FILES = ("README.md", "LICENSE", "BRANDING.md", "THIRD_PARTY_NOTICES.md",
+FILES = ("README.md", "README.en.md", "AGENTS.md", "LICENSE", "BRANDING.md", "THIRD_PARTY_NOTICES.md",
          "CONTRIBUTING.md", "SECURITY.md", "Package.swift", ".gitignore", ".gitattributes")
 DIRECTORIES = ("Sources", "Resources", "Tests", "scripts", "design", "docs", "Distribution", ".github")
 SENSITIVE_SUFFIXES = {".p12", ".p8", ".key", ".pem", ".mobileprovision", ".provisionprofile", ".xcuserstate"}

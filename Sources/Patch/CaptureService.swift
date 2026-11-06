@@ -12,7 +12,7 @@ final class CaptureService {
     func capture(_ region: CaptureRegion) async throws -> CGImage {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == region.displayID }) else {
-            throw ScreenLeafError(message: "选中的显示器已断开，请重新框选。")
+            throw PatchError(message: "选中的显示器已断开，请重新框选。")
         }
         let included = CaptureWindowPolicy.includedWindowIDs
         let ownWindows = content.windows.filter {

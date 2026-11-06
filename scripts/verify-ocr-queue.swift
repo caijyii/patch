@@ -157,13 +157,13 @@ private struct OCRQueueProbe {
         let queue = ImageToolsOCRQueue { image, _ in
             state.begin(image.width)
             defer { state.end() }
-            if image.width == 35 { throw ScreenLeafError(message: "generated fixture failure") }
+            if image.width == 35 { throw PatchError(message: "generated fixture failure") }
             return "generated fixture success"
         }
         var errorMessage: String?
         var resultText: String?
         let failing = queue.enqueue(image(35)) {
-            if case .failure(let error) = $0 { errorMessage = (error as? ScreenLeafError)?.message }
+            if case .failure(let error) = $0 { errorMessage = (error as? PatchError)?.message }
         }
         let next = queue.enqueue(image(36)) {
             if case .success(let text) = $0 { resultText = text }
@@ -234,7 +234,7 @@ private struct OCRQueueProbe {
         for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
             window.appearance = NSAppearance(named: appearanceName)
             for empty in [false, true] {
-                if empty { controller.fail(ScreenLeafError(message: "没有识别到文字。")) }
+                if empty { controller.fail(PatchError(message: "没有识别到文字。")) }
                 else { controller.complete(longText) }
                 for size in [NSSize(width: 440, height: 280), NSSize(width: 340, height: 220), NSSize(width: 620, height: 420)] {
                     window.setContentSize(size)
@@ -269,7 +269,7 @@ private struct OCRQueueProbe {
                 AppLocalization.language = language
                 let controller = ImageToolsOCRController(writeClipboard: { _ in false })
                 let explanation = L("没有识别到文字。可尝试截取更清晰或更大的文字区域。")
-                controller.fail(ScreenLeafError(message: explanation))
+                controller.fail(PatchError(message: explanation))
                 try expect(controller.probeStatusHidden && controller.probeMessage == explanation
                            && !controller.probeCopyEnabled && !controller.probeHasResult,
                            "empty OCR shows one explanation and cannot copy [\(language.rawValue)]")

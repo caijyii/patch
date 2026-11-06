@@ -1,6 +1,6 @@
 import XCTest
 import CoreGraphics
-@testable import ScreenLeaf
+@testable import Patch
 
 final class CaptureRegionTests: XCTestCase {
     func testAppKitRegionConvertsToTopLeftScreenCoordinates() {

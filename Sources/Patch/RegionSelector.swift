@@ -165,8 +165,28 @@ final class RegionSelector {
         views.forEach { $0.refreshHover() }
     }
 
+    var authorizeScroll: () -> Bool = { true }
+
     private func configureAction(for view: SelectionView, displayID: CGDirectDisplayID?, screenFrame: CGRect,
                                  scale: CGFloat, candidates: [SelectionCandidate], primaryTop: CGFloat) {
+        view.onRequestScroll = { [weak self, weak view] hasAnnotations in
+            guard let self, let view else { return false }
+            let id = self.selectionID
+            self.windows.forEach { $0.orderOut(nil) }
+            defer { if self.selectionID == id { self.restoreOverlays(focus: view) } }
+            if hasAnnotations {
+                let alert = NSAlert()
+                alert.messageText = L("进入长截图将清除当前标注")
+                alert.informativeText = L("保留当前选区重新捕获，完成拼接后可重新标注。")
+                alert.addButton(withTitle: L("继续长截图"))
+                alert.addButton(withTitle: L("取消"))
+                WindowActivationCoordinator.shared.register(alert.window)
+                defer { WindowActivationCoordinator.shared.unregister(alert.window) }
+                NSApp.activate(ignoringOtherApps: true)
+                guard alert.runModal() == .alertFirstButtonReturn else { return false }
+            }
+            return self.authorizeScroll() && self.selectionID == id
+        }
         view.onAction = { [weak self, weak view] action, rect, image in
             guard let self, let view, let displayID else { return }
             let global = rect.offsetBy(dx: screenFrame.minX, dy: screenFrame.minY)
@@ -422,6 +442,7 @@ private final class SelectionView: NSView {
     var onHasSelection: (() -> Bool)?
     var onBackgroundDoubleClick: (() -> Bool)?
     var onModeChange: ((ScreenshotSelectionMode) -> Void)?
+    var onRequestScroll: ((Bool) -> Bool)?
     var hasSelection: Bool { committedMode == .subject ? !subjects.selected.isEmpty : selection != nil }
     private let rectangleCanvas: ImageToolsCanvas
     private let subjectCanvas: ImageToolsCanvas
@@ -493,7 +514,7 @@ private final class SelectionView: NSView {
         self.purpose = purpose
         self.toolbarArea = toolbarArea ?? CGRect(origin: .zero, size: size)
         super.init(frame: CGRect(origin: .zero, size: size))
-        if purpose == .text || purpose == .record { selectionMode = .automatic }
+        if purpose == .text || purpose == .record || (purpose == .scroll && initialMode == .window) { selectionMode = .automatic }
         if purpose == .record { screenshotMode = .window }
         for drawingCanvas in [rectangleCanvas, subjectCanvas] {
             drawingCanvas.frame = bounds
@@ -602,7 +623,8 @@ private final class SelectionView: NSView {
         }
         let definitions: [(String, String, CaptureSelectionAction)] = [
             (L("完成"), "checkmark", .copy), (L("保存"), "square.and.arrow.down", .save),
-            (L("贴图"), "pin", .pin), (L("文字"), "text.viewfinder", .ocr)
+            (L("贴图"), "pin", .pin), (L("文字"), "text.viewfinder", .ocr),
+            (L("长截图"), "rectangle.expand.vertical", .scroll)
         ]
         for (title, symbol, action) in definitions {
             let handler: () -> Void = { [weak self] in self?.perform(action) }
@@ -611,6 +633,7 @@ private final class SelectionView: NSView {
                 : SelectionButton(title, symbol: symbol, action: handler)
             button.imagePosition = .imageOnly
             if action == .save { button.toolTip = L("保存 PNG（⌘S）") }
+            if action == .scroll { button.toolTip = L("沿用当前选区开始长截图") }
             if action == .pin { button.toolTip = L("将选区贴到屏幕") }
             imageActions.append(button)
             imageActionButtons.append((action, button))
@@ -1051,8 +1074,8 @@ private final class SelectionView: NSView {
         if purpose == .screenshot {
             chrome.emptyHint = screenshotMode == .window ? L("悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消") : L("拖动框选范围 · R 框选 · W 窗口 · F 整屏 · Esc 取消")
         } else if purpose == .scroll {
-            chrome.emptyHint = selectionMode == .window
-                ? L("单击选择窗口 · R 自由框选 · Esc 取消")
+            chrome.emptyHint = selectionMode != .free
+                ? L("悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消")
                 : L("拖动框选范围 · W 选择窗口 · Esc 取消")
         }
         chrome.needsDisplay = true
@@ -1074,7 +1097,7 @@ private final class SelectionView: NSView {
             let subject = screenshotMode == .subject
             let ready = !pendingModeChange && (committedMode == .subject ? subjects.canExport : selection != nil)
             imageActionButtons.forEach { action, button in
-                button.isEnabled = ready && !(subject && action == .ocr)
+                button.isEnabled = ready && !(subject && (action == .ocr || action == .scroll))
                 if action == .ocr {
                     button.toolTip = subject ? L("主体模式暂不支持提取文字，可切换到框选、窗口或整屏。") : L("提取当前选区中的文字")
                 }
@@ -1140,6 +1163,12 @@ private final class SelectionView: NSView {
         guard purpose.supportsAnnotations || action == purpose.primaryAction else { return }
         do {
             canvas.finishTextEditing()
+            if action == .scroll && purpose == .screenshot {
+                guard onRequestScroll?(!canvas.annotations.isEmpty) == true else { return }
+                // Capture a fresh, unannotated first frame after the frozen overlay closes.
+                onAction?(action, selection, nil)
+                return
+            }
             if action == .record { onAction?(action, selection, nil); return }
             let crop = SelectionGeometry.pixelRect(selection, in: bounds, imageSize: chrome.imageSize)
             let image = try canvas.renderedImage(croppingTo: crop)

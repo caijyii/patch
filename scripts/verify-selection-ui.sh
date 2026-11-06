@@ -16,20 +16,20 @@ fi
 mkdir -p "$task_work/module-cache"
 # The probe shares the private view implementation, with synthetic view events only.
 # It never calls RegionSelector.select(), captures a screen, posts CGEvents, or opens a modal.
-cat "$task_root/Sources/ScreenLeaf/RegionSelector.swift" "$task_root/scripts/verify-selection-ui.swift" \
+cat "$task_root/Sources/Patch/RegionSelector.swift" "$task_root/scripts/verify-selection-ui.swift" \
     > "$task_work/SelectionUIVerification.swift"
 printf 'Verifying selection UI with SDK: %s\n' "$task_sdk"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$task_sdk" \
     -module-cache-path "$task_work/module-cache" -target arm64-apple-macosx15.0 \
-    "$task_root/Sources/ScreenLeaf/CaptureRegion.swift" \
-    "$task_root/Sources/ScreenLeaf/SelectionGeometry.swift" \
-    "$task_root/Sources/ScreenLeaf/InlineSubjectSelection.swift" \
-    "$task_root/Sources/ScreenLeaf/ScrollEventRouting.swift" \
-    "$task_root/Sources/ScreenLeaf/ImageTools.swift" \
-    "$task_root/Sources/ScreenLeaf/SubjectExtraction.swift" "$task_root/Sources/ScreenLeaf/SubjectSelection.swift" \
-    "$task_root/Sources/ScreenLeaf/Localization.swift" "$task_root/Sources/ScreenLeaf/WindowTitle.swift" "$task_root/Sources/ScreenLeaf/WindowActivation.swift" "$task_root/Sources/ScreenLeaf/WindowAmbientBackground.swift" "$task_root/Sources/ScreenLeaf/Preferences.swift" \
-    "$task_root/Sources/ScreenLeaf/AnnotationControls.swift" \
-    "$task_root/Sources/ScreenLeaf/DemoImage.swift" \
+    "$task_root/Sources/Patch/CaptureRegion.swift" \
+    "$task_root/Sources/Patch/SelectionGeometry.swift" \
+    "$task_root/Sources/Patch/InlineSubjectSelection.swift" \
+    "$task_root/Sources/Patch/ScrollEventRouting.swift" \
+    "$task_root/Sources/Patch/ImageTools.swift" \
+    "$task_root/Sources/Patch/SubjectExtraction.swift" "$task_root/Sources/Patch/SubjectSelection.swift" \
+    "$task_root/Sources/Patch/Localization.swift" "$task_root/Sources/Patch/WindowTitle.swift" "$task_root/Sources/Patch/WindowActivation.swift" "$task_root/Sources/Patch/HomeSeason.swift" "$task_root/Sources/Patch/WindowAmbientBackground.swift" "$task_root/Sources/Patch/Preferences.swift" \
+    "$task_root/Sources/Patch/AnnotationControls.swift" \
+    "$task_root/Sources/Patch/DemoImage.swift" \
     "$task_work/SelectionUIVerification.swift" -o "$task_work/verify-selection-ui"
 if [[ "${1:-}" == "--build-only" ]]; then
     printf 'BUILT: selection UI verification (not launched)\n'

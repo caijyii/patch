@@ -36,7 +36,7 @@ func showError(_ error: Error, title: String = "操作未完成") {
     alert.runModal()
 }
 
-struct ScreenLeafError: LocalizedError {
+struct PatchError: LocalizedError {
     let message: String
     var errorDescription: String? { L(message) }
 }

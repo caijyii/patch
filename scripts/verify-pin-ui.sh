@@ -4,12 +4,12 @@ source "$(dirname "$0")/environment.sh"
 cd "$screenleaf_root"
 task_work="$screenleaf_root/.build/verification/pin-ui"
 mkdir -p "$task_work/module-cache"
-cat Sources/ScreenLeaf/ImageTools.swift scripts/verify-pin-ui.swift > "$task_work/PinUIVerification.swift"
+cat Sources/Patch/ImageTools.swift scripts/verify-pin-ui.swift > "$task_work/PinUIVerification.swift"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$task_work/module-cache" -target "$(uname -m)-apple-macosx15.0" \
-    Sources/ScreenLeaf/CaptureRegion.swift Sources/ScreenLeaf/Localization.swift Sources/ScreenLeaf/WindowTitle.swift Sources/ScreenLeaf/WindowActivation.swift Sources/ScreenLeaf/WindowAmbientBackground.swift Sources/ScreenLeaf/Preferences.swift \
-    Sources/ScreenLeaf/AnnotationControls.swift Sources/ScreenLeaf/DemoImage.swift \
-    Sources/ScreenLeaf/SubjectExtraction.swift Sources/ScreenLeaf/SubjectSelection.swift \
+    Sources/Patch/CaptureRegion.swift Sources/Patch/Localization.swift Sources/Patch/WindowTitle.swift Sources/Patch/WindowActivation.swift Sources/Patch/HomeSeason.swift Sources/Patch/WindowAmbientBackground.swift Sources/Patch/Preferences.swift \
+    Sources/Patch/AnnotationControls.swift Sources/Patch/DemoImage.swift \
+    Sources/Patch/SubjectExtraction.swift Sources/Patch/SubjectSelection.swift \
     "$task_work/PinUIVerification.swift" -o "$task_work/verify-pin-ui"
 if [[ "${1:-}" == "--build-only" ]]; then
     printf 'BUILT: pin native UI verification (not launched)\n'

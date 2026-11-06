@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import UniformTypeIdentifiers
 import ApplicationServices
 import CoreGraphics
 import OSLog
@@ -267,7 +268,7 @@ private final class ScrollPreviewView: NSView {
 
 @MainActor
 final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
-    enum CompletionAction { case copy, annotate }
+    enum CompletionAction { case copy, annotate, save, pin, ocr }
     private static let logger = Logger(subsystem: "dev.screenleaf.app", category: "ScrollCapture")
     // Recovering keeps sampling without posting events; only a verified overlap resumes stitching.
     private enum State { case preparing, running, recovering, paused, reselecting, finishing }
@@ -323,6 +324,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     private var pauseButton = NSButton()
     private var previewButton = NSButton()
     private var reselectButton = NSButton()
+    private var exportButtons: [NSButton] = []
     private var finishButton = SelectionButton(L("完成"), symbol: "checkmark") {}
     private var annotateButton = NSButton()
     private var cancelButton = NSButton()
@@ -452,9 +454,13 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         finishButton = SelectionButton.confirmation(toolTip: L("完成长截图，复制并关闭")) { [weak self] in self?.finish(.copy) }
         annotateButton = SelectionButton(L("标注"), symbol: SelectionButton.annotationSymbol) { [weak self] in self?.finish(.annotate) }
         annotateButton.toolTip = L("在当前浮层标注完整长图")
+        exportButtons = [(L("保存"), "square.and.arrow.down", CompletionAction.save),
+                         (L("贴图"), "pin", .pin), (L("提取文字"), "text.viewfinder", .ocr)].map { title, symbol, action in
+            SelectionButton(title, symbol: symbol) { [weak self] in self?.finish(action) }
+        }
         cancelButton = SelectionButton.cancellation(toolTip: L("取消长截图")) { [weak self] in self?.cancel() }
         toolbar.trailingActions = [cancelButton, finishButton]
-        for button in [upButton, downButton, pauseButton, previewButton, reselectButton, finishButton, annotateButton, cancelButton] {
+        for button in [upButton, downButton, pauseButton, previewButton, reselectButton, finishButton, annotateButton, cancelButton] + exportButtons {
             button.imagePosition = .imageOnly
         }
         upButton.toolTip = L("自动向上滚动并拼接")
@@ -491,6 +497,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         previewButton.toolTip = previewExpanded ? L("收起长图预览") : L("展开长图预览")
         finishButton.isEnabled = hasFirstFrame && state != .finishing && state != .reselecting
         annotateButton.isEnabled = finishButton.isEnabled
+        exportButtons.forEach { $0.isEnabled = finishButton.isEnabled }
         reselectButton.isEnabled = state != .finishing && state != .reselecting
         dimensionsLabel.stringValue = hasFirstFrame ? "\(imageWidth) × \(imageHeight) px" : L("等待首帧")
         previewView.hasImage = hasFirstFrame
@@ -498,7 +505,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         if state == .paused || (state == .running && mode.isAutomatic) { actions.append(pauseButton) }
         actions += [previewButton]
         if onReselect != nil { actions.append(reselectButton) }
-        actions += [annotateButton, cancelButton, finishButton]
+        actions += [annotateButton] + exportButtons + [cancelButton, finishButton]
         toolbar.rows = [actions, [statusLabel, dimensionsLabel]]
         let available = fallbackHUDBounds ?? NSScreen.screens.first(where: { $0.frame == region.screenFrame })?.visibleFrame ?? region.screenFrame
         let controlsSize = toolbar.arrange(maxWidth: min(520, max(40, available.width - 24)))
@@ -895,10 +902,22 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     private func presentAnnotation(_ image: CGImage) {
         guard let panel = panel as? ScrollHUDPanel, let region else { return }
         WindowActivationCoordinator.shared.register(panel)
-        let editor = InlineAnnotationView(image: image, pixelScale: region.scale, completionHint: L("完成长截图，复制并关闭"),
-                                          showsCopyAction: false, allowsOutsideAnnotations: true, cancellationHint: L("取消长截图并关闭"))
-        inlineEditor = editor
         let token = session
+        let extra: [(String, String, (CGImage) throws -> Void)] = [
+            (L("贴图"), "pin", { [weak self] image in
+                guard let self, self.session == token else { return }
+                try self.onComplete(image, .pin)
+                self.cancel()
+            }),
+            (L("提取文字"), "text.viewfinder", { [weak self] image in
+                guard let self, self.session == token else { return }
+                try self.onComplete(image, .ocr)
+                self.cancel()
+            })
+        ]
+        let editor = InlineAnnotationView(image: image, pixelScale: region.scale, completionHint: L("完成长截图，复制并关闭"),
+                                          showsCopyAction: false, allowsOutsideAnnotations: true, cancellationHint: L("取消长截图并关闭"), additionalActions: extra)
+        inlineEditor = editor
         editor.onComplete = { [weak self] rendered in
             guard let self, self.session == token else { return }
             try self.onComplete(rendered, .copy)
@@ -926,6 +945,19 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(editor.canvas)
     }
 
+    private func saveResult(_ image: CGImage) throws -> Bool {
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.png]
+        savePanel.nameFieldStringValue = "Patch-\(ImageToolsUI.timestamp()).png"
+        WindowActivationCoordinator.shared.register(savePanel)
+        defer { WindowActivationCoordinator.shared.unregister(savePanel) }
+        NSApp.activate(ignoringOtherApps: true)
+        guard savePanel.runModal() == .OK, let url = savePanel.url else { return false }
+        try ImageToolsUI.png(image).write(to: url, options: .atomic)
+        ImageToolsUI.onCompletedImage?(image, outputPixelScale)
+        return true
+    }
+
     private func finish(_ action: CompletionAction) {
         guard hasFirstFrame, state != .finishing, state != .reselecting else { return }
         run = UUID()
@@ -942,12 +974,22 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             guard let self, self.session == token, !Task.isCancelled else { return }
             self.task = nil
             do {
-                guard let image else { throw ScreenLeafError(message: L("无法生成长截图，请重试。")) }
+                guard let image else { throw PatchError(message: L("无法生成长截图，请重试。")) }
                 // Keep the assembled image available until copying or handing it to the editor succeeds.
                 if action == .annotate {
                     self.presentAnnotation(image)
                 } else {
-                    try self.onComplete(image, action)
+                    if action == .save {
+                        guard try self.saveResult(image) else {
+                            guard self.session == token else { return }
+                            self.state = .paused
+                            self.mode = .manual
+                            self.setStatus(L("已保留当前长图"))
+                            return
+                        }
+                    } else {
+                        try self.onComplete(image, action)
+                    }
                     guard self.session == token else { return }
                     self.cancel()
                 }
@@ -955,7 +997,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                 guard self.session == token else { return }
                 self.state = .paused
                 self.mode = .manual
-                self.setStatus(action == .copy ? L("复制失败 · 可重试") : L("打开标注失败 · 可重试"),
+                self.setStatus(action == .copy ? L("复制失败 · 可重试") : L("操作未完成 · 可重试"),
                                detail: error.localizedDescription + L("\n已有长图已保留，可重试或选择另一种完成方式。"))
             }
         }

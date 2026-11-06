@@ -5,7 +5,7 @@ cd "$screenleaf_root"
 order_work="$screenleaf_root/.build/verification/status-window-order"
 mkdir -p "$order_work"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" -module-cache-path "$screenleaf_cache" \
-    -target "$(uname -m)-apple-macosx15.0" Sources/ScreenLeaf/IconArtwork.swift Sources/ScreenLeaf/StatusBarControls.swift Sources/ScreenLeaf/WindowActivation.swift \
+    -target "$(uname -m)-apple-macosx15.0" Sources/Patch/IconArtwork.swift Sources/Patch/StatusBarControls.swift Sources/Patch/WindowActivation.swift \
     scripts/verify-status-window-order.swift -o "$order_work/probe"
 python3 - "$order_work" <<'PY_BUNDLES'
 from pathlib import Path

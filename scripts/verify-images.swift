@@ -1780,7 +1780,7 @@ private struct ImageToolsVerification {
         ocr.verificationCopy()
         try require(!ocr.verificationCopyEnabled && clipboardAttempts == 1 && ocrCloseCount == 0,
                     "Blank edited OCR text copied or closed its result")
-        ocr.fail(ScreenLeafError(message: "请尝试更清晰的文字。"))
+        ocr.fail(PatchError(message: "请尝试更清晰的文字。"))
         try require(!ocr.verificationCopyEnabled && ocr.verificationStatusHidden && ocr.verificationText == "请尝试更清晰的文字。",
                     "OCR failure repeated its heading or allowed copying an error")
         ocr.verificationCopy()
@@ -2001,7 +2001,7 @@ private struct ImageToolsVerification {
             do {
                 _ = try canvas.renderedImage(croppingTo: crop)
                 throw ImageToolsVerificationFailure(description: "Invalid region was accepted")
-            } catch is ScreenLeafError { }
+            } catch is PatchError { }
         }
         print("PASS: region-sized rendering matches full-image crops for all eight annotation tools, alpha, edge clipping and PNG export; invalid regions rejected")
     }
@@ -2066,7 +2066,7 @@ private struct ImageToolsVerification {
     }
 
     @MainActor private static func verifyOCRAngles(outputDirectory: URL) throws {
-        let lines = ["ScreenLeaf OCR 2026", "屏幕截图 中文识别", "繁體中文 截圖文字辨識", "Automatic orientation test"]
+        let lines = ["Patch OCR 2026", "屏幕截图 中文识别", "繁體中文 截圖文字辨識", "Automatic orientation test"]
         let expected = lines.joined()
         guard let context = CGContext(data: nil, width: 1000, height: 450, bitsPerComponent: 8,
             bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),

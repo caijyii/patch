@@ -8,7 +8,7 @@
 
 署名：caijyii。Copyright (c) 2026 caijyii，MIT License。机器可读来源说明见 `Resources/ArtworkNotices.json`，构建时随应用及 MIT 许可文本一起打包；贴纸目录另附许可及 `sources.json`。这些信息不写入用户导出的截图或视频。
 
-- 应用图标：`Sources/ScreenLeaf/IconArtwork.swift`。
+- 应用图标：`Sources/Patch/IconArtwork.swift`。
 - 四季窗景：`HomeSceneryArtwork.swift`、`HomeSeason.swift`。
 - 32 枚矢量贴纸：`Resources/PatchStickers/`；生成源码在 `scripts/sticker-artwork/`，来源和哈希记录在 `Resources/PatchStickers/sources.json`。
 

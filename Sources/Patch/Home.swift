@@ -460,8 +460,9 @@ final class HomeFeatureTile: NSView {
 
 @MainActor private final class HomeContentView: HomeFlippedView {
     var onLayout: (() -> Void)?
+    var season: HomeSeason = .current() { didSet { needsDisplay = true } }
     override var isOpaque: Bool { true }
-    override func draw(_ dirtyRect: NSRect) { WindowAmbientBackground.draw(in: self) }
+    override func draw(_ dirtyRect: NSRect) { WindowAmbientBackground.draw(in: self, season: season) }
     override func layout() { super.layout(); onLayout?() }
 }
 
@@ -526,6 +527,8 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         window.onRecordingModifiers = { [weak self] in self?.editor.reflectModifiers($0) }
         window.onCancelRequest = { [weak self] in self?.cancelRequest() }
         window.onPointerDown = { [weak self] in self?.finishEditingForClick($0) ?? false }
+        content.season = arch.scenery.season
+        arch.scenery.onSeasonChanged = { [weak self] season in self?.content.season = season }
         content.addSubview(arch)
         footer.addSubview(permissionBanner)
         permissionBanner.addSubview(permissionLabel); permissionBanner.addSubview(permissionButton)

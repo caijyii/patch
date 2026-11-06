@@ -5,13 +5,13 @@ cd "$screenleaf_root"
 mkdir -p .build/verification
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \
-    Sources/ScreenLeaf/CaptureRegion.swift Sources/ScreenLeaf/WindowActivation.swift Sources/ScreenLeaf/Localization.swift Sources/ScreenLeaf/ScrollStitcher.swift \
-    Sources/ScreenLeaf/ScrollEventRouting.swift \
+    Sources/Patch/CaptureRegion.swift Sources/Patch/WindowActivation.swift Sources/Patch/Localization.swift Sources/Patch/ScrollStitcher.swift \
+    Sources/Patch/ScrollEventRouting.swift \
     scripts/verify-core.swift -o .build/verification/core-tests
 .build/verification/core-tests "$screenleaf_root/scripts/fixtures"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \
-    Sources/ScreenLeaf/RecordingFileStorage.swift scripts/verify-recording-files.swift \
+    Sources/Patch/RecordingFileStorage.swift scripts/verify-recording-files.swift \
     -o .build/verification/recording-file-tests
 .build/verification/recording-file-tests
 bash scripts/verify-scroll-permission.sh

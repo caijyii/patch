@@ -5,8 +5,8 @@ cd "$screenleaf_root"
 options_work="$screenleaf_root/.build/verification/home-options"
 mkdir -p "$options_work"
 options_inputs=()
-for options_source in Sources/ScreenLeaf/*.swift; do
-    if [[ "$options_source" != Sources/ScreenLeaf/App.swift ]]; then options_inputs+=("$options_source"); fi
+for options_source in Sources/Patch/*.swift; do
+    if [[ "$options_source" != Sources/Patch/App.swift ]]; then options_inputs+=("$options_source"); fi
 done
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \

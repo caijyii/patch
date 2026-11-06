@@ -21,6 +21,6 @@ mkdir -p "$task_work/module-cache"
 printf 'Verifying subject extraction with SDK: %s\n' "$task_sdk"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$task_sdk" \
     -module-cache-path "$task_work/module-cache" -target "$(uname -m)-apple-macosx15.0" \
-    "$task_root/Sources/ScreenLeaf/SubjectExtraction.swift" \
+    "$task_root/Sources/Patch/SubjectExtraction.swift" \
     "$task_root/scripts/verify-subject-extraction.swift" -o "$task_work/verify-subject-extraction"
 "$task_work/verify-subject-extraction" "$1" "$task_work"

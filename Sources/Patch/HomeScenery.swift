@@ -7,6 +7,7 @@ import AppKit
 @MainActor
 final class HomeSceneryView: NSView {
     private(set) var season: HomeSeason
+    var onSeasonChanged: ((HomeSeason) -> Void)?
     private let dateProvider: () -> Date
     private let timeZoneProvider: () -> TimeZone
     private(set) var nextSeasonRefresh: Date?
@@ -120,6 +121,7 @@ final class HomeSceneryView: NSView {
         if current != season {
             season = current
             needsDisplay = true
+            onSeasonChanged?(current)
         }
         guard motionRequested, !isHiddenOrHasHiddenAncestor,
               let window, window.isVisible, !window.isMiniaturized else {

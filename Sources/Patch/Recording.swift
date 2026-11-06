@@ -352,7 +352,7 @@ final class RecordingCoordinator: NSObject {
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
                 try self.checkPreparation(id: id)
                 guard content.displays.contains(where: { $0.displayID == self.region?.displayID }) else {
-                    throw ScreenLeafError(message: L("所选屏幕已断开。请重新选择录屏区域。"))
+                    throw PatchError(message: L("所选屏幕已断开。请重新选择录屏区域。"))
                 }
                 try await self.runCountdown(id: id)
                 try await self.startSegment(id: id, preparedContent: content)
@@ -383,7 +383,7 @@ final class RecordingCoordinator: NSObject {
     private func startSegment(id: UUID, preparedContent: SCShareableContent? = nil) async throws {
         try checkPreparation(id: id)
         guard !stopRequested else { finishRecording(id: id); return }
-        guard let region else { throw ScreenLeafError(message: L("所选屏幕已断开。请重新选择录屏区域。")) }
+        guard let region else { throw PatchError(message: L("所选屏幕已断开。请重新选择录屏区域。")) }
         var content: SCShareableContent
         if let preparedContent { content = preparedContent }
         else { content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false) }
@@ -398,7 +398,7 @@ final class RecordingCoordinator: NSObject {
             guard !stopRequested else { finishRecording(id: id); return }
         }
         guard let display = content.displays.first(where: { $0.displayID == region.displayID }) else {
-            throw ScreenLeafError(message: L("所选屏幕已断开。请重新选择录屏区域。"))
+            throw PatchError(message: L("所选屏幕已断开。请重新选择录屏区域。"))
         }
         let ownApps = content.applications.filter { $0.processID == ownPID }
         let ownWindows = content.windows.filter { $0.owningApplication?.processID == ownPID }
@@ -407,7 +407,7 @@ final class RecordingCoordinator: NSObject {
             let protectedIDs = protectedNumbers.compactMap { CGWindowID(exactly: $0) }
             guard protectedIDs.count == protectedNumbers.count,
                   Self.canExcludeRecordingWindows(required: protectedIDs, available: ownWindows.map(\.windowID)) else {
-                throw ScreenLeafError(message: L("无法从录屏中排除控制窗和范围提示。请重新打开录屏后再试。"))
+                throw PatchError(message: L("无法从录屏中排除控制窗和范围提示。请重新打开录屏后再试。"))
             }
         }
         let filter = ownApps.isEmpty
@@ -430,7 +430,7 @@ final class RecordingCoordinator: NSObject {
         let outputConfig = SCRecordingOutputConfiguration()
         outputConfig.outputURL = url; outputConfig.videoCodecType = .h264; outputConfig.outputFileType = .mp4
         guard outputConfig.availableVideoCodecTypes.contains(.h264), outputConfig.availableOutputFileTypes.contains(.mp4) else {
-            throw ScreenLeafError(message: L("这台 Mac 当前无法写入 H.264 MP4，请重试或重新选择较小的录屏区域。"))
+            throw PatchError(message: L("这台 Mac 当前无法写入 H.264 MP4，请重试或重新选择较小的录屏区域。"))
         }
         let output = SCRecordingOutput(configuration: outputConfig, delegate: self)
         let nextStream = SCStream(filter: filter, configuration: config, delegate: self)
@@ -490,7 +490,7 @@ final class RecordingCoordinator: NSObject {
 
     private func authorizeCapture(microphone: Bool) async throws {
         if !CGPreflightScreenCaptureAccess(), !CGRequestScreenCaptureAccess() {
-            throw ScreenLeafError(message: L("请在“系统设置 → 隐私与安全性 → 屏幕与系统音频录制”中允许小贴，然后重新打开工具并重试。"))
+            throw PatchError(message: L("请在“系统设置 → 隐私与安全性 → 屏幕与系统音频录制”中允许小贴，然后重新打开工具并重试。"))
         }
         guard microphone else { return }
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -498,7 +498,7 @@ final class RecordingCoordinator: NSObject {
             break
         case .notDetermined:
             guard Bundle.main.object(forInfoDictionaryKey: "NSMicrophoneUsageDescription") != nil else {
-                throw ScreenLeafError(message: L("当前版本无法申请麦克风权限。请使用 Patch.app，或关闭麦克风开关后重试。"))
+                throw PatchError(message: L("当前版本无法申请麦克风权限。请使用 Patch.app，或关闭麦克风开关后重试。"))
             }
             guard await AVCaptureDevice.requestAccess(for: .audio) else {
                 throw microphonePermissionError()
@@ -509,12 +509,12 @@ final class RecordingCoordinator: NSObject {
             throw microphonePermissionError()
         }
         guard AVCaptureDevice.default(for: .audio) != nil else {
-            throw ScreenLeafError(message: L("未找到可用的麦克风。请连接麦克风，或关闭麦克风开关后重试。"))
+            throw PatchError(message: L("未找到可用的麦克风。请连接麦克风，或关闭麦克风开关后重试。"))
         }
     }
 
-    private func microphonePermissionError() -> ScreenLeafError {
-        ScreenLeafError(message: L("麦克风访问未获允许。请在“系统设置 → 隐私与安全性 → 麦克风”中允许小贴，或关闭麦克风开关后重试。"))
+    private func microphonePermissionError() -> PatchError {
+        PatchError(message: L("麦克风访问未获允许。请在“系统设置 → 隐私与安全性 → 麦克风”中允许小贴，或关闭麦克风开关后重试。"))
     }
 
 
@@ -576,7 +576,7 @@ final class RecordingCoordinator: NSObject {
             await self.stopTask?.value
             guard self.sessionID == id, self.failure == nil, let url = self.workingURL else { return }
             guard FileManager.default.fileExists(atPath: url.path) else {
-                self.fail(ScreenLeafError(message: L("录屏片段未能写入，已有文件已保留。")), id: id); return
+                self.fail(PatchError(message: L("录屏片段未能写入，已有文件已保留。")), id: id); return
             }
             self.acceptCompletedSegment(at: url, duration: self.currentSegmentDuration, id: id)
         }
@@ -604,7 +604,7 @@ final class RecordingCoordinator: NSObject {
         finalizationTask = Task { [weak self] in
             guard let self else { return }
             do {
-                guard let first = segments.first else { throw ScreenLeafError(message: L("没有可保存的录屏片段。")) }
+                guard let first = segments.first else { throw PatchError(message: L("没有可保存的录屏片段。")) }
                 let export: URL
                 if segments.count == 1 { export = first }
                 else {
@@ -625,7 +625,7 @@ final class RecordingCoordinator: NSObject {
                 if self.closeRequested { self.dismissControls() }
                 else { self.showControls() }
             } catch {
-                self.fail(ScreenLeafError(message: LF("录屏未能保存：%@\n原始片段保留在：%@", error.localizedDescription, directory?.path ?? "")), id: id)
+                self.fail(PatchError(message: LF("录屏未能保存：%@\n原始片段保留在：%@", error.localizedDescription, directory?.path ?? "")), id: id)
             }
         }
     }

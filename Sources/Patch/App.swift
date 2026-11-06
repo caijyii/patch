@@ -6,7 +6,7 @@ import Carbon
 import Darwin
 
 @main
-struct ScreenLeafMain {
+struct PatchMain {
     static func main() {
         // Keep this process's effective language stable while restart-only settings change.
         AppLocalization.language = AppLocalization.resolvesToEnglish(PreferencesStore.shared.languagePreference) ? .english : .simplifiedChinese
@@ -57,22 +57,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var activationObserver: NSObjectProtocol?
     private var quitTimer: Timer?
     private lazy var scrollCapture: ScrollCaptureCoordinator = ScrollCaptureCoordinator(capture: { [weak self] region in
-        guard let self else { throw ScreenLeafError(message: "截图任务已关闭。") }
+        guard let self else { throw PatchError(message: "截图任务已关闭。") }
         return try await self.captureService.capture(region)
     }, onReselect: { [weak self] region, onCancel in
         guard let self else { onCancel(); return }
         let target = region.targetPID.flatMap { NSRunningApplication(processIdentifier: $0) }
         self.selector.select(purpose: .scroll, initialMode: .rectangle, targetApplication: target,
             capture: { [weak self] region in
-                guard let self else { throw ScreenLeafError(message: "截图任务已关闭。") }
+                guard let self else { throw PatchError(message: "截图任务已关闭。") }
                 return try await self.captureService.capture(region)
             }, onCancel: onCancel) { [weak self] action, region, image in
                 self?.performSelectionAction(action, region: region, image: image)
             }
     }, onComplete: { [weak self] image, action in
-        guard let self else { throw ScreenLeafError(message: "截图任务已关闭。") }
+        guard let self else { throw PatchError(message: "截图任务已关闭。") }
         switch action {
         case .copy: try ImageToolsUI.copyPNG(image, pixelScale: self.scrollCapture.outputPixelScale)
+        case .pin: self.imageTools.pinImage(image, pixelScale: self.scrollCapture.outputPixelScale)
+        case .ocr: self.imageTools.recognize(image)
+        case .save: break // Saved by the capture coordinator, which retains cancelled exports.
         case .annotate: self.imageTools.showEditor(image, pixelScale: self.scrollCapture.outputPixelScale)
         }
     })
@@ -332,7 +335,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func selectRegion(purpose: CaptureSelectionPurpose, initialMode: ScreenshotSelectionMode = .window) {
         homeController?.editor.stopRecording()
         guard !scrollCapture.isActive else {
-            showError(ScreenLeafError(message: "请先完成或取消正在进行的长截图。"))
+            showError(PatchError(message: "请先完成或取消正在进行的长截图。"))
             return
         }
         let permitted = captureService.ensurePermission()
@@ -340,8 +343,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         guard permitted else { return }
         if purpose == .scroll, !ScrollCapturePermission.ensurePermission() { return }
         let target = NSWorkspace.shared.frontmostApplication
+        selector.authorizeScroll = { ScrollCapturePermission.ensurePermission() }
         selector.select(purpose: purpose, initialMode: initialMode, targetApplication: target, capture: { [weak self] region in
-            guard let self else { throw ScreenLeafError(message: "截图任务已关闭。") }
+            guard let self else { throw PatchError(message: "截图任务已关闭。") }
             return try await self.captureService.capture(region)
         }) { [weak self] action, region, image in
             self?.performSelectionAction(action, region: region, image: image)
