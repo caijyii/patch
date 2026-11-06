@@ -1,5 +1,11 @@
 # Patch
 
+[![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.0)
+[![Platform: macOS 15+](https://img.shields.io/badge/Platform-macOS%2015%2B-607D8B?style=flat)](docs/install.en.md)
+[![Architecture: Apple Silicon](https://img.shields.io/badge/Architecture-Apple%20Silicon-607D8B?style=flat)](docs/install.en.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-6B8E6E?style=flat)](LICENSE)
+[![Language: 中文 / English](https://img.shields.io/badge/Language-%E4%B8%AD%E6%96%87%20%2F%20English-6B8E6E?style=flat)](README.md)
+
 [简体中文](README.md) · [English](README.en.md)
 
 **Screenshots, scrolling captures, recording, annotations, and desktop pins—all in Patch.**

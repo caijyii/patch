@@ -1,5 +1,11 @@
 # 小贴 · Patch
 
+[![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.0)
+[![Platform: macOS 15+](https://img.shields.io/badge/Platform-macOS%2015%2B-607D8B?style=flat)](docs/install.md)
+[![Architecture: Apple Silicon](https://img.shields.io/badge/Architecture-Apple%20Silicon-607D8B?style=flat)](docs/install.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-6B8E6E?style=flat)](LICENSE)
+[![Language: 中文 / English](https://img.shields.io/badge/Language-%E4%B8%AD%E6%96%87%20%2F%20English-6B8E6E?style=flat)](README.en.md)
+
 [简体中文](README.md) · [English](README.en.md)
 
 **截图、长截图、录屏、标注、贴图，一个 Patch 就够。**
