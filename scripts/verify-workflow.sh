@@ -21,6 +21,7 @@ extension AppDelegate {
     var workflowHistory: RecentContentStore { recentContent }
     var workflowHistoryController: RecentContentWindowController? { recentController }
     var workflowMenu: NSMenu { statusControls.menu }
+    var workflowMenuShortcuts: Set<KeyboardShortcut> { (statusControls.menu as? GlobalShortcutMenu)?.globalShortcuts ?? [] }
     var workflowHome: HomeWindowController? { homeController }
     var workflowImageTools: ImageToolsCoordinator { imageTools }
     var workflowRecording: RecordingCoordinator { recording }
@@ -116,6 +117,10 @@ run_workflow() {
 }
 if [[ "${1:-}" == "--status-layout" ]]; then
     run_workflow status-layout-native-app 'PASS: real-run-loop status layout keeps only the Patch icon across phases and appearances' --status-layout
+    exit 0
+fi
+if [[ "${1:-}" == "--startup-only" ]]; then
+    run_workflow startup 'PASS: complete startup initializes menu before hotkeys, then refreshes shortcuts and shows Home' --startup-only
     exit 0
 fi
 run_workflow results 'PASS: workflow verification completed'

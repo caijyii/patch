@@ -14,11 +14,20 @@ enum AppLanguagePreference: String, Codable, CaseIterable {
 /// The app entry point selects the saved preference before constructing any windows.
 enum AppLocalization {
     static var language: AppLanguagePreference = .simplifiedChinese
-    static func resolvesToEnglish(_ preference: AppLanguagePreference, preferredLanguages: [String] = Locale.preferredLanguages) -> Bool {
+    static func systemPreferredLanguages(
+        globalLanguages: [String]? = UserDefaults.standard.persistentDomain(forName: UserDefaults.globalDomain)?["AppleLanguages"] as? [String],
+        fallback: [String] = Locale.preferredLanguages
+    ) -> [String] {
+        // Locale.preferredLanguages includes this app's AppleLanguages override.
+        // Follow System must use the user's global language choice instead.
+        guard let globalLanguages, !globalLanguages.isEmpty else { return fallback }
+        return globalLanguages
+    }
+    static func resolvesToEnglish(_ preference: AppLanguagePreference, preferredLanguages: [String]? = nil) -> Bool {
         switch preference {
         case .simplifiedChinese: return false
         case .english: return true
-        case .system: return !(preferredLanguages.first ?? "en").lowercased().hasPrefix("zh")
+        case .system: return !((preferredLanguages ?? systemPreferredLanguages()).first ?? "en").lowercased().hasPrefix("zh")
         }
     }
     static var isEnglish: Bool { resolvesToEnglish(language) }
@@ -26,18 +35,39 @@ enum AppLocalization {
     static func text(_ source: String) -> String { isEnglish ? english[source] ?? source : source }
     // CATALOG_START
     static let english: [String: String] = [
+        "移除这组快捷键": "Remove this shortcut",
+        "添加快捷键（最多 2 组）": "Add a shortcut (up to 2)",
+        "快捷键暂时不可用": "Shortcut temporarily unavailable",
+        "暂时不可用，已保留快捷键，可稍后重试。": "Temporarily unavailable. Your shortcut is saved and can be retried later.",
+        "暂时不可用，另一组仍可使用。": "Temporarily unavailable. The other shortcut is still available.",
+        "每项最多 2 组 · Esc 取消编辑": "Up to 2 per action · Esc cancels editing",
         "Patch · 设置": "Patch · Settings",
         "Patch · 更多设置": "Patch · More Settings",
         "Patch · 剪贴记录": "Patch · Clipboard History",
         "Patch · 录屏": "Patch · Recording",
         "Patch · 长截图": "Patch · Scrolling Capture",
+        "\n框选需要的范围，滚动后自动拼接": "\nSelect the area you need, then scroll to stitch it automatically.",
+        "单击选择窗口 · R 自由框选 · Esc 取消": "Click to select a window · R for free selection · Esc to cancel",
+        "拖动框选范围 · W 选择窗口 · Esc 取消": "Drag to select an area · W to select a window · Esc to cancel",
+        "重新框选": "Select Again",
+        "重新框选：确认新选区后从头开始，Esc 保留当前结果": "Select a new area to start over; press Esc to keep the current image",
+        "已保留当前长图 · 点继续": "Image kept · Click Resume",
+        "显示器已变化 · 请重新框选": "Display changed · Select again",
+        "预览暂不可用": "Preview unavailable",
+        "未找到滚动位置 · 请手动滚动": "Scroll manually to continue",
+        "未找到可靠的正文滚动位置。请在正文内手动滚动，或重新框选。": "No reliable scroll target was found. Scroll within the content manually or select a new area.",
+        "无法识别选区所在应用。请点重新框选，选择原窗口中的正文。": "Cannot identify the selected app. Click Select Again and choose content in the original window.",
+        "可手动滚动 · 随时完成": "Scroll manually · Finish anytime",
+        "已保留 · 请回正后继续": "Image kept · Realign to continue",
+        "继续滚动 · 可随时完成": "Keep scrolling · Finish anytime",
+        "已有内容已保留。可小幅上下滚动后稍停，或随时完成当前长图。": "Your captured content is kept. Scroll a little up or down and pause briefly, or finish the current image anytime.",
+        "没有找到可靠的重叠正文。请回到上一段并慢一点滚动。": "No reliable overlap was found in the scrolling content. Scroll back a little and move more slowly.",
         "Patch · 标注贴图": "Patch · Annotate Pin",
         "Patch · 截图标注": "Patch · Annotate Screenshot",
         "Patch · 主体截图": "Patch · Subject Capture",
         "Patch · 提取文字": "Patch · Extract Text",
         "Patch · 图片贴图": "Patch · Image Pin",
         "Patch · 文字贴图": "Patch · Text Pin",
-        "\n只选择随滚动变化的正文，避开固定顶栏和底栏": "\nSelect only scrolling content; avoid fixed headers and footers.",
         "\n已有长图已保留，可重试或选择另一种完成方式。": "\nYour captured image is preserved. Retry or choose another completion option.",
         " · Esc 取消": " · Esc to cancel",
         " · F 整屏": " · F for full screen",
@@ -105,6 +135,15 @@ enum AppLocalization {
         "刚刚": "Just now",
         "删除%@：%@": "Delete %@: %@",
         "删除这条记录": "Delete this item",
+        "复制这条记录": "Copy this item",
+        "复制%@：%@": "Copy %@: %@",
+        "已复制": "Copied",
+        "视频": "Video",
+        "清空视频记录": "Clear video items",
+        "打开视频": "Open video",
+        "无法打开视频，请检查默认播放器或在 Finder 中打开。": "Unable to open the video. Check the default player or open it in Finder.",
+        "打开%@，%@：%@": "Open %@, %@: %@",
+        "原视频已移动、删除或无法访问，请重新复制该文件。": "The video was moved, deleted or is unavailable. Copy the file again.",
         "前台已切换 · 已暂停": "App switched · Paused",
         "剪切": "Cut",
         "剪贴板中没有可贴出的图片或文字。": "The clipboard has no image or text to pin.",
@@ -112,7 +151,6 @@ enum AppLocalization {
         "动物": "Animals",
         "区域变化，重新框选": "Area changed; select it again",
         "区域太矮，重新框选": "Area too short; select it again",
-        "单击选择窗口 · R 返回正文框选 · Esc 取消": "Click a window · R to select content · Esc to cancel",
         "单击选窗口 · 拖动框选": "Click a window · Drag to select an area",
         "原图 · 点击选主体": "Original · Click a subject",
         "原窗口不可用": "Original window unavailable",
@@ -233,7 +271,6 @@ enum AppLocalization {
         "把画面里的小东西，贴到桌面上": "Pin little things from the screen to your desktop",
         "拖动框选录制区域（R）": "Drag to select a recording area (R)",
         "拖动框选截图范围（R）": "Drag to select a capture area (R)",
-        "拖动框选正文 · W 窗口框选 · Esc 取消": "Drag to select content · W for window · Esc to cancel",
         "拖动框选范围 · R 框选 · W 窗口 · F 整屏 · Esc 取消": "Drag to select · R for rectangle · W for window · F for full screen · Esc to cancel",
         "拖动移动 · 双击编辑文字 · 双指滚动 · 捏合缩放": "Drag to move · Double-click to edit · Two-finger scroll · Pinch to zoom",
         "拖动移动 · 滚轮或捏合缩放 · 右键操作": "Drag to move · Scroll or pinch to zoom · Right-click for actions",
@@ -421,7 +458,7 @@ enum AppLocalization {
         "贴纸图案:%@": "Sticker: %@",
         "贴纸大小": "Sticker Size",
         "跟随系统": "System",
-        "运行期间自动收录图片和文字，最多保留 20 条。退出后清空。": "Keeps up to 20 images and text clips while Patch is running. Cleared on quit.",
+        "最多保留 100 条文字、20 张图片和 5 个视频。\n\n内容较大时，实际保留的数量可能会少一些。\n\n退出 Patch 后，记录会清空，视频原文件不会被删除。": "Keeps up to 100 text clips, 20 images and 5 videos.\n\nLarger items may reduce the number of clips kept.\n\nQuitting Patch clears these records. Your original video files stay where they are.",
         "返回首页": "Back to Home",
         "还没有剪贴记录\n截图或复制内容后，会显示在这里。": "No clipboard history yet\nScreenshots and copied content will appear here.",
         "还没有选中主体，请在左侧点击加入。": "No subjects selected. Click one on the left to add it.",

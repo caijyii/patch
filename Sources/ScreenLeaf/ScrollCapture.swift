@@ -6,34 +6,68 @@ import ApplicationServices
 import CoreGraphics
 import OSLog
 
+private struct ScrollCaptureContentState {
+    let inputSize: CGSize
+    let scrollAnchor: CGPoint?
+    let outputWidth: Int
+}
+
 private struct ScrollCapturePreview {
     let whole: CGImage
     let recent: CGImage
     /// Top-left document coordinates, normalized to the complete assembled image.
     let viewport: CGRect
+    let inputSize: CGSize
+    let scrollAnchor: CGPoint?
+    let outputWidth: Int
+    var contentState: ScrollCaptureContentState {
+        ScrollCaptureContentState(inputSize: inputSize, scrollAnchor: scrollAnchor, outputWidth: outputWidth)
+    }
 }
 
 private actor ScrollCaptureProcessor {
     private let stitcher: ScrollStitcher
     private(set) var previewGenerationCount = 0
+    private var previewRevision = -1
+    private var wholePreview: CGImage?
+    private var lastPreview: ScrollCapturePreview?
+    private var contentState: ScrollCaptureContentState?
 
     init() { stitcher = ScrollStitcher() }
 
-    func append(_ image: CGImage) -> (ScrollStitcher.Update, ScrollCapturePreview?) {
+    func append(_ image: CGImage) -> (ScrollStitcher.Update, ScrollCapturePreview?, ScrollCaptureContentState?) {
+        guard !Task.isCancelled else { return (.duplicate, nil, nil) }
         let update = stitcher.append(image)
         switch update {
-        case .started, .appended:
-            guard let whole = stitcher.preview(maximumDimension: 500),
-                  let recent = thumbnail(image, maximumDimension: 500) else { return (update, nil) }
-            previewGenerationCount += 1
-            let viewport = CGRect(x: 0, y: CGFloat(stitcher.lastOrigin - stitcher.minOrigin) / CGFloat(stitcher.height),
-                                  width: 1, height: CGFloat(image.height) / CGFloat(stitcher.height))
-            return (update, ScrollCapturePreview(whole: whole, recent: recent, viewport: viewport))
-        default: return (update, nil)
+        case .started, .appended, .revisited:
+            let state = ScrollCaptureContentState(inputSize: CGSize(width: image.width, height: image.height),
+                scrollAnchor: stitcher.scrollAnchor, outputWidth: stitcher.width)
+            contentState = state
+            if previewRevision != stitcher.outputRevision || wholePreview == nil {
+                wholePreview = stitcher.preview(maximumDimension: 500)
+                previewRevision = stitcher.outputRevision
+                previewGenerationCount += 1
+            }
+            guard let whole = wholePreview, let recent = thumbnail(image, maximumDimension: 500) else {
+                lastPreview = nil
+                return (update, nil, state)
+            }
+            let viewport = CGRect(x: 0,
+                y: CGFloat(stitcher.lastOrigin - stitcher.minOrigin) / CGFloat(stitcher.height),
+                width: 1, height: CGFloat(image.height) / CGFloat(stitcher.height))
+            let preview = ScrollCapturePreview(whole: whole, recent: recent, viewport: viewport,
+                inputSize: CGSize(width: image.width, height: image.height),
+                scrollAnchor: stitcher.scrollAnchor, outputWidth: stitcher.width)
+            lastPreview = preview
+            return (update, preview, state)
+        default: return (update, nil, nil)
         }
     }
 
     func image() -> CGImage? { stitcher.image() }
+    func presentation() -> (ScrollCapturePreview?, Int, ScrollCaptureContentState?) {
+        (lastPreview, stitcher.height, contentState)
+    }
 
     private func thumbnail(_ image: CGImage, maximumDimension: CGFloat) -> CGImage? {
         let scale = min(1, maximumDimension / CGFloat(max(image.width, image.height)))
@@ -58,6 +92,15 @@ private actor ScrollCaptureProcessor {
             context.draw(image, in: CGRect(x: 0, y: 0, width: 40, height: 40))
         }
         return bytes
+    }
+}
+
+/// The selected region stays unchanged. Only the automatic scroll anchor is
+/// mapped from input pixels (top-left origin) to screen points (bottom-left).
+private enum ScrollCaptureGeometry {
+    static func screenPoint(_ pixels: CGPoint, inputSize: CGSize, region: CaptureRegion) -> CGPoint {
+        CGPoint(x: region.rect.minX + pixels.x * region.rect.width / inputSize.width,
+                y: region.rect.maxY - pixels.y * region.rect.height / inputSize.height)
     }
 }
 
@@ -158,7 +201,7 @@ private final class ScrollHUDPanel: NSPanel {
 }
 
 private final class ScrollOutlineView: NSView {
-    var selection = CGRect.zero
+    var selection = CGRect.zero { didSet { needsDisplay = true } }
     override func draw(_ dirtyRect: NSRect) {
         let shade = NSBezierPath(rect: bounds)
         shade.append(NSBezierPath(rect: selection))
@@ -183,6 +226,7 @@ private final class ScrollHUDContent: NSView {
 
 private final class ScrollPreviewView: NSView {
     var preview: ScrollCapturePreview? { didSet { needsDisplay = true } }
+    var hasImage = false { didSet { needsDisplay = true } }
 
     override func draw(_ dirtyRect: NSRect) {
         let wholeArea = CGRect(x: 0, y: 0, width: 86, height: max(20, bounds.height - 24))
@@ -196,7 +240,8 @@ private final class ScrollPreviewView: NSView {
             NSBezierPath(roundedRect: area, xRadius: 5, yRadius: 5).fill()
         }
         guard let preview else {
-            ("等待首帧" as NSString).draw(at: CGPoint(x: 12, y: bounds.midY - 6), withAttributes: attributes)
+            (L(hasImage ? "预览暂不可用" : "等待首帧") as NSString)
+                .draw(at: CGPoint(x: 12, y: bounds.midY - 6), withAttributes: attributes)
             return
         }
         let fitted = draw(preview.whole, in: wholeArea.insetBy(dx: 4, dy: 4))
@@ -225,7 +270,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     enum CompletionAction { case copy, annotate }
     private static let logger = Logger(subsystem: "dev.screenleaf.app", category: "ScrollCapture")
     // Recovering keeps sampling without posting events; only a verified overlap resumes stitching.
-    private enum State { case preparing, running, recovering, paused, finishing }
+    private enum State { case preparing, running, recovering, paused, reselecting, finishing }
     private enum Mode: Equatable {
         case manual, automatic(ScrollStitcher.Direction)
         var isAutomatic: Bool {
@@ -243,18 +288,20 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
 
     private let capture: (CaptureRegion) async throws -> CGImage
     private let onComplete: (CGImage, CompletionAction) throws -> Void
+    private let onReselect: ((CaptureRegion, @escaping () -> Void) -> Void)?
     private var panel: NSPanel?
     private var outline: NSWindow?
     private var inlineEditor: InlineAnnotationView?
     private var hudContent = ScrollHUDContent(frame: .zero)
     private var toolbar = SelectionToolbar(blendingMode: .behindWindow)
-    private var detailMaterial = ToolbarMaterialView(role: .parameter, blendingMode: .behindWindow)
-    private var detailLabel = NSTextField(wrappingLabelWithString: "")
     private var previewMaterial = ToolbarMaterialView(role: .parameter, blendingMode: .behindWindow)
     private var previewView = ScrollPreviewView(frame: .zero)
     private var previewExpanded = true
     var outputPixelScale: CGFloat? { region?.scale }
     private var region: CaptureRegion?
+    private var scrollScreenAnchor: CGPoint?
+    private var sourceDisplayChanged = false
+    private var fallbackHUDBounds: CGRect?
     private var targetApplication: NSRunningApplication?
     private var processor = ScrollCaptureProcessor()
     private var task: Task<Void, Never>?
@@ -266,6 +313,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     private var hasFirstFrame = false
     private var duplicateCount = 0
     private var hasPostedAutomaticScroll = false
+    private var lastPostedScrollAnchor: CGPoint?
     private var imageWidth = 0
     private var imageHeight = 0
     private var statusLabel = NSTextField()
@@ -274,6 +322,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     private var downButton = NSButton()
     private var pauseButton = NSButton()
     private var previewButton = NSButton()
+    private var reselectButton = NSButton()
     private var finishButton = SelectionButton(L("完成"), symbol: "checkmark") {}
     private var annotateButton = NSButton()
     private var cancelButton = NSButton()
@@ -281,8 +330,10 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     var isActive: Bool { panel != nil }
 
     init(capture: @escaping (CaptureRegion) async throws -> CGImage,
+         onReselect: ((CaptureRegion, @escaping () -> Void) -> Void)? = nil,
          onComplete: @escaping (CGImage, CompletionAction) throws -> Void) {
         self.capture = capture
+        self.onReselect = onReselect
         self.onComplete = onComplete
         super.init()
     }
@@ -300,9 +351,9 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         task = Task { [weak self] in
             guard let self else { return }
             if let initialFrame {
-                let (update, preview) = await currentProcessor.append(initialFrame)
+                let (update, preview, content) = await currentProcessor.append(initialFrame)
                 guard self.session == token, !Task.isCancelled else { return }
-                self.apply(update, width: initialFrame.width, preview: preview)
+                self.apply(update, width: initialFrame.width, preview: preview, content: content)
                 guard self.hasFirstFrame else { self.task = nil; return }
             }
             guard self.session == token, !Task.isCancelled else { return }
@@ -325,11 +376,15 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         panel = nil
         outline = nil
         region = nil
+        scrollScreenAnchor = nil
+        sourceDisplayChanged = false
+        fallbackHUDBounds = nil
         targetApplication = nil
         processor = ScrollCaptureProcessor()
         hasFirstFrame = false
         duplicateCount = 0
         hasPostedAutomaticScroll = false
+        lastPostedScrollAnchor = nil
         imageWidth = 0
         imageHeight = 0
         previewView.preview = nil
@@ -360,7 +415,8 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         border.orderFrontRegardless()
 
         let panel = ScrollHUDPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
-                                   backing: .buffered, defer: false)
+                                  backing: .buffered, defer: false,
+                                  screen: NSScreen.screens.first { $0.frame == region.screenFrame })
         panel.level = .floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
@@ -374,17 +430,9 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         panel.identifier = NSUserInterfaceItemIdentifier("patch.scroll.hud")
         toolbar = SelectionToolbar(blendingMode: .behindWindow)
         hudContent = ScrollHUDContent(frame: .zero)
-        detailMaterial = ToolbarMaterialView(role: .parameter, blendingMode: .behindWindow)
-        detailLabel = NSTextField(wrappingLabelWithString: "")
-        detailLabel.font = .systemFont(ofSize: 11)
-        detailLabel.textColor = ToolbarPalette.ink
-        detailLabel.maximumNumberOfLines = 0
-        detailLabel.identifier = NSUserInterfaceItemIdentifier("scroll.status.detail")
         previewMaterial = ToolbarMaterialView(role: .parameter, blendingMode: .behindWindow)
         previewView = ScrollPreviewView(frame: .zero)
         hudContent.addSubview(toolbar)
-        hudContent.addSubview(detailMaterial)
-        hudContent.addSubview(detailLabel)
         hudContent.addSubview(previewMaterial)
         hudContent.addSubview(previewView)
         panel.contentView = hudContent
@@ -399,28 +447,34 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         downButton = SelectionButton(L("自动下"), symbol: "arrow.down") { [weak self] in self?.selectMode(.automatic(.down)) }
         pauseButton = SelectionButton(L("暂停自动"), symbol: "pause.fill") { [weak self] in self?.pauseOrResume() }
         previewButton = SelectionButton(L("预览"), symbol: "photo") { [weak self] in self?.togglePreview() }
+        reselectButton = SelectionButton(L("重新框选"), symbol: "crop") { [weak self] in self?.reselect() }
+        reselectButton.toolTip = L("重新框选：确认新选区后从头开始，Esc 保留当前结果")
         finishButton = SelectionButton.confirmation(toolTip: L("完成长截图，复制并关闭")) { [weak self] in self?.finish(.copy) }
         annotateButton = SelectionButton(L("标注"), symbol: SelectionButton.annotationSymbol) { [weak self] in self?.finish(.annotate) }
         annotateButton.toolTip = L("在当前浮层标注完整长图")
         cancelButton = SelectionButton.cancellation(toolTip: L("取消长截图")) { [weak self] in self?.cancel() }
         toolbar.trailingActions = [cancelButton, finishButton]
-        for button in [upButton, downButton, pauseButton, previewButton, finishButton, annotateButton, cancelButton] {
+        for button in [upButton, downButton, pauseButton, previewButton, reselectButton, finishButton, annotateButton, cancelButton] {
             button.imagePosition = .imageOnly
         }
         upButton.toolTip = L("自动向上滚动并拼接")
         downButton.toolTip = L("自动向下滚动并拼接")
         for button in [upButton, downButton, previewButton] { button.setButtonType(.pushOnPushOff) }
         self.panel = panel
+        toolbar.onDisplayMetricsChanged = { [weak self] in self?.refreshHUD() }
         refreshHUD()
         panel.orderFrontRegardless()
     }
 
     private func refreshHUD() {
         guard let panel, let region else { return }
+        toolbar.configure(forBackingScaleFactor: panel.backingScaleFactor)
+        statusLabel.font = .systemFont(ofSize: toolbar.metrics.parameterSize, weight: .medium)
+        dimensionsLabel.font = .monospacedDigitSystemFont(ofSize: toolbar.metrics.parameterSize, weight: .regular)
         upButton.state = mode == .automatic(.up) ? .on : .off
         downButton.state = mode == .automatic(.down) ? .on : .off
         for button in [upButton, downButton] {
-            button.isEnabled = state != .finishing
+            button.isEnabled = state != .finishing && state != .reselecting && !sourceDisplayChanged
             button.contentTintColor = button.state == .on ? ToolbarPalette.selectedInk : nil
         }
         pauseButton.title = state == .paused ? L("继续") : L("暂停自动")
@@ -431,26 +485,26 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         // AppKit can reset image positioning when the title/image changes.
         pauseButton.imagePosition = .imageOnly
         pauseButton.toolTip = paused ? L("继续捕获已有选区") : L("停止自动滚动，继续手动捕获")
-        pauseButton.isEnabled = (state == .running && mode.isAutomatic) || state == .paused
+        pauseButton.isEnabled = !sourceDisplayChanged
+            && ((state == .running && mode.isAutomatic) || state == .paused)
         previewButton.state = previewExpanded ? .on : .off
         previewButton.toolTip = previewExpanded ? L("收起长图预览") : L("展开长图预览")
-        finishButton.isEnabled = hasFirstFrame && state != .finishing
+        finishButton.isEnabled = hasFirstFrame && state != .finishing && state != .reselecting
         annotateButton.isEnabled = finishButton.isEnabled
+        reselectButton.isEnabled = state != .finishing && state != .reselecting
         dimensionsLabel.stringValue = hasFirstFrame ? "\(imageWidth) × \(imageHeight) px" : L("等待首帧")
+        previewView.hasImage = hasFirstFrame
         var actions: [NSView] = [upButton, downButton]
         if state == .paused || (state == .running && mode.isAutomatic) { actions.append(pauseButton) }
-        actions += [previewButton, annotateButton, cancelButton, finishButton]
+        actions += [previewButton]
+        if onReselect != nil { actions.append(reselectButton) }
+        actions += [annotateButton, cancelButton, finishButton]
         toolbar.rows = [actions, [statusLabel, dimensionsLabel]]
-        let available = NSScreen.screens.first(where: { $0.frame == region.screenFrame })?.visibleFrame ?? region.screenFrame
+        let available = fallbackHUDBounds ?? NSScreen.screens.first(where: { $0.frame == region.screenFrame })?.visibleFrame ?? region.screenFrame
         let controlsSize = toolbar.arrange(maxWidth: min(520, max(40, available.width - 24)))
         let width = max(controlsSize.width, min(320, available.width - 24))
-        let detailWidth = max(16, width - 24)
-        detailLabel.preferredMaxLayoutWidth = detailWidth
-        let textHeight = detailLabel.stringValue.isEmpty ? 0 : ceil(detailLabel.cell?.cellSize(forBounds:
-            CGRect(x: 0, y: 0, width: detailWidth, height: .greatestFiniteMagnitude)).height ?? 0)
-        let detailHeight = textHeight > 0 ? textHeight + 20 : 0
         let size = CGSize(width: width,
-                          height: controlsSize.height + detailHeight + (previewExpanded ? 162 : 0))
+                          height: controlsSize.height + (previewExpanded ? 162 : 0))
         guard let frame = hudFrame(size: size, selection: region.rect, within: available) else {
             if previewExpanded { previewExpanded = false; refreshHUD(); return }
             return
@@ -458,11 +512,6 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         panel.setContentSize(frame.size)
         panel.setFrameOrigin(frame.origin)
         toolbar.frame = CGRect(x: 0, y: frame.height - controlsSize.height, width: frame.width, height: controlsSize.height)
-        detailMaterial.isHidden = detailHeight == 0
-        detailLabel.isHidden = detailHeight == 0
-        let detailBottom = frame.height - controlsSize.height - detailHeight
-        detailMaterial.frame = CGRect(x: 0, y: detailBottom, width: frame.width, height: max(0, detailHeight - 4))
-        detailLabel.frame = CGRect(x: 12, y: detailBottom + 8, width: detailWidth, height: textHeight)
         previewMaterial.isHidden = !previewExpanded
         previewMaterial.frame = CGRect(x: 0, y: 0, width: frame.width, height: 156)
         previewView.isHidden = !previewExpanded
@@ -471,13 +520,16 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
 
     private func hudFrame(size: CGSize, selection: CGRect, within bounds: CGRect) -> CGRect? {
         guard size.width <= bounds.width, size.height <= bounds.height else { return nil }
-        let anchor = CGPoint(x: selection.midX, y: selection.midY)
-        let preferred = SelectionGeometry.toolbarFrame(selection: selection, size: size, within: bounds)
+        let anchor = scrollScreenAnchor ?? CGPoint(x: selection.midX, y: selection.midY)
+        let backingScale = panel?.backingScaleFactor ?? 1
+        let preferred = SelectionGeometry.toolbarFrame(selection: selection, size: size, within: bounds,
+                                                       backingScaleFactor: backingScale)
         if !preferred.contains(anchor) { return preferred }
         let corners = [CGPoint(x: bounds.minX, y: bounds.minY), CGPoint(x: bounds.maxX - size.width, y: bounds.minY),
                        CGPoint(x: bounds.minX, y: bounds.maxY - size.height),
                        CGPoint(x: bounds.maxX - size.width, y: bounds.maxY - size.height)]
-        return corners.map { CGRect(origin: $0, size: size) }.filter { !$0.contains(anchor) }.min {
+        return corners.map { SelectionGeometry.pixelAlignedFrame(CGRect(origin: $0, size: size),
+            within: bounds, backingScaleFactor: backingScale) }.filter { !$0.contains(anchor) }.min {
             hypot($0.minX - preferred.minX, $0.minY - preferred.minY)
                 < hypot($1.minX - preferred.minX, $1.minY - preferred.minY)
         }
@@ -488,19 +540,55 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         refreshHUD()
     }
 
-    private func setStatus(_ summary: String, detail: String? = nil, showsDetail: Bool = false) {
+    private func reselect() {
+        guard state != .finishing, state != .reselecting, let region, let onReselect else { return }
+        run = UUID()
+        task?.cancel(); task = nil
+        scrollLock?.stop(); scrollLock = nil
+        state = .reselecting
+        mode = .manual
+        hasPostedAutomaticScroll = false
+        lastPostedScrollAnchor = nil
+        panel?.orderOut(nil); outline?.orderOut(nil)
+        let token = session
+        let currentProcessor = processor
+        let sourceWasPresent = NSScreen.screens.contains { $0.frame == region.screenFrame }
+        // Retain this processor while selecting. A confirmed new region calls
+        // start(), which discards it; Escape restores the old capture paused.
+        onReselect(region) { [weak self] in
+            guard let self, self.session == token, self.state == .reselecting else { return }
+            self.task = Task { [weak self] in
+                // A valid append already in progress when the user clicked may
+                // finish after cancellation. Read a coherent actor snapshot.
+                let (preview, height, content) = await currentProcessor.presentation()
+                guard let self, self.session == token, self.state == .reselecting, !Task.isCancelled else { return }
+                self.task = nil
+                self.state = .paused
+                if sourceWasPresent, !NSScreen.screens.contains(where: { $0.frame == region.screenFrame }) {
+                    self.sourceDisplayChanged = true
+                    self.fallbackHUDBounds = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame
+                }
+                if let content { self.apply(.revisited(height: height), width: content.outputWidth, preview: preview, content: content) }
+                if self.sourceDisplayChanged { self.setStatus(L("显示器已变化 · 请重新框选")) }
+                else { self.setStatus(L("已保留当前长图 · 点继续")) }
+                if !self.sourceDisplayChanged { self.outline?.orderFrontRegardless() }
+                self.panel?.orderFrontRegardless()
+            }
+        }
+    }
+
+    private func setStatus(_ summary: String, detail: String? = nil) {
         if statusLabel.stringValue != summary || statusLabel.toolTip != (detail ?? summary) {
             Self.logger.notice("Capture status: \(summary, privacy: .public); detail: \(detail ?? "", privacy: .public)")
         }
         statusLabel.stringValue = summary
         statusLabel.toolTip = detail ?? summary
         statusLabel.setAccessibilityHelp(detail ?? summary)
-        detailLabel.stringValue = showsDetail ? (detail ?? "") : ""
         refreshHUD()
     }
 
     private func selectMode(_ requested: Mode) {
-        guard state != .finishing else { return }
+        guard state != .finishing, state != .reselecting else { return }
         mode = requested
         if state == .preparing { refreshHUD(); return }
         beginCapture()
@@ -526,12 +614,13 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func beginCapture() {
-        guard state != .finishing, let region else { return }
+        guard state != .finishing, state != .reselecting, let region else { return }
+        guard !sourceDisplayChanged else { return }
         run = UUID()
         task?.cancel()
         task = nil
         guard let application = targetApplication, !application.isTerminated else {
-            pause(L("原窗口不可用"), detail: L("无法识别选区所在应用。请取消并在原窗口重新框选。"))
+            pause(L("原窗口不可用"), detail: L("无法识别选区所在应用。请点重新框选，选择原窗口中的正文。"))
             return
         }
         if !ScrollEventRouting.isFrontmost(application), !application.activate(options: []) {
@@ -573,7 +662,10 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                     }
                     let requestedMode = self.mode
                     if case .automatic(let direction) = requestedMode {
-                        guard self.scroll(region, direction: direction) else { return }
+                        if !self.scroll(region, direction: direction) {
+                            if self.isCapturing(token: token, operation: operation), self.mode == .manual { continue }
+                            return
+                        }
                     }
                     try await Task.sleep(nanoseconds: requestedMode.isAutomatic ? 250_000_000 : 350_000_000)
                     guard let frame = try await self.stableFrame(region: region, automatic: requestedMode.isAutomatic,
@@ -670,23 +762,34 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             pause(L("前台已切换 · 已暂停"))
             return
         }
-        let (update, preview) = await processor.append(frame)
+        let (update, preview, content) = await processor.append(frame)
         guard isCapturing(token: token, operation: operation) else { return }
-        apply(update, width: frame.width, preview: preview)
+        apply(update, width: frame.width, preview: preview, content: content)
     }
 
-    private func apply(_ update: ScrollStitcher.Update, width: Int, preview: ScrollCapturePreview? = nil) {
-        if let preview { previewView.preview = preview }
+    private func apply(_ update: ScrollStitcher.Update, width: Int, preview: ScrollCapturePreview? = nil,
+                       content: ScrollCaptureContentState? = nil) {
+        let content = content ?? preview?.contentState
+        if let content {
+            previewView.preview = preview
+            imageWidth = content.outputWidth
+            if let region {
+                scrollScreenAnchor = content.scrollAnchor.map {
+                    ScrollCaptureGeometry.screenPoint($0, inputSize: content.inputSize, region: region)
+                }
+            }
+        }
         switch update {
         case .started(let height), .appended(_, let height):
             if state == .recovering { state = .running }
             hasFirstFrame = true
-            imageWidth = width
+            imageWidth = content?.outputWidth ?? width
             imageHeight = height
             duplicateCount = 0
             setStatus(mode.label)
         case .revisited(let height):
             if state == .recovering { state = .running }
+            hasFirstFrame = height > 0
             imageHeight = height
             duplicateCount = 0
             setStatus(L("已覆盖区域 · 可继续"))
@@ -712,8 +815,10 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
             pause(L("前台已切换 · 已暂停"))
             return false
         }
-        let point = region.eventPoint
-        let appKitPoint = CGPoint(x: region.rect.midX, y: region.rect.midY)
+        let body = region.rect
+        let appKitPoint = scrollScreenAnchor ?? CGPoint(x: body.midX, y: body.midY)
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? region.screenFrame.maxY
+        let point = CGPoint(x: appKitPoint.x, y: primaryTop - appKitPoint.y)
         let hitWindow = NSWindow.windowNumber(at: appKitPoint, belowWindowWithWindowNumber: 0)
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                 kCGNullWindowID) as? [[String: Any]] ?? []
@@ -728,22 +833,23 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                 pause(L("无法确认鼠标位置"))
                 return false
             }
-            if ScrollEventRouting.mouseMovedFromAnchor(current: current, anchor: point) {
+            if ScrollEventRouting.mouseMovedFromAnchor(current: current, anchor: lastPostedScrollAnchor ?? point) {
                 if stopAutomatic() { beginCapture() }
                 return false
             }
         }
-        let distance = Int32(max(40, min(320, region.rect.height * 0.30)))
+        let distance = Int32(max(40, min(320, body.height * 0.30)))
         guard let event = CGEvent(scrollWheelEvent2Source: CGEventSource(stateID: .combinedSessionState),
                                   units: .pixel, wheelCount: 2,
                                   wheel1: direction == .up ? distance : -distance,
                                   wheel2: 0, wheel3: 0) else {
-            pause(L("无法自动滚动 · 可手动"))
+            waitForOverlap(L("可手动滚动 · 随时完成"))
             return false
         }
         event.location = point
         HorizontalScrollFilter.apply(to: event)
         event.post(tap: .cghidEventTap)
+        lastPostedScrollAnchor = point
         if !hasPostedAutomaticScroll {
             Self.logger.notice("Automatic scroll posted through HID: target=\(pid, privacy: .public), window=\(hitWindow, privacy: .public), x=\(point.x, privacy: .public), y=\(point.y, privacy: .public), vertical=\(distance, privacy: .public)")
             hasPostedAutomaticScroll = true
@@ -760,19 +866,8 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func compactPauseStatus(for reason: String) -> String {
-        let hints = [
-            ("无法读取", L("读帧失败，重试")),
-            ("尺寸发生变化", L("区域变化，重新框选")),
-            ("区域太矮", L("区域太矮，重新框选")),
-            ("缺少可识别", L("细节不足，缓慢滚动")),
-            ("左右偏移", L("左右偏移，回正重试")),
-            ("重复度较高", L("画面重复，少量滚动")),
-            ("不一致", L("内容变化，回滚重试"))
-        ]
-        guard let hint = hints.first(where: { reason.contains($0.0) })?.1 else {
-            return L("拼接暂停，请回滚重试")
-        }
-        return L("拼接暂停 · ") + hint
+        if reason.contains("左右偏移") { return L("已保留 · 请回正后继续") }
+        return L("继续滚动 · 可随时完成")
     }
 
     private func localizedStitchingReason(_ reason: String) -> String {
@@ -793,8 +888,8 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         mode = .manual
         hasPostedAutomaticScroll = false
         duplicateCount = 0
-        let guidance = L("已有长图已保留。小幅回滚并稍停即可尝试接续，也可点自动上／下重试，或完成已有结果。")
-        setStatus(message, detail: detail.map { $0 + "\n" + guidance } ?? guidance, showsDetail: false)
+        let guidance = L("已有内容已保留。可小幅上下滚动后稍停，或随时完成当前长图。")
+        setStatus(message, detail: detail.map { $0 + "\n" + guidance } ?? guidance)
     }
 
     private func presentAnnotation(_ image: CGImage) {
@@ -816,9 +911,10 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         panel.isAnnotating = true
         panel.hasShadow = true
         // Reuse the current floating panel on the capture's display.
-        let visible = NSScreen.screens.first { $0.frame == region.screenFrame }?.visibleFrame ?? region.screenFrame
+        let visible = fallbackHUDBounds
+            ?? NSScreen.screens.first { $0.frame == region.screenFrame }?.visibleFrame ?? region.screenFrame
         let available = visible.insetBy(dx: 24, dy: 24)
-        let size = editor.preferredWindowSize(maximum: available.size)
+        let size = editor.preferredWindowSize(maximum: available.size, backingScaleFactor: panel.backingScaleFactor)
         let frame = CGRect(x: available.midX - size.width / 2, y: available.midY - size.height / 2,
                            width: size.width, height: size.height)
         panel.setFrame(frame, display: false)
@@ -831,7 +927,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func finish(_ action: CompletionAction) {
-        guard hasFirstFrame, state != .finishing else { return }
+        guard hasFirstFrame, state != .finishing, state != .reselecting else { return }
         run = UUID()
         task?.cancel()
         task = nil

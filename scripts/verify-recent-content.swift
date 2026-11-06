@@ -11,7 +11,17 @@ private struct Failure: Error { let message: String }
 }
 
 @main private struct VerifyRecentContent {
-    @MainActor static func main() throws {
+    @MainActor static func main() {
+        // macOS's crash dialog can relaunch this command-line probe without its output
+        // argument. Exit before creating any windows instead of crashing a second time.
+        guard CommandLine.arguments.count == 2 else {
+            fputs("This is a command-line test. Run scripts/verify-recent-content.sh from Terminal.\n", stderr)
+            return
+        }
+        do { try run() }
+        catch { fputs("FAIL: \(error)\n", stderr); exit(1) }
+    }
+    @MainActor private static func run() throws {
         _ = NSApplication.shared
         AppLocalization.language = .simplifiedChinese
         try preferences()
@@ -25,6 +35,22 @@ private struct Failure: Error { let message: String }
     }
     private static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         if !condition() { throw Failure(message: message) }
+    }
+    @MainActor private static func verifyCardFooter(_ card: NSView) throws {
+        guard let metadata = card.subviews.compactMap({ $0 as? NSTextField }).first(where: {
+            $0.identifier?.rawValue.hasPrefix("history.metadata.") == true
+        }), let copy = card.subviews.compactMap({ $0 as? NSButton }).first(where: {
+            $0.action == NSSelectorFromString("copyItem:")
+        }), let remove = card.subviews.compactMap({ $0 as? NSButton }).first(where: {
+            $0.action == NSSelectorFromString("removeItem:")
+        }) else { throw Failure(message: "Card footer is missing metadata or actions") }
+        try require(abs(metadata.frame.midY - copy.frame.midY) < 0.5
+                    && abs(copy.frame.midY - remove.frame.midY) < 0.5,
+                    "Type/time, copy and delete must share the same footer row")
+        try require(metadata.intrinsicContentSize.width <= metadata.bounds.width
+                    && metadata.frame.maxX + 8 <= copy.frame.minX
+                    && !copy.frame.intersects(remove.frame),
+                    "Complete timestamp is clipped or overlaps footer actions")
     }
     @MainActor private static func verifyAmbientLayout(_ window: NSWindow) throws {
         try require(window.titlebarAppearsTransparent && window.styleMask.contains(.fullSizeContentView),
@@ -66,11 +92,12 @@ private struct Failure: Error { let message: String }
         }
         try require(label.stringValue == explanation, "Hover explanation is not localized")
         try require(bubble.bounds.width == label.bounds.width + 20 && bubble.bounds.height == label.bounds.height + 14
-                    && bubble.bounds.height < 50 && bubble.bounds.width <= 304,
+                    && bubble.bounds.width <= 384,
                     "Info bubble has oversized fixed padding or dimensions")
         let textSize = (explanation as NSString).boundingRect(with: CGSize(width: label.bounds.width - 4, height: 1000),
             options: [.usesLineFragmentOrigin], attributes: [.font: label.font!])
-        try require(textSize.height <= label.bounds.height, "Info explanation is clipped")
+        try require(textSize.height <= label.bounds.height && label.bounds.height - textSize.height <= 5,
+                    "Info explanation is clipped or retains oversized fixed height")
         let rendered = bubble.window!.contentView!
         let bitmap = rendered.bitmapImageRepForCachingDisplay(in: rendered.bounds)!
         rendered.cacheDisplay(in: rendered.bounds, to: bitmap)
@@ -98,7 +125,8 @@ private struct Failure: Error { let message: String }
         let restored = PreferencesStore(storage: storage)
         try require(restored.appearancePreference == .dark, "User appearance did not persist")
         let session = RecentContentStore()
-        try require(session.items.isEmpty && session.limit == 20, "A new session inherited content or the old configurable count")
+        try require(session.items.isEmpty && session.textLimit == 100 && session.imageLimit == 20 && session.videoLimit == 5,
+                    "A new session inherited content or incorrect category limits")
         let keys = Set((try JSONSerialization.jsonObject(with: storage.data!) as! [String: Any]).keys)
         try require(keys == ["version", "annotations", "shortcuts", "appearance"], "Removed controls or content were persisted")
         print("PASS: existing settings migrate; only settings persist; new sessions have no history")
@@ -206,8 +234,17 @@ private struct Failure: Error { let message: String }
         tools.pinImage(restored, pixelScale: scale, recordsHistory: false)
         defer { tools.closeAll() }
         let pin = NSApp.windows.first { $0.title == "Patch · 图片贴图" }!
-        let viewport = pin.contentView?.subviews.compactMap { $0 as? NSScrollView }.first?.contentView
-        try require(viewport?.bounds.size == CGSize(width: 200, height: 120), "History pin changed Retina image size")
+        guard let content = pin.contentView,
+              let unusedScroll = content.subviews.compactMap({ $0 as? NSScrollView }).first else {
+            throw Failure(message: "History pin has no native image presentation")
+        }
+        // Transparent fixture margins have no border; opaque images reserve one point per edge.
+        let frameWidth: CGFloat = ImageToolsUI.hasTransparentPixels(restored) ? 0 : 2
+        let expected = CGSize(width: 200 + frameWidth, height: 120 + frameWidth)
+        try require(content.bounds.width >= expected.width && content.bounds.width <= expected.width + 1
+                    && content.bounds.height >= expected.height && content.bounds.height <= expected.height + 1
+                    && pin.frame == pin.frame.integral && unusedScroll.isHidden && unusedScroll.documentView == nil,
+                    "History pin changed Retina size or retained a scrolling image viewport: \(content.bounds)")
         store.clear(); try require(pin.isVisible, "Clearing history closed a desktop pin")
         monitor.poll(); try require(store.items.isEmpty, "Clearing history restored the current clipboard unexpectedly")
         store.addImage(image, pixelScale: 2)
@@ -258,7 +295,13 @@ private struct Failure: Error { let message: String }
         store.addImage(fixture(), pixelScale: 2)
         var pinnedID: UUID?
         var displayDate = Date()
-        let history = RecentContentWindowController(store: store, now: { displayDate }) { pinnedID = $0.id }
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let monitor = RecentClipboardMonitor(store: store, pasteboard: board)
+        monitor.setEnabled(true)
+        defer { monitor.setEnabled(false) }
+        let history = RecentContentWindowController(store: store, now: { displayDate }, pasteboard: board,
+            onCopy: { monitor.acknowledgeCopy() }) { pinnedID = $0.id }
         store.onChange = { [weak history] in history?.reload() }
         let preferences = PreferencesStore(storage: MemoryPreferencesStorage())
         let home = HomeWindowController(hotKeys: HotKeys(backend: HistoryTestHotKeys()), store: preferences,
@@ -318,8 +361,33 @@ private struct Failure: Error { let message: String }
         let targetID = store.items[0].id
         let rowButtons = descendants(history.window!.contentView!).compactMap { $0 as? NSButton }
             .filter { $0.identifier?.rawValue == targetID.uuidString }
-        try require(rowButtons.count == 2, "History row must expose separate pin and delete targets")
-        rowButtons.first { $0.toolTip != "删除这条记录" }?.performClick(nil)
+        try require(rowButtons.count == 3, "History row must expose separate pin, copy and delete targets")
+        let beforeCopy = store.items.map(\.id)
+        let copyButton = rowButtons.first { $0.toolTip == "复制这条记录" }!
+        copyButton.performClick(nil)
+        let copiedImage = ImageToolsUI.clipboardImage(from: board)
+        try require(copiedImage?.image.width == 400 && copiedImage?.image.height == 240 && copiedImage?.pixelScale == 2,
+                    "Direct image copy lost full resolution or Retina scale")
+        monitor.poll()
+        try require(store.items.map(\.id) == beforeCopy && pinnedID == nil && copyButton.toolTip == "已复制",
+                    "Copy pinned, reordered, duplicated history, or omitted success feedback")
+        let textItem = store.items.first { if case .text = $0.content { return true }; return false }!
+        let textCopy = descendants(history.window!.contentView!).compactMap { $0 as? NSButton }
+            .first { $0.identifier?.rawValue == textItem.id.uuidString && $0.toolTip == "复制这条记录" }!
+        textCopy.performClick(nil)
+        guard case .text(let originalText) = textItem.content else { throw Failure(message: "Missing text fixture") }
+        try require(board.string(forType: .string) == originalText && board.data(forType: .png) == nil,
+                    "Direct text copy lost original text or retained stale image data")
+        monitor.poll()
+        try require(store.items.map(\.id) == beforeCopy && pinnedID == nil, "Text copy modified history or pinned content")
+        store.addImage(fixture(), pixelScale: nil)
+        let unknownScaleIDs = store.items.map(\.id)
+        let unknownScaleCopy = descendants(history.window!.contentView!).compactMap { $0 as? NSButton }
+            .first { $0.identifier?.rawValue == unknownScaleIDs[0].uuidString && $0.toolTip == "复制这条记录" }!
+        unknownScaleCopy.performClick(nil); monitor.poll()
+        try require(store.items.map(\.id) == unknownScaleIDs, "Copying an image with unknown scale duplicated history")
+        store.remove(unknownScaleIDs[0])
+        rowButtons.first { $0.toolTip == "贴出这条记录" }?.performClick(nil)
         try require(pinnedID == targetID, "History row did not pin its selected item")
         rowButtons.first { $0.toolTip == "删除这条记录" }?.performClick(nil)
         try require(!store.items.contains { $0.id == targetID }, "Delete button did not remove its selected item")
@@ -328,7 +396,7 @@ private struct Failure: Error { let message: String }
         try require(labels.contains("共 2 条") && !labels.contains { $0.contains("退出后") }, "Chinese header should show only its count")
         let info = descendants(history.window!.contentView!).compactMap { $0 as? NSButton }
             .first { $0.identifier?.rawValue == "history.info" }!
-        try verifyInfoBubble(info, explanation: "退出后将清空剪贴记录", snapshot: "info-hover-chinese")
+        try verifyInfoBubble(info, explanation: "最多保留 100 条文字、20 张图片和 5 个视频。\n\n内容较大时，实际保留的数量可能会少一些。\n\n退出 Patch 后，记录会清空，视频原文件不会被删除。", snapshot: "info-hover-chinese")
 
         displayDate = Calendar.current.date(byAdding: .day, value: 1, to: displayDate)!
         _ = history.perform(NSSelectorFromString("timeContextChanged"))
@@ -345,13 +413,16 @@ private struct Failure: Error { let message: String }
         try require(defaultCards.count == 4 && abs(defaultCards[0].frame.minY - defaultCards[1].frame.minY) < 1,
                     "Default history cards do not share a two-column row")
         try require(defaultCards[0].frame.width > 230, "History preview is too small at default width")
+        for card in defaultCards { try verifyCardFooter(card) }
         history.window!.setContentSize(CGSize(width: 880, height: 560))
         history.window!.contentView!.layoutSubtreeIfNeeded()
         let wideCards = cards()
         try require(abs(wideCards[0].frame.minY - wideCards[2].frame.minY) < 1, "Wide history must use three columns")
         history.window!.setContentSize(CGSize(width: 460, height: 340))
         history.window!.contentView!.layoutSubtreeIfNeeded()
-        try require(cards().allSatisfy { $0.frame.width >= 195 }, "Narrow card width clipped content")
+        try require(Set(cards().map { $0.frame.minX }).count == 1,
+                    "Narrow history must use one column for complete footer metadata")
+        for card in cards() { try verifyCardFooter(card) }
         let clear = descendants(history.window!.contentView!).compactMap { $0 as? NSButton }
             .first { $0.identifier?.rawValue == "history.clear" }!
         clear.performClick(nil)
@@ -400,7 +471,7 @@ private struct Failure: Error { let message: String }
             let clear = buttons.first { $0.identifier?.rawValue == "history.clear" }!
             try require(clear.title == "Clear" && clear.fittingSize.width <= clear.bounds.width, "English clear button is clipped")
             let info = buttons.first { $0.identifier?.rawValue == "history.info" }!
-            try verifyInfoBubble(info, explanation: "Clipboard history is cleared when you quit.", snapshot: "info-hover-english-\(choice.rawValue)")
+            try verifyInfoBubble(info, explanation: "Keeps up to 100 text clips, 20 images and 5 videos.\n\nLarger items may reduce the number of clips kept.\n\nQuitting Patch clears these records. Your original video files stay where they are.", snapshot: "info-hover-english-\(choice.rawValue)")
             try require(info.frame.maxX < clear.frame.minX && count.frame.maxX < info.frame.minX,
                         "Count, info and clear controls overlap in the narrow window")
             try require(!labels.contains { $0.stringValue.contains("quit") }, "The exit explanation should not remain visible as a header line")
@@ -408,8 +479,12 @@ private struct Failure: Error { let message: String }
             let cards = descendants(content).filter { $0.identifier?.rawValue.hasPrefix("history.card.") == true }
             for item in store.items {
                 let caption = "\(item.kindTitle) · \(RecentContentPresentation.timeLabel(item.date, now: now))"
-                let width = (caption as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width
-                try require(width <= cards[0].bounds.width - 54, "English metadata is clipped at the minimum window width")
+                guard let card = cards.first(where: { $0.identifier?.rawValue == "history.card.\(item.id.uuidString)" }),
+                      let metadata = card.subviews.compactMap({ $0 as? NSTextField }).first(where: {
+                          $0.identifier?.rawValue == "history.metadata.\(item.id.uuidString)"
+                      }) else { throw Failure(message: "English card is missing its metadata label") }
+                try require(metadata.stringValue == caption, "English card shortened its complete type/time caption")
+                try verifyCardFooter(card)
             }
             guard let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { throw Failure(message: "Cannot render English history") }
             content.cacheDisplay(in: content.bounds, to: bitmap)
@@ -457,8 +532,8 @@ private struct Failure: Error { let message: String }
         try require(groupLabels() == ["今天", "昨天", "11月2日"], "Calendar groups are not sorted newest first")
         for language in [AppLanguagePreference.simplifiedChinese, .english] {
             AppLocalization.language = language; history.reload()
-            let expected = language == .english ? ["All", "Image", "Text"] : ["全部", "图片", "文本"]
-            try require((0..<3).map { filter.label(forSegment: $0)! } == expected, "Type filters are not localized")
+            let expected = language == .english ? ["All", "Image", "Text", "Video"] : ["全部", "图片", "文本", "视频"]
+            try require((0..<4).map { filter.label(forSegment: $0)! } == expected, "Type filters are not localized")
             for width: CGFloat in [460, 461, 600, 880, 881] {
                 history.window!.setContentSize(CGSize(width: width, height: 420))
                 for style in [NSScroller.Style.overlay, .legacy, .overlay] {
@@ -469,9 +544,9 @@ private struct Failure: Error { let message: String }
                     content.layoutSubtreeIfNeeded(); scroll.flashScrollers()
                     let count = descendants(content).first { $0.identifier?.rawValue == "history.count" }!
                     let clear = descendants(content).first { $0.identifier?.rawValue == "history.clear" }!
-                    try require(abs(filter.frame.midY - clear.frame.midY) < 2 && abs(count.frame.midY - clear.frame.midY) < 2,
-                                "History header must occupy one row")
-                    try require(filter.frame.maxX + 8 <= count.frame.minX,
+                    try require(abs(filter.frame.midY - clear.frame.midY) < 2 && count.frame.maxY < scroll.frame.minY,
+                                "History header is misaligned or overlaps the records")
+                    try require(filter.frame.maxX + 8 <= count.frame.minX || count.frame.minY >= filter.frame.maxY + 4,
                                 "Narrow history header overlaps filter and count")
                     let allCards = cards(), clip = scroll.contentView
                     let cardFrames = allCards.map { $0.convert($0.bounds, to: content) }
@@ -479,7 +554,7 @@ private struct Failure: Error { let message: String }
                     let rightMargin = content.bounds.width - cardFrames.map(\.maxX).max()!
                     try require(abs(leftMargin - rightMargin) < 0.01 && (24...32).contains(leftMargin),
                                 "\(language)/\(style)/\(width): unequal card margins \(leftMargin)/\(rightMargin)")
-                    try require(width > 461 || allCards.allSatisfy { $0.frame.width >= 195 },
+                    try require(width > 461 || allCards.allSatisfy { $0.frame.width >= 400 },
                                 "Symmetric margins made narrow cards unreadably small")
                     let rightmost = allCards.map { $0.convert($0.bounds, to: scroll).maxX }.max()!
                     let scroller = scroll.verticalScroller!
@@ -489,10 +564,11 @@ private struct Failure: Error { let message: String }
                     try require(rightmost <= trackStart - 6 && !scroll.hasHorizontalScroller,
                                 "\(language)/\(style)/\(width): cards overlap the scrollbar track")
                     let uniqueColumns = Set(allCards.prefix(3).map { $0.frame.minX }).count
-                    try require(uniqueColumns == (width >= 880 ? 3 : 2), "Dedicated scroller space broke responsive columns")
+                    try require(uniqueColumns == (width >= 880 ? 3 : width >= 600 ? 2 : 1), "Dedicated scroller space broke responsive columns")
                     try require(filter.frame.maxX <= content.bounds.width - 18 && filter.frame.maxY < scroll.frame.minY,
                                 "Narrow filter header is clipped or overlaps records")
                     for card in allCards {
+                        try verifyCardFooter(card)
                         let remove = card.subviews.compactMap { $0 as? NSButton }.first { $0.toolTip == L("删除这条记录") }!
                         try require(remove.convert(remove.bounds, to: scroll).maxX < trackStart,
                                     "A delete target sits under the scroller")
@@ -525,7 +601,7 @@ private struct Failure: Error { let message: String }
                 }
             }
         }
-        try require(store.items.map(\.id) == initialIDs && store.memoryUsage == initialMemory && store.limit == 20,
+        try require(store.items.map(\.id) == initialIDs && store.memoryUsage == initialMemory && store.limit == 125,
                     "Filtering changed the original order, memory budget or retention")
         NotificationCenter.default.post(name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
         try require(content.needsLayout, "System scroller-style notification did not invalidate the layout")
@@ -556,7 +632,7 @@ private struct Failure: Error { let message: String }
         clear.performClick(nil)
         try require(store.items.map(\.id) == textIDs, "An empty tab's Clear button removed another category")
         store.addImage(fixture(), pixelScale: 2)
-        let remainingImage = store.items[0].id
+        let remainingImage = store.items.first { RecentContentStore.Filter.images.includes($0) }!.id
         choose(2)
         try require(clear.isEnabled && clear.toolTip == "清空文本记录", "Text tab has the wrong clear scope")
         clear.performClick(nil)

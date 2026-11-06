@@ -68,71 +68,98 @@ final class ShortcutRecorderButton: NSButton {
 
 @MainActor
 final class ShortcutEditorSession {
+    private struct Slot: Hashable { let action: ShortcutAction; let index: Int }
     private let hotKeys: HotKeys
     private let store: PreferencesStore
     private let onSave: () -> Void
     private let appliesImmediately: Bool
     private let keepsRecordingUntilFinished: Bool
-    private(set) var draft: [ShortcutAction: KeyboardShortcut]
+    private(set) var bindingDraft: [ShortcutAction: [KeyboardShortcut]]
+    var draft: [ShortcutAction: KeyboardShortcut] { bindingDraft.compactMapValues(\.first) }
     private(set) var recordingAction: ShortcutAction?
-    /// Outcome of the most recent immediate restore, including successful saves with cleanup warnings.
+    private(set) var recordingIndex: Int?
     private(set) var defaultsWereCommitted = false
     var onUpdate: (() -> Void)?
     private var recordingModifiers: String?
-    private var failedBindings: [ShortcutAction: KeyboardShortcut] = [:]
-    private var failedReasons: [ShortcutAction: ShortcutUpdateError] = [:]
-    private var messages: [ShortcutAction: String] = [:]
-    private var conciseMessages: [ShortcutAction: String] = [:]
-    private var issueActions: Set<ShortcutAction> = []
+    private var recordedBindings: [Slot: KeyboardShortcut] = [:]
+    private var strictCandidates: Set<KeyboardShortcut> { Set(recordedBindings.values) }
+    private var failedBindings: [Slot: KeyboardShortcut] = [:]
+    private var failedReasons: [Slot: ShortcutUpdateError] = [:]
+    private var rejectedInputs: [Slot: KeyboardShortcut] = [:]
+    private var slotMessages: [Slot: String] = [:]
+    private var slotIssues: [Slot: ShortcutUpdateError] = [:]
     private var persistenceFailed = false
-    private var rejectedInputs: [ShortcutAction: KeyboardShortcut] = [:]
-    private var editedActions: Set<ShortcutAction> = []
-
-    init(hotKeys: HotKeys, store: PreferencesStore? = nil, appliesImmediately: Bool = false, keepsRecordingUntilFinished: Bool = false,
-         onSave: @escaping () -> Void = {}) {
-        let store = store ?? .shared
-        self.hotKeys = hotKeys
-        self.store = store
-        self.onSave = onSave
-        self.appliesImmediately = appliesImmediately
-        self.keepsRecordingUntilFinished = keepsRecordingUntilFinished
-        draft = store.shortcuts
-        refreshFeedback()
-    }
-
     private(set) var hasBlockingShortcutIssues = false
-    var hasIssues: Bool { !issueActions.isEmpty }
-    func hasIssue(_ action: ShortcutAction) -> Bool { issueActions.contains(action) }
-    func message(_ action: ShortcutAction) -> String { messages[action] ?? "" }
-    func conciseMessage(_ action: ShortcutAction) -> String { conciseMessages[action] ?? "" }
+    var hasIssues: Bool { !slotIssues.isEmpty || persistenceFailed || !hotKeys.cleanupWarnings.isEmpty }
 
-    func recordingTitle(_ action: ShortcutAction) -> String {
-        let saved = draft[action]?.displayString ?? L("未设置")
-        if recordingAction == action && keepsRecordingUntilFinished { return recordingModifiers ?? saved }
-        return recordingAction == action ? (recordingModifiers ?? LF("%@ · 录入中", saved)) : saved
-    }
-
-    func reset() {
-        endRecording()
-        draft = store.shortcuts
-        editedActions = []
-        clearFailures()
+    init(hotKeys: HotKeys, store: PreferencesStore? = nil, appliesImmediately: Bool = false,
+         keepsRecordingUntilFinished: Bool = false, onSave: @escaping () -> Void = {}) {
+        let store = store ?? .shared
+        self.hotKeys = hotKeys; self.store = store; self.onSave = onSave
+        self.appliesImmediately = appliesImmediately; self.keepsRecordingUntilFinished = keepsRecordingUntilFinished
+        bindingDraft = store.shortcutBindings
         refreshFeedback()
     }
-
-    func startRecording(_ action: ShortcutAction) {
-        endRecording()
-        if appliesImmediately {
-            draft = store.shortcuts
-            rejectedInputs.removeValue(forKey: action)
-            failedBindings.removeValue(forKey: action)
-            failedReasons.removeValue(forKey: action)
+    func hasIssue(_ action: ShortcutAction) -> Bool {
+        persistenceFailed || slotIssues.keys.contains { $0.action == action } || hotKeys.cleanupFailures[action] != nil
+    }
+    func hasIssue(_ action: ShortcutAction, index: Int) -> Bool {
+        persistenceFailed || slotIssues[Slot(action: action, index: index)] != nil || hotKeys.cleanupFailures[action] != nil
+    }
+    func message(_ action: ShortcutAction) -> String {
+        (0..<max(1, bindingDraft[action, default: []].count)).map { message(action, index: $0) }.filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+    func message(_ action: ShortcutAction, index: Int) -> String { slotMessages[Slot(action: action, index: index)] ?? "" }
+    func conciseMessage(_ action: ShortcutAction) -> String {
+        if persistenceFailed { return L("保存失败") }
+        let issue = (0..<2).compactMap { slotIssues[Slot(action: action, index: $0)] }.first
+        if let issue {
+            switch issue {
+            case .duplicate, .applicationReserved, .systemReserved: return L("快捷键冲突")
+            case .invalid: return L("组合无效")
+            case .registrationFailed: return L("快捷键不可用")
+            case .systemCheckFailed: return L("暂时无法检查")
+            case .handlerFailed: return L("需重启 Patch")
+            }
         }
-        recordingAction = action
-        hotKeys.beginRecording { [weak self] shortcut in self?.accept(shortcut) }
+        return hotKeys.cleanupFailures[action] == nil ? "" : L("需重启 Patch")
+    }
+    func recordingTitle(_ action: ShortcutAction) -> String { recordingTitle(action, index: 0) }
+    func recordingTitle(_ action: ShortcutAction, index: Int) -> String {
+        let values = bindingDraft[action, default: []]
+        let saved = values.indices.contains(index) ? values[index].displayString : L("未设置")
+        guard recordingAction == action && recordingIndex == index else { return saved }
+        if !values.indices.contains(index) { return recordingModifiers ?? L("按组合键") }
+        if keepsRecordingUntilFinished { return recordingModifiers ?? saved }
+        return recordingModifiers ?? LF("%@ · 录入中", saved)
+    }
+    func reset() {
+        endRecording(); bindingDraft = store.shortcutBindings; recordedBindings = [:]; clearFailures(); refreshFeedback()
+    }
+    func retryUnavailableBindings() {
+        guard recordingAction == nil else { return }
+        hotKeys.retryUnavailableBindings(); refreshFeedback(); onSave()
+    }
+    func refreshAvailability() { refreshFeedback(notify: false) }
+    func startRecording(_ action: ShortcutAction, index: Int = 0) {
+        guard index >= 0, index < 2, index <= bindingDraft[action, default: []].count else { return }
+        endRecording()
+        if appliesImmediately { bindingDraft = store.shortcutBindings; clearFailures() }
+        recordingAction = action; recordingIndex = index
+        hotKeys.beginRecording { [weak self] in self?.accept($0) }
         refreshFeedback()
     }
-
+    func removeShortcut(_ action: ShortcutAction, index: Int) {
+        guard bindingDraft[action, default: []].indices.contains(index) else { return }
+        endRecording()
+        bindingDraft[action]!.remove(at: index)
+        var reindexed: [Slot: KeyboardShortcut] = [:]
+        for (slot, key) in recordedBindings {
+            if slot.action != action || slot.index < index { reindexed[slot] = key }
+            else if slot.index > index { reindexed[Slot(action: action, index: slot.index - 1)] = key }
+        }
+        recordedBindings = reindexed; clearFailures(); refreshFeedback()
+    }
     func reflectModifiers(_ event: NSEvent) {
         guard recordingAction != nil else { return }
         var value = ""
@@ -140,277 +167,149 @@ final class ShortcutEditorSession {
         if event.modifierFlags.contains(.option) { value += "⌥" }
         if event.modifierFlags.contains(.shift) { value += "⇧" }
         if event.modifierFlags.contains(.command) { value += "⌘" }
-        recordingModifiers = value.isEmpty ? nil : value + "…"
-        onUpdate?()
+        recordingModifiers = value.isEmpty ? nil : value + "…"; onUpdate?()
     }
-
-    @discardableResult
-    func capture(_ event: NSEvent) -> Bool {
+    @discardableResult func capture(_ event: NSEvent) -> Bool {
         guard recordingAction != nil, event.type == .keyDown else { return false }
         if event.keyCode == 48 { stopRecording(); return false }
         if event.keyCode == 53 { stopRecording(); return true }
-        if !event.isARepeat { accept(KeyboardShortcut(event: event)) }
-        return true
+        if !event.isARepeat { accept(KeyboardShortcut(event: event)) }; return true
     }
-
-    func stopRecording() {
-        endRecording()
-        refreshFeedback()
-    }
-
+    func stopRecording() { endRecording(); refreshFeedback() }
     func restoreDefaults() {
         endRecording()
-        if appliesImmediately {
-            applyDefaultsImmediately()
-            return
-        }
-        draft = ShortcutAction.defaultShortcuts
-        editedActions = Set(ShortcutAction.allCases)
-        clearFailures()
+        if appliesImmediately { _ = applyDefaultsImmediately(); return }
+        bindingDraft = ShortcutAction.defaultShortcuts.mapValues { [$0] }
+        recordedBindings = Dictionary(uniqueKeysWithValues: bindingDraft.flatMap { action, keys in
+            keys.enumerated().map { (Slot(action: action, index: $0.offset), $0.element) }
+        })
+        clearFailures(); refreshFeedback()
+    }
+    @discardableResult func restoreDefaultsImmediately() -> Bool { endRecording(); return applyDefaultsImmediately() }
+    private var toleratedSavedKeys: Set<KeyboardShortcut> {
+        Set(store.shortcutBindings.values.flatMap { $0 }).subtracting(strictCandidates)
+    }
+    @discardableResult func save() -> Bool {
+        endRecording(); persistenceFailed = false
         refreshFeedback()
-    }
-
-    /// Home restores immediately even while manually entered shortcuts remain drafts.
-    /// A false result can also mean the defaults were saved with a cleanup warning.
-    @discardableResult
-    func restoreDefaultsImmediately() -> Bool {
-        endRecording()
-        return applyDefaultsImmediately()
-    }
-
-    /// A cleanup warning leaves the saved configuration active, but keeps the editor open for feedback.
-    @discardableResult
-    func save() -> Bool {
-        endRecording()
-        persistenceFailed = false
-        // Persist a complete valid configuration, including inactive saved keys.
-        // An untouched legacy application command may remain unavailable, but a
-        // duplicate of that saved key must still prevent the entire transaction.
-        if let invalid = ShortcutAction.allCases.first(where: { draft[$0]?.isValid != true }) {
-            showFailure(.invalid(invalid))
-            return false
-        }
-        let issues = HotKeys.validationIssues(draft)
-        if let duplicate = ShortcutAction.allCases.compactMap({ issues[$0] }).first(where: {
-            if case .duplicate = $0 { return true }
-            return false
-        }) {
-            showFailure(duplicate)
-            return false
-        }
-        // Apply every recorded action together so swaps stay atomic. Recording
-        // the same value also explicitly retries an unavailable registration.
-        var active = hotKeys.registeredShortcuts
-        for action in editedActions { active[action] = draft[action] }
-        switch hotKeys.applyShortcuts(active) {
+        // Validation covers the complete draft; operational failures of unchanged
+        // saved chords remain independent of edits to another chord.
+        guard !hasBlockingShortcutIssues else { return false }
+        switch hotKeys.applyBindings(bindingDraft, allowingUnavailable: toleratedSavedKeys) {
         case .success:
-            guard store.setShortcuts(draft) else {
-                persistenceFailed = true
-                refreshFeedback()
-                return false
-            }
-            editedActions = []
-            clearFailures()
-            refreshFeedback()
-            onSave()
+            guard store.setShortcutBindings(bindingDraft) else { persistenceFailed = true; refreshFeedback(); return false }
+            recordedBindings = [:]; clearFailures(); refreshFeedback(); onSave()
             return hotKeys.cleanupWarnings.isEmpty
-        case .failure(let error):
-            showFailure(error)
-            return false
+        case .failure(let error): showFailure(error); return false
         }
     }
-
     private func accept(_ shortcut: KeyboardShortcut) {
-        guard let action = recordingAction else { return }
-        if appliesImmediately {
-            endRecording()
-            applyImmediately(shortcut, for: action)
-            return
-        }
-        // Even a rejected chord remains visible; active bindings change only after Save.
-        draft[action] = shortcut
-        editedActions.insert(action)
-        failedBindings.removeValue(forKey: action)
-        failedReasons.removeValue(forKey: action)
-        persistenceFailed = false
-        recordingModifiers = nil
+        guard let action = recordingAction, let index = recordingIndex else { return }
+        let slot = Slot(action: action, index: index)
+        if appliesImmediately { endRecording(); applyImmediately(shortcut, slot: slot); return }
+        if bindingDraft[action, default: []].indices.contains(index) { bindingDraft[action]![index] = shortcut }
+        else { bindingDraft[action, default: []].append(shortcut) }
+        recordedBindings[slot] = shortcut; failedBindings.removeValue(forKey: slot); failedReasons.removeValue(forKey: slot)
+        persistenceFailed = false; recordingModifiers = nil
         if !keepsRecordingUntilFinished { endRecording() }
         refreshFeedback()
     }
-
-    private func applyImmediately(_ shortcut: KeyboardShortcut, for action: ShortcutAction) {
-        // A rejected attempt must never leak into another feature's next update.
-        var desired = store.shortcuts
-        desired[action] = shortcut
-        rejectedInputs.removeValue(forKey: action)
-        failedReasons.removeValue(forKey: action)
-        let localIssues = HotKeys.validationIssues(desired)
-        if let error = localIssues[action] {
-            reject(shortcut, for: action, reason: error)
-            return
-        }
-        // Older configurations can contain an unavailable application command.
-        // Keep that independent failure repairable without blocking this item.
-        // Duplicate stored values still cannot be persisted, so check that
-        // schema constraint before changing any live registrations.
-        if let duplicate = ShortcutAction.allCases.compactMap({ localIssues[$0] }).first(where: {
-            if case .duplicate = $0 { return true }
-            return false
-        }) {
-            reject(shortcut, for: action, reason: duplicate)
-            return
-        }
-        // Retry this feature without forcing unrelated unavailable startup keys
-        // back into the registration transaction.
-        var active = hotKeys.registeredShortcuts
-        active[action] = shortcut
-        switch hotKeys.applyShortcuts(active) {
-        case .failure(let error): reject(shortcut, for: action, reason: error)
+    private func applyImmediately(_ shortcut: KeyboardShortcut, slot: Slot) {
+        var desired = store.shortcutBindings
+        if desired[slot.action, default: []].indices.contains(slot.index) { desired[slot.action]![slot.index] = shortcut }
+        else { desired[slot.action, default: []].append(shortcut) }
+        rejectedInputs.removeValue(forKey: slot); failedReasons.removeValue(forKey: slot)
+        let tolerated = Set(store.shortcutBindings.values.flatMap { $0 }).subtracting([shortcut])
+        switch hotKeys.applyBindings(desired, allowingUnavailable: tolerated) {
+        case .failure(let error):
+            bindingDraft = store.shortcutBindings; rejectedInputs[slot] = shortcut; failedReasons[slot] = error; refreshFeedback()
         case .success:
-            guard store.setShortcuts(desired) else {
-                persistenceFailed = true
-                refreshFeedback()
-                return
-            }
-            draft = desired
-            persistenceFailed = false
-            refreshFeedback()
-            onSave()
+            guard store.setShortcutBindings(desired) else { persistenceFailed = true; refreshFeedback(); return }
+            bindingDraft = desired; persistenceFailed = false; refreshFeedback(); onSave()
         }
     }
-
-    private func reject(_ shortcut: KeyboardShortcut, for action: ShortcutAction, reason: ShortcutUpdateError) {
-        draft = store.shortcuts
-        rejectedInputs[action] = shortcut
-        failedReasons[action] = reason
-        refreshFeedback()
-    }
-
-    @discardableResult
-    private func applyDefaultsImmediately() -> Bool {
-        defaultsWereCommitted = false
-        editedActions = []
-        let defaults = ShortcutAction.defaultShortcuts
-        clearFailures()
-        switch hotKeys.applyShortcuts(defaults) {
+    @discardableResult private func applyDefaultsImmediately() -> Bool {
+        defaultsWereCommitted = false; recordedBindings = [:]; clearFailures()
+        let defaults = ShortcutAction.defaultShortcuts.mapValues { [$0] }
+        switch hotKeys.applyBindings(defaults) {
         case .success:
-            guard store.setShortcuts(defaults) else {
-                persistenceFailed = true
-                refreshFeedback()
-                return false
-            }
-            draft = defaults
-            defaultsWereCommitted = true
-            refreshFeedback()
-            onSave()
+            guard store.setShortcutBindings(defaults) else { persistenceFailed = true; refreshFeedback(); return false }
+            bindingDraft = defaults; defaultsWereCommitted = true; refreshFeedback(); onSave()
             return hotKeys.cleanupWarnings.isEmpty
         case .failure(let error):
-            // Restoring defaults is one transaction: any rejection keeps every
-            // previous saved and active binding intact.
-            let affected: [ShortcutAction]
-            switch error {
-            case .invalid(let action), .applicationReserved(let action), .systemReserved(let action), .registrationFailed(let action, _): affected = [action]
-            case .duplicate(let first, let second): affected = [first, second]
-            case .systemCheckFailed, .handlerFailed: affected = ShortcutAction.allCases
+            for action in affectedActions(error) {
+                let slot = Slot(action: action, index: 0)
+                rejectedInputs[slot] = defaults[action]?.first; failedReasons[slot] = error
             }
-            for action in affected {
-                rejectedInputs[action] = defaults[action]
-                failedReasons[action] = error
-            }
-            draft = store.shortcuts
-            refreshFeedback()
-            return false
+            bindingDraft = store.shortcutBindings; refreshFeedback(); return false
         }
     }
-
     private func endRecording() {
         if recordingAction != nil { hotKeys.endRecording() }
-        recordingAction = nil
-        recordingModifiers = nil
+        recordingAction = nil; recordingIndex = nil; recordingModifiers = nil
     }
-
-    private func clearFailures() {
-        failedBindings = [:]
-        failedReasons = [:]
-        persistenceFailed = false
-        rejectedInputs = [:]
-    }
-
-    private func showFailure(_ error: ShortcutUpdateError) {
-        let affected: [ShortcutAction]
+    private func clearFailures() { failedBindings = [:]; failedReasons = [:]; rejectedInputs = [:]; persistenceFailed = false }
+    private func affectedActions(_ error: ShortcutUpdateError) -> [ShortcutAction] {
         switch error {
-        case .invalid(let action), .applicationReserved(let action), .systemReserved(let action), .registrationFailed(let action, _):
-            affected = [action]
-        // Duplicate feedback depends on both current values and is recomputed below.
-        // Caching it per action would survive when only the other endpoint changes.
-        case .duplicate: affected = []
-        case .systemCheckFailed, .handlerFailed: affected = ShortcutAction.allCases
+        case .invalid(let action), .applicationReserved(let action), .systemReserved(let action), .registrationFailed(let action, _): return [action]
+        case .duplicate(let first, let second): return [first, second]
+        case .systemCheckFailed, .handlerFailed: return ShortcutAction.allCases
         }
-        for action in affected { failedBindings[action] = draft[action]; failedReasons[action] = error }
+    }
+    private func showFailure(_ error: ShortcutUpdateError) {
+        if case .duplicate = error { refreshFeedback(); return }
+        for action in affectedActions(error) { for (index, key) in bindingDraft[action, default: []].enumerated() {
+            guard strictCandidates.contains(key) || hotKeys.registeredBindings[action, default: []].isEmpty else { continue }
+            let slot = Slot(action: action, index: index)
+            failedBindings[slot] = key; failedReasons[slot] = error
+        } }
         refreshFeedback()
     }
-
-    private func refreshFeedback() {
-        var issues = hotKeys.shortcutIssues(draft)
-        // Known invalid/conflicting chords must be corrected before submission.
-        // Operational failures remain retryable; cached failures from a rejected
-        // default restore do not describe the current draft.
-        hasBlockingShortcutIssues = issues.values.contains { issue in
-            switch issue {
-            case .invalid, .duplicate, .applicationReserved, .systemReserved: return true
-            case .registrationFailed, .systemCheckFailed, .handlerFailed: return false
-            }
-        }
-        // Immediate default restoration can reject a chord in either editor mode.
-        // Stored values stay visible while feedback describes the rejected attempt.
-        for action in ShortcutAction.allCases where rejectedInputs[action] != nil {
-            if let failure = failedReasons[action] { issues[action] = failure }
-        }
-        for action in ShortcutAction.allCases where issues[action] == nil {
-            if failedBindings[action] == draft[action], let failure = failedReasons[action] { issues[action] = failure }
-            else if draft[action] == store.shortcuts[action], let unavailable = hotKeys.unavailableReasons[action] {
-                issues[action] = unavailable
-            }
-        }
-        issueActions = Set(issues.keys)
+    private func refreshFeedback(notify: Bool = true) {
+        let preflight = hotKeys.bindingIssues(bindingDraft)
+        hasBlockingShortcutIssues = false; slotIssues = [:]; slotMessages = [:]
         for action in ShortcutAction.allCases {
-            var message: String
-            let concise: String
-            if persistenceFailed { concise = L("保存失败") }
-            else if let issue = issues[action] {
-                switch issue {
-                case .duplicate, .applicationReserved, .systemReserved: concise = L("快捷键冲突")
-                case .invalid: concise = L("组合无效")
-                case .registrationFailed: concise = L("快捷键不可用")
-                case .systemCheckFailed: concise = L("暂时无法检查")
-                case .handlerFailed: concise = L("需重启 Patch")
+            let keys = bindingDraft[action, default: []]
+            if keys.count > 2 { hasBlockingShortcutIssues = true }
+            for index in 0..<max(keys.count, recordingAction == action ? (recordingIndex ?? 0) + 1 : 1) {
+                let slot = Slot(action: action, index: index)
+                let key = keys.indices.contains(index) ? keys[index] : nil
+                var issue = key.flatMap { preflight[action]?[$0] }
+                if let issue {
+                    switch issue {
+                    case .invalid, .duplicate: hasBlockingShortcutIssues = true
+                    case .applicationReserved, .systemReserved:
+                        if let key, strictCandidates.contains(key) || !store.shortcutBindings[action, default: []].contains(key) { hasBlockingShortcutIssues = true }
+                    case .registrationFailed, .systemCheckFailed, .handlerFailed: break
+                    }
                 }
-            } else if hotKeys.cleanupFailures[action] != nil { concise = L("需重启 Patch") }
-            else { concise = "" }
-            conciseMessages[action] = concise
-            if persistenceFailed {
-                message = L("配置未保存，请重新选择快捷键。")
-                issueActions.insert(action)
-            } else if let input = rejectedInputs[action], let issue = failedReasons[action] {
-                let reason: String
-                if case .invalid = issue { reason = input.invalidReason ?? issue.localizedDescription }
-                else { reason = issue.localizedDescription }
-                let retained = store.shortcuts[action]?.displayString ?? L("原配置")
-                let status = hotKeys.registeredShortcuts[action] == store.shortcuts[action] ? LF("仍使用 %@。", retained) : LF("原配置 %@ 未更改。", retained)
-                message = "\(input.displayString)：\(reason)\n\(status)"
-            } else if let issue = issues[action] {
-                if case .invalid = issue { message = draft[action]?.invalidReason ?? issue.localizedDescription }
-                else { message = issue.localizedDescription }
-            } else if recordingAction == action {
-                message = L("按下快捷键；Esc 取消，Tab 切换。")
-            } else { message = "" }
-            if hotKeys.cleanupFailures[action] != nil {
-                message += (message.isEmpty ? "" : "\n") + L("快捷键释放未完成，请重新打开小贴。")
-                issueActions.insert(action)
+                if let failure = failedReasons[slot], rejectedInputs[slot] != nil || (key != nil && failedBindings[slot] == key) { issue = failure }
+                if issue == nil, let key, store.shortcutBindings[action, default: []].contains(key) {
+                    issue = hotKeys.unavailableBindingReasons[action]?[key]
+                }
+                if let issue { slotIssues[slot] = issue }
+                var message = ""
+                if persistenceFailed { message = L("配置未保存，请重新选择快捷键。") }
+                else if let input = rejectedInputs[slot], let failure = failedReasons[slot] {
+                    let reason: String
+                    if case .invalid = failure { reason = input.invalidReason ?? failure.localizedDescription }
+                    else { reason = failure.localizedDescription }
+                    let retained = store.shortcutBindings[action, default: []].map(\.displayString).joined(separator: " / ")
+                    let status = hotKeys.registeredBindings[action, default: []] == store.shortcutBindings[action, default: []]
+                        ? LF("仍使用 %@。", retained) : LF("原配置 %@ 未更改。", retained)
+                    message = "\(input.displayString)：\(reason)\n\(status)"
+                } else if let issue {
+                    if case .invalid = issue { message = key?.invalidReason ?? issue.localizedDescription }
+                    else if case .registrationFailed = issue, let key, !strictCandidates.contains(key), store.shortcutBindings[action, default: []].contains(key) {
+                        message = hotKeys.registeredBindings[action, default: []].isEmpty
+                            ? L("暂时不可用，已保留快捷键，可稍后重试。") : L("暂时不可用，另一组仍可使用。")
+                    } else { message = issue.localizedDescription }
+                } else if recordingAction == action && recordingIndex == index { message = L("按下快捷键；Esc 取消，Tab 切换。") }
+                if hotKeys.cleanupFailures[action] != nil { message += (message.isEmpty ? "" : "\n") + L("快捷键释放未完成，请重新打开小贴。") }
+                slotMessages[slot] = message
             }
-            messages[action] = message
         }
-        onUpdate?()
+        if notify { onUpdate?() }
     }
 }
 

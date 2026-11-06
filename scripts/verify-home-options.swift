@@ -18,9 +18,18 @@ import Darwin
     @MainActor static func render(_ view: NSView, _ name: String) {
         view.needsLayout = true; view.layoutSubtreeIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.12))
-        let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            require(false, "Cannot allocate Home options preview: \(name)"); return
+        }
         view.cacheDisplay(in: view.bounds, to: bitmap)
-        try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent(name + ".png"))
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            require(false, "Cannot encode Home options preview: \(name)"); return
+        }
+        do {
+            try png.write(to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent(name + ".png"))
+        } catch {
+            require(false, "Cannot save Home options preview \(name): \(error)")
+        }
     }
     @MainActor static func permissionLayout(_ page: AppOptionsView, granted: Bool) {
         page.layoutSubtreeIfNeeded()
@@ -31,17 +40,41 @@ import Darwin
         let button = views.first { $0.identifier?.rawValue == "options.authorize" } as! NSButton
         let control = page.appearanceControl.frame
         require(button.image == nil && button.imagePosition == .noImage, "Settings authorization must remain a text-only button")
-        require(state.frame.minY == label.frame.minY && state.frame.width == control.width && state.frame.maxX == control.maxX,
-                "Permission label and state are not aligned on the first row")
-        require(button.frame.width == control.width && button.frame.maxX == control.maxX && button.frame.minY > state.frame.maxY,
-                "Authorization button does not align with the settings column on the second row")
-        require(hint.frame.maxX + 24 == button.frame.minX && !hint.frame.intersects(button.frame),
-                "Permission explanation overlaps authorization control")
+        require(abs(state.frame.minY + state.firstBaselineOffsetFromTop - label.frame.minY - label.firstBaselineOffsetFromTop) < 0.01 && !state.frame.intersects(label.frame),
+                "Permission label and state are not aligned without overlap")
+        require(button.frame.maxX == control.maxX && abs(button.frame.midY - label.frame.midY) <= 1,
+                "Authorization button does not stay in the compact permission row")
+        require(state.frame.minX == label.frame.maxX + 12 && state.alignment == .left && state.font == languageRestartHint(page).font,
+                "Permission state does not share the inline restart-hint style")
+        require(hint.frame.minY >= max(button.frame.maxY, label.frame.maxY) && !hint.frame.intersects(button.frame),
+                "Permission explanation overlaps its compact authorization row")
         let textSize = (hint.stringValue as NSString).boundingRect(with: CGSize(width: hint.bounds.width, height: 1000),
             options: [.usesLineFragmentOrigin], attributes: [.font: hint.font!])
         require(textSize.height <= hint.bounds.height, "Permission explanation is truncated")
         require(button.isHidden == granted && state.textColor == (granted ? HomeWindowPalette.muted : .systemOrange),
                 "Permission status does not use the expected color or button visibility")
+    }
+    @MainActor static func compactOptionsLayout(_ page: AppOptionsView) {
+        page.layoutSubtreeIfNeeded()
+        let views = all(page)
+        let language = views.first { $0.identifier?.rawValue == "options.language-label" }!
+        let hint = languageRestartHint(page)
+        let rows = [page.appearanceControl, page.languageControl, page.countControl]
+        require(rows[1].frame.minY - rows[0].frame.minY == 44
+                && rows[2].frame.minY - rows[1].frame.minY == 44,
+                "Language restart guidance leaves an extra vertical gap between settings")
+        require(hint.frame.minX >= language.frame.maxX + 12 && hint.frame.maxX <= page.languageControl.frame.minX - 20
+                && abs(hint.frame.minY + hint.firstBaselineOffsetFromTop - language.frame.minY - language.firstBaselineOffsetFromTop) < 0.01,
+                "Restart guidance must stay alongside the language label")
+        require(hint.fittingSize.width <= hint.frame.width && hint.fittingSize.height <= hint.frame.height,
+                "Localized inline restart guidance is truncated")
+        for view in page.subviews where !view.isHidden {
+            require(page.bounds.contains(view.frame), "Compact settings clips a visible control: \(view.identifier?.rawValue ?? "label")")
+        }
+        let close = views.first { $0.identifier?.rawValue == "options.close" }!
+        let permissionHint = views.first { $0.identifier?.rawValue == "options.permission-hint" }!
+        require(close.frame.minY - permissionHint.frame.maxY >= 12,
+                "Compact settings content collides with its footer")
     }
     @MainActor static func dropdownConfiguration(_ page: AppOptionsView) {
         for control in [page.appearanceControl, page.languageControl] {
@@ -62,12 +95,75 @@ import Darwin
                 && page.countControl.numberOfItems == 20, "Pull-down conversion lost an option or added a dummy row")
 
     }
+    @MainActor static func languageRestartHint(_ page: AppOptionsView) -> NSTextField {
+        all(page).compactMap { $0 as? NSTextField }
+            .first { $0.identifier?.rawValue == "options.language-restart-hint" }!
+    }
+    @MainActor static func verifyRestartHintLifecycle() {
+        let originalLanguage = AppLocalization.language
+        defer { AppLocalization.language = originalLanguage }
+        for (systemLanguages, appLanguages, expectedEnglish) in [(["zh-Hans-CN"], ["en"], false), (["en-US"], ["zh-Hans"], true)] {
+            let system = AppLocalization.systemPreferredLanguages(globalLanguages: systemLanguages, fallback: appLanguages)
+            require(AppLocalization.resolvesToEnglish(.system, preferredLanguages: system) == expectedEnglish,
+                    "Follow System incorrectly inherits the app's language override")
+        }
+        require(AppLocalization.systemPreferredLanguages(globalLanguages: nil, fallback: ["en"]) == ["en"]
+                && AppLocalization.systemPreferredLanguages(globalLanguages: [], fallback: ["zh-Hans"]) == ["zh-Hans"],
+                "Missing global languages lost the locale fallback")
+        for startup in AppLanguagePreference.allCases {
+            let effective: AppLanguagePreference = AppLocalization.resolvesToEnglish(startup) ? .english : .simplifiedChinese
+            // Match the app entry point: .system resolves once for the running process.
+            AppLocalization.language = effective
+            let preferences = PreferencesStore(storage: MemoryPreferencesStorage())
+            preferences.setLanguagePreference(startup)
+            func newPage() -> AppOptionsView {
+                let page = AppOptionsView(preferences: preferences, onBack: {}, onChange: {}, onRequestPermission: {})
+                page.frame = CGRect(x: 0, y: 0, width: 752, height: AppOptionsView.preferredContentHeight)
+                page.refreshPermissions(granted: false)
+                return page
+            }
+            func choose(_ value: AppLanguagePreference, in page: AppOptionsView) {
+                page.languageControl.selectItem(at: AppLanguagePreference.allCases.firstIndex(of: value)!)
+                page.languageControl.sendAction(page.languageControl.action, to: page.languageControl.target)
+            }
+            let page = newPage()
+            require(languageRestartHint(page).isHidden, "Unchanged startup language incorrectly requests a restart")
+            compactOptionsLayout(page)
+            let initialRowFrames = [page.appearanceControl.frame, page.languageControl.frame, page.countControl.frame]
+            let alternate: AppLanguagePreference = effective == .english ? .simplifiedChinese : .english
+            choose(alternate, in: page)
+            require(!languageRestartHint(page).isHidden && languageRestartHint(page).textColor == .systemOrange
+                    && AppLocalization.language == effective, "Changing language must show orange restart guidance without changing the current session")
+            compactOptionsLayout(page)
+            require(initialRowFrames == [page.appearanceControl.frame, page.languageControl.frame, page.countControl.frame],
+                    "Showing the restart guidance moves surrounding configuration rows")
+            let reopened = newPage()
+            require(!languageRestartHint(reopened).isHidden, "Reopening settings lost the pending language restart")
+            choose(startup, in: reopened)
+            require(languageRestartHint(reopened).isHidden && languageRestartHint(newPage()).isHidden,
+                    "Reverting to the startup language retained the restart guidance")
+            choose(effective, in: reopened)
+            require(languageRestartHint(reopened).isHidden,
+                    "An equivalent explicit language requires a restart despite matching the running interface")
+            choose(.system, in: reopened)
+            require(languageRestartHint(reopened).isHidden == (AppLocalization.resolvesToEnglish(.system) == AppLocalization.isEnglish),
+                    "Follow System restart guidance compares stored preferences instead of effective languages")
+        }
+        print("PASS: restart guidance reflects effective language, survives reopened settings, and hides after reverting")
+    }
     @MainActor static func footerAlignment(_ home: HomeWindowController) {
         let content = home.window!.contentView!
         home.showHomePage(); content.layoutSubtreeIfNeeded()
         let homeClose = visibleButtons(content).first { $0.title == L("关闭") }!
         let homeFrame = homeClose.convert(homeClose.bounds, to: content)
+        let homeWindowFrame = home.window!.frame
+        let homeContentSize = content.bounds.size
         home.showOptions(); content.layoutSubtreeIfNeeded()
+        require(content.bounds.height == 48 + AppOptionsView.preferredContentHeight
+                && content.bounds.height < homeContentSize.height
+                && content.bounds.width == homeContentSize.width
+                && abs(home.window!.frame.maxY - homeWindowFrame.maxY) < 0.5,
+                "More Settings must shrink the same window while preserving its top edge and width")
         let optionsClose = visibleButtons(content).first { $0.identifier?.rawValue == "options.close" }!
         let optionsBack = visibleButtons(content).first { $0.title == L("返回首页") }!
         let closeFrame = optionsClose.convert(optionsClose.bounds, to: content)
@@ -76,11 +172,15 @@ import Darwin
                 "Settings Close does not share Home's window-right inset")
         for control in [optionsClose, optionsBack] {
             let frame = control.convert(control.bounds, to: content)
-            require(frame.minY == homeFrame.minY && frame.height == homeFrame.height,
-                    "Settings footer does not share Home's vertical position and button height")
+            require(frame.height == homeFrame.height,
+                    "Compact settings changed the standard footer button height")
             require(content.bounds.maxY - frame.maxY == HomeFooterLayout.bottomInset,
                     "Settings footer has a different window-bottom inset")
         }
+        home.showHomePage(); content.layoutSubtreeIfNeeded()
+        require(content.bounds.size == homeContentSize && home.window!.frame == homeWindowFrame,
+                "Returning from compact settings did not restore Home's size and position")
+        home.showOptions(); content.layoutSubtreeIfNeeded()
     }
     @MainActor static func nativeDropdown(_ control: SettingsSelector) {
         nativeCountDropdown(control)
@@ -103,7 +203,9 @@ import Darwin
         let rows = all(popup.contentView!).compactMap { $0 as? NSButton }
         rows.last?.scrollToVisible(rows.last!.bounds)
         require(popup.frame == frame && frame.height <= 232, "Scrolling expanded the list")
-        let screen = host.screen!.visibleFrame
+        guard let screen = host.screen?.visibleFrame else {
+            require(false, "Desktop screen unavailable for native selector verification"); return
+        }
         if button.minY - screen.minY >= frame.height + 4 {
             require(frame.maxY <= button.minY, "List did not open below")
         } else if screen.maxY - button.maxY >= frame.height + 4 {
@@ -157,6 +259,16 @@ import Darwin
     }
     @MainActor static func main() {
         let previewBundle = Bundle.main.bundleIdentifier?.hasPrefix("dev.screenleaf.options-menu-preview") == true
+        let preview = previewBundle || CommandLine.arguments.contains("--preview")
+        if !preview {
+            // macOS can reopen probes without their fixture arguments. Return before creating windows.
+            guard (2...3).contains(CommandLine.arguments.count), CommandLine.arguments[1].hasPrefix("/"),
+                  CommandLine.arguments.count == 2 || CommandLine.arguments[2] == "--english" else { return }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+                fputs("FAIL: Home options verification timed out\n", stderr)
+                exit(1)
+            }
+        }
         AppLocalization.language = CommandLine.arguments.contains("--english") || (previewBundle && Bundle.main.bundleIdentifier?.hasSuffix(".en") == true)
             ? .english : .simplifiedChinese
         _ = NSApplication.shared
@@ -169,7 +281,7 @@ import Darwin
             onOptionsChanged: { NSApp.appearance = preferences.appearancePreference.appearance }, hasRecentContent: { hasRecent })
         defer { home.close(); NSApp.appearance = nil }
         home.showWindow(nil)
-        if previewBundle || CommandLine.arguments.contains("--preview") {
+        if preview {
             let menu = NSMenu(), appItem = NSMenuItem(), appMenu = NSMenu(title: "Options Preview")
             appMenu.addItem(withTitle: "Quit Preview", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             appItem.submenu = appMenu; menu.addItem(appItem); NSApp.mainMenu = menu
@@ -178,6 +290,7 @@ import Darwin
             NSApp.run()
             return
         }
+        verifyRestartHintLifecycle()
         let originalWindow = home.window!, content = originalWindow.contentView!
         content.layoutSubtreeIfNeeded()
         require(requests == 0, "Opening Home requested screen access")
@@ -199,10 +312,14 @@ import Darwin
         require(home.isShowingOptions && home.window === originalWindow, "Settings creates a second window")
         require(!visibleButtons(content).contains { $0.title == "截图" }, "Hidden Home launch controls remain visible on settings page")
         let page = all(content).compactMap { $0 as? AppOptionsView }.first!
+        let labels = all(page).compactMap { $0 as? NSTextField }.map(\.stringValue)
+        require(!labels.contains(L("更多设置")) && !labels.contains(RecentContentPresentation.historyExplanation),
+                "Settings repeats its title or includes clipboard retention details")
+        require(originalWindow.title == L("Patch · 更多设置"), "Removing the body heading removed the native settings title")
         let popups = all(page).compactMap { $0 as? NSPopUpButton }
         require(popups.count == 3 && popups.allSatisfy { $0 is SettingsSelector },
                 "Settings must expose appearance, language and bounded batch pin count")
-        dropdownConfiguration(page); footerAlignment(home)
+        dropdownConfiguration(page); footerAlignment(home); compactOptionsLayout(page)
         nativeDropdown(page.appearanceControl)
         nativeDropdown(page.languageControl)
         nativeCountDropdown(page.countControl, selectLast: true)
@@ -228,6 +345,7 @@ import Darwin
             render(content, "options-\(mode.rawValue)")
             nativeDropdown(page.languageControl)
             permissionLayout(page, granted: false)
+            compactOptionsLayout(page)
             dropdownConfiguration(page)
             require(content.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == (mode == .dark ? .darkAqua : .aqua), "The current settings page did not apply appearance immediately")
             let selectors: [NSControl] = popups + [page.countControl]
@@ -246,12 +364,16 @@ import Darwin
         page.languageControl.menu!.performActionForItem(at: AppLanguagePreference.allCases.firstIndex(of: .english)!)
         dropdownConfiguration(page)
         require(preferences.languagePreference == .english && AppLocalization.language == .simplifiedChinese, "Language choice did not persist or changed the active session unexpectedly")
+        require(!languageRestartHint(page).isHidden && languageRestartHint(page).textColor == .systemOrange,
+                "Settings language change did not show orange restart guidance")
         visibleButtons(content).first { $0.identifier?.rawValue == "options.authorize" }!.performClick(nil)
         require(requests == 2 && !visibleButtons(content).contains { $0.identifier?.rawValue == "options.authorize" }, "Settings authorization did not update")
         permissionLayout(page, granted: true)
+        compactOptionsLayout(page)
         visibleButtons(content).first { $0.title == "返回首页" }!.performClick(nil)
         require(!home.isShowingOptions && visibleButtons(content).contains { $0.title == "截图" }, "Return did not restore Home")
         home.showOptions()
+        require(!languageRestartHint(page).isHidden, "Returning to settings cleared the pending language restart")
         let closeSettings = visibleButtons(content).first { $0.identifier?.rawValue == "options.close" }!
         let backSettings = visibleButtons(content).first { $0.title == "返回首页" }!
         let closeFrame = closeSettings.convert(closeSettings.bounds, to: content)
@@ -337,6 +459,7 @@ import Darwin
         english.showOptions(); render(english.window!.contentView!, "options-english-dark")
         let englishPage = all(english.window!.contentView!).compactMap { $0 as? AppOptionsView }.first!
         permissionLayout(englishPage, granted: false)
+        compactOptionsLayout(englishPage)
         dropdownConfiguration(englishPage); footerAlignment(english)
         for control in visibleButtons(english.window!.contentView!) {
             require(english.window!.contentView!.bounds.contains(control.convert(control.bounds, to: english.window!.contentView!)), "An English setting control is clipped")

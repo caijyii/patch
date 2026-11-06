@@ -96,6 +96,10 @@ private final class PorcelainPreview: NSView {
 
 @main private struct ToolbarMotionVerification {
     @MainActor static func main() {
+        guard CommandLine.arguments.count == 2, CommandLine.arguments[1].hasPrefix("/") else { return }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+            fputs("FAIL: toolbar verification timed out\n", stderr); exit(1)
+        }
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
         var failures = 0
@@ -113,7 +117,7 @@ private final class PorcelainPreview: NSView {
             ("selected light-theme captions, glyphs and parameter samples keep stronger contrast", toolbarAppearance),
             ("light toolbar surfaces stay opaque and uniform without backdrop dependence", reducedTransparency),
             ("color swatches remain visible under hover, press and selection", colorSwatchHover),
-            ("hover waits for dwell and gentle scale feedback respects reduced motion", motion),
+            ("hover and press retain visible feedback without resampling glyphs", motion),
             ("all four mode captions keep selection distinct from hover and refresh state immediately", modeFeedback),
             ("vector sticker library is complete and its compact picker remains usable", stickerLibrary),
             ("shared toolbar renders to an inspectable native preview", preview)
@@ -217,7 +221,7 @@ private final class PorcelainPreview: NSView {
     @MainActor private static func preferences() throws {
         let memory = MemoryPreferencesStorage()
         let store = PreferencesStore(storage: memory)
-        try require(store.annotation(for: "贴纸").fontSize == 16 && store.annotation(for: "文字").fontSize == 18,
+        try require(store.annotation(for: "贴纸").fontSize == 36 && store.annotation(for: "文字").fontSize == 18,
                     "Sticker and text share the wrong initial size")
         var value = store.annotation(for: "贴纸"); value.fontSize = 96
         store.setAnnotation(value, for: "贴纸")
@@ -253,7 +257,7 @@ private final class PorcelainPreview: NSView {
         controls.choose(tool: .sticker)
         try require(controls.rows.count == 2 && (30...40).contains(controls.stickerButtons.count) && controls.sizeControl.category == "贴纸大小",
                     "Sticker palette is missing curated choices or flat sizes")
-        try require(canvas.annotationFontSize == 16 && canvas.annotationSticker == StickerCatalog.defaultIdentifier, "Initial sticker is wrong")
+        try require(canvas.annotationFontSize == 36 && canvas.annotationSticker == StickerCatalog.defaultIdentifier, "Initial sticker is wrong")
         controls.stickerButtons.first { $0.identifier?.rawValue == StickerCatalog.canonicalIdentifier("🐥") }!.performClick(nil)
         for _ in 0..<8 { controls.refresh(); _ = controls.rows }
         try require(canvas.annotationSticker == StickerCatalog.canonicalIdentifier("🐥"), "Explicit sticker changed during redraw")
@@ -565,8 +569,8 @@ private final class PorcelainPreview: NSView {
             try require(distance(sample(hovered), sample(idle)) > 0.018,
                         "Settled hover has no visible background feedback")
             let scale = glyph.layer!.transform.m11
-            try require(button.allowsMotion ? (scale > 1 && scale <= 1.035) : abs(scale - 1) < 0.001,
-                        "Hover scale is too strong or ignores reduced motion")
+            try require(abs(scale - 1) < 0.001 && (glyph.layer?.animationKeys()?.isEmpty ?? true),
+                        "Settled hover resamples a small icon instead of preserving native pixels")
             try require(abs(glyph.layer!.transform.m12) < 0.001 && abs(glyph.layer!.transform.m21) < 0.001,
                         "Hover rotates the icon")
             button.mouseExited(with: event)
@@ -578,22 +582,10 @@ private final class PorcelainPreview: NSView {
             let pressed = try render(button)
             try require(distance(sample(pressed), sample(resting)) > 0.018,
                         "An already-selected button has no pressed background feedback")
-            if button.allowsMotion {
-                let scale = glyph.layer!.transform.m11
-                try require(scale >= 0.96 && scale < 1, "Press scaling is too strong or absent")
-                try require(glyph.layer?.animationKeys()?.count == 1, "Press stacks multiple animations")
-                button.highlight(false)
-                try require(abs(glyph.layer!.transform.m11 - 1) < 0.001, "Release leaves the glyph compressed")
-                guard let release = glyph.layer?.animationKeys()?.first.flatMap({ glyph.layer?.animation(forKey: $0) }) else {
-                    throw ToolbarFailure(description: "Release snaps back without a transition")
-                }
-                try require(release.duration >= 0.12 && release.duration <= 0.2 && release.repeatCount == 0,
-                            "Release animation is abrupt, too long, or repeated")
-            } else {
-                try require(glyph.layer?.animationKeys()?.isEmpty ?? true, "Reduced motion still animates a press")
-                try require(abs(glyph.layer!.transform.m11 - 1) < 0.001, "Reduced motion still scales the glyph")
-                button.highlight(false)
-            }
+            try require(glyph.layer?.animationKeys()?.isEmpty ?? true, "Press animates the glyph geometry")
+            try require(abs(glyph.layer!.transform.m11 - 1) < 0.001, "Press scales the glyph")
+            button.highlight(false)
+            try require(abs(glyph.layer!.transform.m11 - 1) < 0.001, "Release leaves the glyph compressed")
             try require(button.frame == before, "Press changes the action hit target")
         }
     }

@@ -48,6 +48,7 @@ final class RecordingCoordinator: NSObject {
     private var countdownSleep: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
 
     var onStateChange: (() -> Void)?
+    var onCompletedVideo: ((URL) -> Void)?
     /// Includes preparation, countdown, pauses and finalization, so quitting can wait safely.
     var isRecording: Bool { phase != .idle }
     /// The menu-bar Stop action appears only after recording actually begins.
@@ -217,7 +218,10 @@ final class RecordingCoordinator: NSObject {
         fileLabel.font = .systemFont(ofSize: 11); fileLabel.textColor = .secondaryLabelColor
         fileLabel.lineBreakMode = .byTruncatingMiddle; fileLabel.maximumNumberOfLines = 1
         exclusionLabel.font = .systemFont(ofSize: 11); exclusionLabel.textColor = .secondaryLabelColor
-        panel = window; needsInitialPlacement = true; updateControls()
+        panel = window; needsInitialPlacement = true
+        audioToolbar.onDisplayMetricsChanged = { [weak self] in self?.layoutControls() }
+        actionToolbar.onDisplayMetricsChanged = { [weak self] in self?.layoutControls() }
+        updateControls()
     }
 
     private func updateControls() {
@@ -613,6 +617,7 @@ final class RecordingCoordinator: NSObject {
                 }.value
                 guard self.sessionID == id, self.failure == nil else { return }
                 self.revealURL = destination
+                self.onCompletedVideo?(destination)
                 self.recoverableSession = nil
                 self.releaseSession()
                 self.fileLabel.stringValue = destination.path

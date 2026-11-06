@@ -36,21 +36,28 @@ final class RegionSelector {
     private var windows: [NSWindow] = []
     private var views: [SelectionView] = []
     private var callback: ((CaptureSelectionAction, CaptureRegion, CGImage?) -> Void)?
+    private var cancellation: (() -> Void)?
     private var target: NSRunningApplication?
     private var selectionID = UUID()
     private var preparation: Task<Void, Never>?
     private var cursorPushed = false
     private var inputObservers: [NSObjectProtocol] = []
+    private var workspaceObservers: [NSObjectProtocol] = []
 
-    deinit { inputObservers.forEach { NotificationCenter.default.removeObserver($0) } }
+    deinit {
+        inputObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        workspaceObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+    }
 
     func select(purpose: CaptureSelectionPurpose, initialMode: ScreenshotSelectionMode = .window,
                 targetApplication: NSRunningApplication? = nil,
                 capture: @escaping (CaptureRegion) async throws -> CGImage,
+                onCancel: (() -> Void)? = nil,
                 completion: @escaping (CaptureSelectionAction, CaptureRegion, CGImage?) -> Void) {
         cancel()
         target = targetApplication ?? NSWorkspace.shared.frontmostApplication
         callback = completion
+        cancellation = onCancel
         let id = selectionID
         let screens = NSScreen.screens
         let candidates = visibleWindows()
@@ -67,14 +74,22 @@ final class RegionSelector {
                     guard !Task.isCancelled, self?.selectionID == id else { return }
                     snapshots.append((screen, image))
                 }
-                guard let self, self.selectionID == id, !snapshots.isEmpty else { return }
+                guard let self, self.selectionID == id else { return }
+                guard !snapshots.isEmpty else {
+                    let cancelled = self.cancellation
+                    self.cancel()
+                    cancelled?()
+                    return
+                }
                 self.preparation = nil
                 self.show(snapshots, candidates: candidates, primaryTop: primaryTop,
                           purpose: purpose, initialMode: initialMode)
             } catch {
                 guard let self, self.selectionID == id, !Task.isCancelled else { return }
+                let cancelled = self.cancellation
                 self.cancel()
                 showError(error, title: L("截图未完成"))
+                cancelled?()
             }
         }
     }
@@ -88,7 +103,7 @@ final class RegionSelector {
             window.isOpaque = false
             window.backgroundColor = .clear
             window.acceptsMouseMovedEvents = true
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications]
             window.isReleasedWhenClosed = false
             let localCandidates = candidates.compactMap { candidate -> CGRect? in
                 SelectionGeometry.windowRect(candidate.quartzRect, primaryTop: primaryTop, screenFrame: screen.frame)
@@ -135,8 +150,8 @@ final class RegionSelector {
         }
         let mouse = NSEvent.mouseLocation
         let current = windows.first(where: { $0.frame.contains(mouse) }) ?? windows.first
-        // A key window alone does not take keyboard input away from the previously active app.
-        NSApp.activate(ignoringOtherApps: true)
+        // A nonactivating panel takes keyboard focus without bringing Patch's
+        // ordinary windows, and their desktop, over the captured Space.
         current?.makeKey()
         current?.makeFirstResponder(current?.contentView)
         installInputObservers()
@@ -217,19 +232,31 @@ final class RegionSelector {
     }
 
     private func restoreOverlays(focus: SelectionView) {
-        NSApp.activate(ignoringOtherApps: true)
-        windows.forEach { $0.orderFrontRegardless() }
-        focus.window?.makeKey()
-        focus.window?.makeFirstResponder(focus)
+        let id = selectionID
+        let needsActivation = target?.isActive == false
+        if needsActivation { target?.activate(options: []) }
+        let restore: @MainActor @Sendable () -> Void = { [weak self, weak focus] in
+            guard let self, let focus, self.selectionID == id else { return }
+            self.windows.forEach { $0.orderFrontRegardless() }
+            focus.window?.makeKey()
+            focus.window?.makeFirstResponder(focus)
+        }
+        // Save/error dialogs may activate Patch. Let the captured application
+        // return before restoring its frozen overlays; cancellation invalidates this handoff.
+        if needsActivation { DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: restore) }
+        else { restore() }
     }
 
     func cancel() {
         inputObservers.forEach { NotificationCenter.default.removeObserver($0) }
         inputObservers.removeAll()
+        workspaceObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        workspaceObservers.removeAll()
         selectionID = UUID()
         preparation?.cancel()
         preparation = nil
         callback = nil
+        cancellation = nil
         target = nil
         views.forEach { $0.deactivate() }
         windows.forEach { $0.orderOut(nil) }
@@ -240,22 +267,53 @@ final class RegionSelector {
 
     private func installInputObservers() {
         inputObservers.forEach { NotificationCenter.default.removeObserver($0) }
-        inputObservers = [NSApplication.didResignActiveNotification, NSApplication.didChangeScreenParametersNotification].map { name in
-            NotificationCenter.default.addObserver(forName: name, object: NSApp, queue: .main) { [weak self] _ in
+        workspaceObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        inputObservers = [NSApplication.didResignActiveNotification, NSWindow.didResignKeyNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, self.windows.contains(where: { $0.isVisible }) else { return }
-                    // Never leave a frozen overlay showing while another app receives typing,
-                    // or when a changed display arrangement leaves part of the desktop uncovered.
-                    self.cancel()
+                    self?.scheduleInputOwnershipCheck()
                 }
             }
         }
+        inputObservers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: NSApp, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.cancelVisibleOverlays() }
+        })
+        workspaceObservers = [NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.cancelVisibleOverlays() }
+        }]
+    }
+
+    private func scheduleInputOwnershipCheck() {
+        let id = selectionID
+        // Switching the key overlay between displays briefly resigns the old
+        // window. A child popover may also own focus while the selection stays active.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.selectionID == id else { return }
+            func ownsKeyboard(_ window: NSWindow) -> Bool {
+                window.isKeyWindow || (window.childWindows ?? []).contains(where: ownsKeyboard)
+            }
+            guard !self.windows.contains(where: ownsKeyboard) else { return }
+            self.cancelVisibleOverlays()
+        }
+    }
+
+    private func cancelVisibleOverlays() {
+        guard windows.contains(where: { $0.isVisible }) else { return }
+        let cancelled = cancellation
+        cancel()
+        cancelled?()
     }
 
     private func cancelAndRestoreTarget() {
         let application = target
+        let cancelled = cancellation
         cancel()
-        application?.activate(options: [])
+        if application?.isActive == false { application?.activate(options: []) }
+        cancelled?()
     }
 
     private func finish(action: CaptureSelectionAction, region: CaptureRegion, image: CGImage?) {
@@ -263,7 +321,7 @@ final class RegionSelector {
         let application = target
         cancel()
         let id = selectionID
-        application?.activate(options: [])
+        if application?.isActive == false { application?.activate(options: []) }
         // OCR consumes the frozen image; only live-capture workflows need the
         // overlay to leave the compositor before their next step starts.
         let delay = action == .ocr ? 0.0 : 0.18
@@ -274,19 +332,20 @@ final class RegionSelector {
     }
 }
 
-private final class SelectionWindow: NSWindow {
+private final class SelectionWindow: NSPanel {
     var onKeyEquivalent: ((NSEvent) -> Bool)?
     convenience init(covering screen: NSScreen) {
         self.init(contentRect: CGRect(origin: .zero, size: screen.frame.size),
-                  styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
+                  styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false, screen: screen)
         setFrame(screen.frame, display: false)
         ignoresMouseEvents = false
+        hidesOnDeactivate = false
+        becomesKeyOnlyIfNeeded = false
     }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func sendEvent(_ event: NSEvent) {
         if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type) {
-            NSApp.activate(ignoringOtherApps: true)
             makeKey()
         }
         super.sendEvent(event)
@@ -338,7 +397,7 @@ private final class SelectionChrome: NSView {
         if selection == nil { hint = emptyHint ?? (L("单击选窗口 · 拖动框选") + (fullScreenAvailable ? L(" · F 整屏") : "") + L(" · Esc 取消")) }
         else if annotationSelected { hint = L("拖动移动 · 设置区修改 · Delete 删除 · Esc 取消选中") }
         else { hint = LF("双击空白或 Enter %@ · Esc 取消", primaryTitle) }
-        let text = scrollHint ? hint + L("\n只选择随滚动变化的正文，避开固定顶栏和底栏") : hint
+        let text = scrollHint ? hint + L("\n框选需要的范围，滚动后自动拼接") : hint
         let size = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium)])
         badge(text, near: CGPoint(x: (bounds.width - size.width) / 2, y: bounds.height - size.height - 28), font: .systemFont(ofSize: 13, weight: .medium))
     }
@@ -492,6 +551,7 @@ private final class SelectionView: NSView {
             self.updateSelection()
         }
         buildToolbar()
+        toolbar.onDisplayMetricsChanged = { [weak self] in self?.arrangeToolbar() }
         if purpose == .screenshot { setScreenshotMode(initialMode, startAnalysis: false) }
         else { updateSelection() }
     }
@@ -587,6 +647,12 @@ private final class SelectionView: NSView {
     private var imageScale: CGFloat { CGFloat(canvas.source.width) / max(1, bounds.width) }
 
     private func arrangeToolbar() {
+        let backingScale = window?.backingScaleFactor ?? imageScale
+        toolbar.configure(forBackingScaleFactor: backingScale)
+        rectangleControls.configureToolbar(forBackingScaleFactor: backingScale)
+        subjectControls.configureToolbar(forBackingScaleFactor: backingScale)
+        toolbar.prepareItems([screenButton, freeButton, windowButton, cancelButton, confirmButton,
+                              rectangleButton, subjectButton].compactMap { $0 } + imageActions + [modeSeparator])
         let clipped = toolbarArea.intersection(bounds)
         let available = clipped.isNull || clipped.isEmpty ? bounds : clipped
         let usableWidth = min(1120, max(40, available.width - 24))
@@ -599,7 +665,7 @@ private final class SelectionView: NSView {
             let main = modes + [modeSeparator] + (visibleControls.rows(appendingActions: actions, maxWidth: usableWidth).first ?? [])
             // The floating toolbar keeps the width established by its actions;
             // extra stickers must not stretch it across the available screen.
-            let parameterWidth = min(usableWidth, SelectionToolbar.singleLineWidth(main))
+            let parameterWidth = min(usableWidth, SelectionToolbar.singleLineWidth(main, metrics: toolbar.metrics))
             let controlRows = visibleControls.rows(appendingActions: actions, maxWidth: parameterWidth)
             toolbar.rows = [main] + Array(controlRows.dropFirst())
         } else if purpose == .record {
@@ -612,7 +678,8 @@ private final class SelectionView: NSView {
         toolbar.trailingActions = purpose == .screenshot ? [cancelButton, imageActions[0]] : [cancelButton, confirmButton]
         toolbar.isHidden = toolbar.rows.isEmpty
         let size = toolbar.arrange(maxWidth: usableWidth, maxHeight: available.height)
-        toolbar.frame = SelectionGeometry.toolbarFrame(selection: selection, size: size, within: available)
+        toolbar.frame = SelectionGeometry.toolbarFrame(selection: selection, size: size, within: available,
+                                                       backingScaleFactor: backingScale)
     }
 
     override func updateTrackingAreas() {
@@ -985,8 +1052,8 @@ private final class SelectionView: NSView {
             chrome.emptyHint = screenshotMode == .window ? L("悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消") : L("拖动框选范围 · R 框选 · W 窗口 · F 整屏 · Esc 取消")
         } else if purpose == .scroll {
             chrome.emptyHint = selectionMode == .window
-                ? L("单击选择窗口 · R 返回正文框选 · Esc 取消")
-                : L("拖动框选正文 · W 窗口框选 · Esc 取消")
+                ? L("单击选择窗口 · R 自由框选 · Esc 取消")
+                : L("拖动框选范围 · W 选择窗口 · Esc 取消")
         }
         chrome.needsDisplay = true
         rectangleCanvas.interactionBounds = selection.map { SelectionGeometry.pixelRect($0, in: bounds, imageSize: chrome.imageSize) }

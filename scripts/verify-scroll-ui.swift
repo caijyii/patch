@@ -29,6 +29,9 @@ extension ScrollCaptureCoordinator {
     fileprivate var verificationTask: Task<Void, Never>? { task }
     fileprivate func verificationWaitForCompletion() async { await task?.value }
     fileprivate var verificationRecovering: Bool { state == .recovering }
+    fileprivate var verificationReselecting: Bool { state == .reselecting }
+    fileprivate var verificationSourceRegion: CaptureRegion? { region }
+    fileprivate var verificationAnchor: CGPoint? { scrollScreenAnchor }
     fileprivate var verificationRun: UUID { run }
     fileprivate func verificationCaptureActive(_ operation: UUID) -> Bool {
         isCapturing(token: session, operation: operation)
@@ -44,12 +47,21 @@ extension ScrollCaptureCoordinator {
         setStatus(mode.label)
     }
     fileprivate func verificationPause() { pause("已暂停 · 可继续或完成") }
+    fileprivate func verificationSourceDisplayRemoved(fallback: CGRect) {
+        sourceDisplayChanged = true
+        fallbackHUDBounds = fallback
+        pause("显示器已变化 · 请重新框选")
+    }
     fileprivate func verificationLimit() { apply(.limitReached("test limit"), width: imageWidth) }
     fileprivate func verificationReject(_ reason: String) { apply(.paused(reason), width: imageWidth) }
     fileprivate func verificationStopAutomatic() -> Bool { stopAutomatic() }
+    fileprivate func verificationApplyGeometry(_ preview: ScrollCapturePreview, height: Int, renderPreview: Bool = true) {
+        apply(.appended(rows: 1, height: height), width: Int(preview.inputSize.width),
+              preview: renderPreview ? preview : nil, content: preview.contentState)
+    }
     fileprivate func verificationAccept(_ image: CGImage) async {
-        let (update, preview) = await processor.append(image)
-        apply(update, width: image.width, preview: preview)
+        let (update, preview, content) = await processor.append(image)
+        apply(update, width: image.width, preview: preview, content: content)
     }
     fileprivate func verificationImage() async -> CGImage? { await processor.image() }
     fileprivate func verificationReleaseLargeFrames() async throws {
@@ -84,6 +96,10 @@ private final class AnnotationPinchEvent: NSEvent {
 @main
 private struct ScrollUIVerification {
     @MainActor static func main() {
+        guard CommandLine.arguments == [CommandLine.arguments[0], "--verify"] else { return }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+            fputs("FAIL: scroll HUD verification timed out\n", stderr); exit(1)
+        }
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
         Task { @MainActor in await verifyAll() }
@@ -114,6 +130,12 @@ private struct ScrollUIVerification {
         await run("annotation centers pixels, fits its toolbar and handles native pinch events without resizing exports") { try verifyAnnotationViewport() }
         await run("inline annotation cancels safely and retries failed completion without losing marks") { try await verifyInlineAnnotationLifecycle() }
         await run("cancelled completion cannot deliver stale pixels or close a new session") { try await verifyCancelledCompletion() }
+        await run("matching updates scroll anchor while preserving the entire selected region") { try verifyContentGeometry() }
+        await run("preview and alignment limitations leave completion and annotation available") { try verifyContinuousCompletion() }
+        await run("reselection suspends capture, Esc preserves pixels, and stale callbacks cannot revive old sessions") { try await verifyReselection() }
+        await run("source display removal keeps completion available and annotation inside the fallback display") { try await verifyDisplayFallback() }
+        await run("cancelled queued processing cannot change retained capture pixels") { try await verifyCancelledProcessing() }
+        await run("changing fixed elements retain an exportable full-width image and complete through the HUD") { try await verifyChangedLayoutPublication() }
         await run("five 4K capture cycles release old processors and preview buffers on cancel") {
             let coordinator = ScrollCaptureCoordinator(capture: { _ in
                 throw ScrollUIFailure(description: "Resource probe must not capture the screen")
@@ -129,10 +151,11 @@ private struct ScrollUIVerification {
     }
 
     @MainActor private static func fixture(_ region: CaptureRegion,
+        onReselect: ((CaptureRegion, @escaping () -> Void) -> Void)? = nil,
         onComplete: @escaping (CGImage, ScrollCaptureCoordinator.CompletionAction) throws -> Void = { _, _ in }) -> ScrollCaptureCoordinator {
         let coordinator = ScrollCaptureCoordinator(capture: { _ in
             throw ScrollUIFailure(description: "Verification must not call capture")
-        }, onComplete: onComplete)
+        }, onReselect: onReselect, onComplete: onComplete)
         coordinator.verificationPresent(region)
         return coordinator
     }
@@ -425,8 +448,12 @@ private struct ScrollUIVerification {
             guard let explanation = visibleText(in: hud).first(where: {
                 $0.identifier?.rawValue == "scroll.status"
             }) else { throw ScrollUIFailure(description: "Missing inline capture status") }
-            try require(explanation.stringValue == "拼接暂停，请回滚重试",
-                        "Pause reason and recovery action are not condensed into the status")
+            try require(explanation.stringValue == "继续滚动 · 可随时完成",
+                        "Recovery status interrupts the flow instead of preserving completion")
+            let finish = try button("完成", in: coordinator)
+            let annotate = try button("标注", in: coordinator)
+            try require(finish.isEnabled && annotate.isEnabled,
+                        "Waiting for overlap disabled completion or annotation")
             try require(explanation.toolTip?.contains(reason) == true
                         && explanation.accessibilityHelp()?.contains(reason) == true,
                         "Compact status lost its detailed tooltip or accessible help")
@@ -458,7 +485,7 @@ private struct ScrollUIVerification {
         for (title, expectedAction) in [("完成", ScrollCaptureCoordinator.CompletionAction.copy),
                                         ("标注", .annotate)] {
             var delivered: [(CGImage, ScrollCaptureCoordinator.CompletionAction)] = []
-            let coordinator = fixture(syntheticRegion()) { delivered.append(($0, $1)) }
+            let coordinator = fixture(syntheticRegion(), onComplete: { delivered.append(($0, $1)) })
             defer { coordinator.cancel() }
             for label in ["完成", "标注"] {
                 let completion = try button(label, in: coordinator)
@@ -496,11 +523,11 @@ private struct ScrollUIVerification {
         for retryTitle in ["完成", "标注"] {
             var attempts = 0
             var deliveredAction: ScrollCaptureCoordinator.CompletionAction?
-            let coordinator = fixture(syntheticRegion()) { _, action in
+            let coordinator = fixture(syntheticRegion(), onComplete: { _, action in
                 attempts += 1
                 if attempts == 1 { throw ScreenLeafError(message: "Injected clipboard failure") }
                 deliveredAction = action
-            }
+            })
             defer { coordinator.cancel() }
             coordinator.verificationSetRunning()
             await coordinator.verificationAccept(image(top: 0))
@@ -515,8 +542,12 @@ private struct ScrollUIVerification {
                         "Failure changed the assembled pixels")
             let detail = coordinator.verificationHUD?.subviews.compactMap { $0 as? NSTextField }
                 .first { $0.identifier?.rawValue == "scroll.status.detail" }
-            try require(detail?.isHidden == true && coordinator.verificationToolbar.subviews.compactMap { $0 as? NSTextField }.contains { $0.toolTip?.contains("Injected clipboard failure") == true },
-                        "Failure reason is not visible")
+            let status = coordinator.verificationToolbar.subviews.compactMap { $0 as? NSTextField }
+                .first { $0.identifier?.rawValue == "scroll.status" }
+            try require(detail == nil && status?.stringValue == "复制失败 · 可重试"
+                        && status?.toolTip?.contains("Injected clipboard failure") == true
+                        && status?.accessibilityHelp()?.contains("Injected clipboard failure") == true,
+                        "Copy failure lost its compact retry status or accessible error detail")
             try button(retryTitle, in: coordinator).performClick(nil)
             await coordinator.verificationWaitForCompletion()
             if retryTitle == "标注" { coordinator.verificationEditor?.complete() }
@@ -632,11 +663,11 @@ private struct ScrollUIVerification {
 
     @MainActor private static func verifyInlineAnnotationLifecycle() async throws {
         var attempts = 0
-        let coordinator = fixture(syntheticRegion()) { _, action in
+        let coordinator = fixture(syntheticRegion(), onComplete: { _, action in
             attempts += 1
             if attempts == 1 { throw ScreenLeafError(message: "Injected inline clipboard failure") }
             try require(action == .copy, "Inline completion did not copy the complete image")
-        }
+        })
         defer { coordinator.cancel() }
         coordinator.verificationSetRunning()
         await coordinator.verificationAccept(image(top: 0))
@@ -670,7 +701,7 @@ private struct ScrollUIVerification {
 
     @MainActor private static func verifyCancelledCompletion() async throws {
         var callbacks = 0
-        let coordinator = fixture(syntheticRegion()) { _, _ in callbacks += 1 }
+        let coordinator = fixture(syntheticRegion(), onComplete: { _, _ in callbacks += 1 })
         defer { coordinator.cancel() }
         coordinator.verificationSetRunning()
         await coordinator.verificationAccept(image(top: 0))
@@ -682,6 +713,185 @@ private struct ScrollUIVerification {
         await oldCompletion?.value
         try require(callbacks == 0 && coordinator.isActive && coordinator.verificationHeight == 90,
                     "Cancelled completion leaked into the replacement session")
+    }
+
+    fileprivate static func geometryPreview(anchor: CGPoint? = CGPoint(x: 450, y: 280)) -> ScrollCapturePreview {
+        let pixels = image(top: 0)
+        return ScrollCapturePreview(whole: pixels, recent: pixels,
+            viewport: CGRect(x: 0, y: 0, width: 1, height: 0.7),
+            inputSize: CGSize(width: 800, height: 560), scrollAnchor: anchor, outputWidth: 800)
+    }
+
+    @MainActor private static func verifyContentGeometry() throws {
+        let region = syntheticRegion()
+        let coordinator = fixture(region)
+        defer { coordinator.cancel() }
+        coordinator.verificationSetRunning()
+        coordinator.verificationApplyGeometry(geometryPreview(), height: 600)
+        try require(coordinator.verificationSourceRegion?.rect == region.rect, "Matching changed the capture input dimensions")
+        try require(coordinator.verificationMask?.selection == region.rect.offsetBy(dx: 1440, dy: -100),
+                    "Outline no longer represents the full selected region on the negative-origin display")
+        try require(coordinator.verificationAnchor == CGPoint(x: -1095, y: 420), "Safe scroll anchor was mapped with the wrong origin or scale")
+        try require(coordinator.verificationPanel?.frame.contains(CGPoint(x: -1095, y: 420)) == false,
+                    "Repositioned HUD covers the detected scroll anchor")
+    }
+
+    @MainActor private static func verifyContinuousCompletion() throws {
+        let coordinator = fixture(syntheticRegion(), onReselect: { _, _ in })
+        defer { coordinator.cancel() }
+        coordinator.verificationSetRunning()
+        coordinator.verificationApplyGeometry(geometryPreview(), height: 600)
+        let finish = try button("完成", in: coordinator)
+        let annotate = try button("标注", in: coordinator)
+        let reselect = try button("重新框选", in: coordinator)
+        try require(finish.isEnabled && annotate.isEnabled && reselect.isEnabled,
+                    "A captured image cannot be completed, annotated or optionally reselected")
+        coordinator.verificationApplyGeometry(geometryPreview(), height: 610, renderPreview: false)
+        try require(finish.isEnabled && annotate.isEnabled && coordinator.verificationPreview == nil
+                    && coordinator.verificationHasFirstFrame && coordinator.verificationHeight == 610,
+                    "Thumbnail failure lost current logical state or disabled image completion")
+        coordinator.verificationApplyGeometry(geometryPreview(), height: 600)
+        coordinator.verificationSetRunning(automatic: .down)
+        coordinator.verificationApplyGeometry(geometryPreview(anchor: nil), height: 600)
+        let automaticUp = try button("自动上", in: coordinator)
+        let automaticDown = try button("自动下", in: coordinator)
+        try require(coordinator.verificationRunning && automaticUp.isEnabled && automaticDown.isEnabled,
+                    "Missing inferred anchor prevents using the selected region's center or stops capture")
+        let operation = coordinator.verificationRun
+        coordinator.verificationReject("没有找到可靠的重叠内容")
+        try require(coordinator.verificationRecovering && coordinator.verificationManual
+                    && coordinator.verificationCaptureActive(operation)
+                    && finish.isEnabled && annotate.isEnabled && reselect.isEnabled,
+                    "Alignment uncertainty stopped sampling or disabled completion")
+        if let hud = coordinator.verificationHUD, let bitmap = hud.bitmapImageRepForCachingDisplay(in: hud.bounds) {
+            hud.cacheDisplay(in: hud.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to:
+                URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                    .appendingPathComponent(".build/verification/scroll-ui/continuous-capture-hud.png"))
+        }
+    }
+
+    @MainActor private static func verifyReselection() async throws {
+        var restore: (() -> Void)?
+        var requestRegion: CaptureRegion?
+        let region = syntheticRegion()
+        let coordinator = fixture(region, onReselect: { selected, cancelled in
+            requestRegion = selected; restore = cancelled
+        })
+        defer { coordinator.cancel() }
+        coordinator.verificationSetRunning(automatic: .down)
+        await coordinator.verificationAccept(image(top: 0))
+        await coordinator.verificationAccept(image(top: 27))
+        let original = await coordinator.verificationImage()
+        let oldRun = coordinator.verificationRun
+        try button("重新框选", in: coordinator).performClick(nil)
+        try require(requestRegion?.rect == region.rect && requestRegion?.targetPID == region.targetPID,
+                    "Reselection lost the original target or source region")
+        try require(coordinator.verificationReselecting && !coordinator.verificationCaptureActive(oldRun)
+                    && coordinator.verificationPanel?.isVisible == false && coordinator.verificationOutline?.isVisible == false,
+                    "Reselection left capture active or its overlays visible")
+        restore?()
+        await coordinator.verificationWaitForCompletion()
+        let restored = await coordinator.verificationImage()
+        try require(restored?.dataProvider?.data as Data? == original?.dataProvider?.data as Data?
+                    && coordinator.verificationHeight == 117 && coordinator.verificationHasFirstFrame,
+                    "Esc from reselection discarded the accumulated image")
+        let resume = try button("继续", in: coordinator)
+        let finish = try button("完成", in: coordinator)
+        try require(!coordinator.verificationReselecting && !coordinator.verificationRunning
+                    && resume.isEnabled && finish.isEnabled,
+                    "Esc resumed automatic input or left no completion/resume action")
+        try button("重新框选", in: coordinator).performClick(nil)
+        let staleRestore = restore
+        staleRestore?()
+        let restoringTask = coordinator.verificationTask
+        coordinator.verificationPresent(region)
+        coordinator.verificationSetRunning()
+        await coordinator.verificationAccept(image(top: 210))
+        await restoringTask?.value
+        staleRestore?()
+        let fresh = await coordinator.verificationImage()
+        try require(fresh?.dataProvider?.data as Data? == image(top: 210).dataProvider?.data as Data?
+                    && coordinator.verificationHeight == 90 && coordinator.verificationRunning,
+                    "A stale reselection callback restored old state into the replacement capture")
+    }
+
+    @MainActor private static func verifyCancelledProcessing() async throws {
+        let processor = ScrollCaptureProcessor()
+        _ = await processor.append(image(top: 0))
+        let queued = Task { await processor.append(image(top: 27)) }
+        queued.cancel()
+        _ = await queued.value
+        let retained = await processor.image()
+        try require(retained?.dataProvider?.data as Data? == image(top: 0).dataProvider?.data as Data?,
+                    "A cancelled queued append changed the paused capture")
+    }
+
+    @MainActor private static func verifyDisplayFallback() async throws {
+        let coordinator = fixture(syntheticRegion())
+        defer { coordinator.cancel() }
+        coordinator.verificationSetRunning()
+        await coordinator.verificationAccept(image(top: 0))
+        let bounds = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 800, height: 600)
+        coordinator.verificationSourceDisplayRemoved(fallback: bounds)
+        let automatic = try button("自动下", in: coordinator)
+        let resume = try button("继续", in: coordinator)
+        let finish = try button("完成", in: coordinator)
+        let annotate = try button("标注", in: coordinator)
+        try require(!automatic.isEnabled && !resume.isEnabled && finish.isEnabled && annotate.isEnabled,
+                    "Missing display permits capture or prevents completing retained content")
+        annotate.performClick(nil)
+        await coordinator.verificationWaitForCompletion()
+        try require(coordinator.verificationEditor != nil
+                    && coordinator.verificationPanel.map { bounds.contains($0.frame) } == true,
+                    "Annotation moved the retained image back to the disconnected display")
+    }
+
+    @MainActor private static func verifyChangedLayoutPublication() async throws {
+        func frame(top: Int, extra: Bool) throws -> CGImage {
+            var pixels = image(width: 320, height: 300, top: top).dataProvider!.data! as Data
+            for rect in [CGRect(x: 0, y: 0, width: 320, height: 40)]
+                + (extra ? [CGRect(x: 120, y: 270, width: 6, height: 8)] : []) {
+                for y in Int(rect.minY)..<Int(rect.maxY) { for x in Int(rect.minX)..<Int(rect.maxX) {
+                    let i = (y * 320 + x) * 4
+                    pixels[i] = 220; pixels[i + 1] = 50; pixels[i + 2] = 80
+                } }
+            }
+            guard let provider = CGDataProvider(data: pixels as CFData),
+                  let result = CGImage(width: 320, height: 300, bitsPerComponent: 8, bitsPerPixel: 32,
+                    bytesPerRow: 1280, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue).union(.byteOrder32Big),
+                    provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else {
+                throw ScrollUIFailure(description: "Cannot create synthetic fixed-layer fixture")
+            }
+            return result
+        }
+        for action in ["完成", "标注"] {
+            var delivered: [CGImage] = []
+            let coordinator = fixture(syntheticRegion(), onComplete: { image, _ in delivered.append(image) })
+            defer { coordinator.cancel() }
+            coordinator.verificationSetRunning()
+            for top in [0, 60, 120, 180] {
+                await coordinator.verificationAccept(try frame(top: top, extra: top >= 120))
+            }
+            let exported = await coordinator.verificationImage()
+            try require(coordinator.verificationRunning && coordinator.verificationHeight == 480
+                        && coordinator.verificationPreview?.outputWidth == 320
+                        && exported?.width == 320 && exported?.height == 480,
+                        "Changing fixed elements stopped stitching or cropped the selected width")
+            coordinator.verificationReject("没有找到可靠的重叠内容")
+            let completion = try button(action, in: coordinator)
+            try require(completion.isEnabled, "Waiting for overlap disabled completion of the retained image")
+            completion.performClick(nil)
+            await coordinator.verificationWaitForCompletion()
+            if action == "标注" {
+                try require(coordinator.verificationEditor != nil, "Fixed elements blocked annotation")
+                coordinator.verificationEditor?.complete()
+            }
+            try require(delivered.count == 1 && delivered[0].width == 320 && delivered[0].height == 480
+                        && !coordinator.isActive,
+                        "Completing a capture with fixed elements failed to deliver the entire image exactly once")
+        }
     }
 
     private static func image(width: Int = 96, height: Int = 90, top: Int) -> CGImage {

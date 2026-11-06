@@ -9,8 +9,8 @@ if [[ ! -d "$task_sdk" ]]; then
     printf 'FAIL: verification SDK does not exist: %s\n' "$task_sdk" >&2
     exit 1
 fi
-if [[ "$#" -gt 1 ]] || [[ "$#" -eq 1 && "$1" != "--ocr" ]]; then
-    printf 'Usage: scripts/verify-images.sh [--ocr]\n' >&2
+if [[ "$#" -gt 1 ]] || [[ "$#" -eq 1 && "$1" != "--ocr" && "$1" != "--build-only" ]]; then
+    printf 'Usage: scripts/verify-images.sh [--ocr|--build-only]\n' >&2
     exit 2
 fi
 mkdir -p "$task_work/module-cache"
@@ -26,4 +26,8 @@ xcrun swiftc -parse-as-library -swift-version 5 -sdk "$task_sdk" \
     "$task_root/Sources/ScreenLeaf/SubjectExtraction.swift" "$task_root/Sources/ScreenLeaf/SubjectSelection.swift" \
     "$task_work/ImageToolsVerification.swift" \
     -o "$task_work/verify-images"
+if [[ "${1:-}" == "--build-only" ]]; then
+    printf 'BUILT: image verification (not launched)\n'
+    exit 0
+fi
 "$task_work/verify-images" "$task_work" "$@"

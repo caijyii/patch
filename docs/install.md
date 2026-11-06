@@ -37,7 +37,7 @@ Agent 应遵守以下顺序：
 在下载目录运行（文件名以当前发行版为准）：
 
 ```sh
-shasum -a 256 Patch-0.1.0-preview.4-macOS-arm64.zip
+shasum -a 256 Patch-0.1.0-preview.5-macOS-arm64.zip
 ```
 
 将输出与同一发行版的 `SHA256SUMS.txt` 比对。DMG 同样可用 `shasum -a 256 文件名.dmg` 校验；当前版本的 DMG 与 ZIP 均记录在 `SHA256SUMS.txt` 中。旧版 `v0.1.0-preview.1` 后补 DMG 的独立校验文件为 `SHA256SUMS-DMG.txt`。只需下载你选择的格式。

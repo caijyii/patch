@@ -89,7 +89,7 @@ enum SelectionGeometry {
     }
 
     static func toolbarFrame(selection: CGRect?, size: CGSize, within bounds: CGRect,
-                             gap: CGFloat = 12) -> CGRect {
+                             gap: CGFloat = 12, backingScaleFactor: CGFloat? = nil) -> CGRect {
         guard isFinite(bounds), size.width.isFinite, size.height.isFinite, gap.isFinite,
               bounds.width > 0, bounds.height > 0, size.width > 0, size.height > 0 else { return .zero }
         let width = min(size.width, bounds.width)
@@ -111,8 +111,23 @@ enum SelectionGeometry {
         } else {
             y = bounds.minY + spacing
         }
-        return CGRect(x: x, y: clamp(y, bounds.minY, bounds.maxY - height),
-                      width: width, height: height)
+        let result = CGRect(x: x, y: clamp(y, bounds.minY, bounds.maxY - height),
+                            width: width, height: height)
+        return backingScaleFactor.map { pixelAlignedFrame(result, within: bounds, backingScaleFactor: $0) } ?? result
+    }
+
+    /// Align a floating control's origin to its target display, without changing
+    /// its logical-point size or moving it outside the available area.
+    static func pixelAlignedFrame(_ rect: CGRect, within bounds: CGRect, backingScaleFactor scale: CGFloat) -> CGRect {
+        guard isFinite(rect), isFinite(bounds), scale.isFinite, scale > 0 else { return rect }
+        func coordinate(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+            let low = ceil(lower * scale) / scale, high = floor(upper * scale) / scale
+            guard low <= high else { return lower }
+            return clamp((value * scale).rounded() / scale, low, high)
+        }
+        return CGRect(x: coordinate(rect.minX, lower: bounds.minX, upper: bounds.maxX - rect.width),
+                      y: coordinate(rect.minY, lower: bounds.minY, upper: bounds.maxY - rect.height),
+                      width: rect.width, height: rect.height)
     }
 
     private static func clamp(_ value: CGFloat, _ lower: CGFloat, _ upper: CGFloat) -> CGFloat {

@@ -3,7 +3,7 @@
 set -euo pipefail
 source "$(dirname "$0")/environment.sh"
 cd "$screenleaf_root"
-release_tag="${1:-v0.1.0-preview.4}"
+release_tag="${1:-v0.1.0-preview.5}"
 if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-preview\.[0-9]+$ ]]; then
     echo 'Expected a tag such as v0.1.0-preview.1' >&2
     exit 1

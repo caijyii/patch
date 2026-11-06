@@ -208,6 +208,7 @@ final class PreferencesStore {
         var stickerOrder: [String]?
         var annotations: [String: AnnotationPreference] = [:]
         var shortcuts: [String: KeyboardShortcut] = [:]
+        var shortcutBindings: [String: [KeyboardShortcut]]?
     }
 
     private let storage: PreferencesStorage
@@ -274,7 +275,12 @@ final class PreferencesStore {
     func annotation(for tool: String) -> AnnotationPreference {
         if let saved = snapshot.annotations[tool] { return saved.validated }
         var defaults = AnnotationPreference()
-        if tool == "贴纸" { defaults.fontSize = 16 }
+        switch tool {
+        case "箭头", "画笔", "方框", "圆形": defaults.width = 3.5
+        case "贴纸": defaults.fontSize = 36
+        case "马赛克": defaults.mosaicBlockSize = 8
+        default: break
+        }
         return defaults
     }
 
@@ -286,7 +292,25 @@ final class PreferencesStore {
         persist()
     }
 
-    var shortcuts: [ShortcutAction: KeyboardShortcut] {
+    var shortcuts: [ShortcutAction: KeyboardShortcut] { shortcutBindings.compactMapValues(\.first) }
+
+    var shortcutBindings: [ShortcutAction: [KeyboardShortcut]] {
+        guard let saved = snapshot.shortcutBindings else { return legacyShortcuts.mapValues { [$0] } }
+        var result: [ShortcutAction: [KeyboardShortcut]] = [:]
+        var seen = Set<KeyboardShortcut>()
+        for action in ShortcutAction.allCases {
+            // An explicit empty array disables only this action's hotkeys.
+            let values = saved[action.rawValue] ?? [action.defaultShortcut]
+            guard values.count <= 2, values.allSatisfy(\.isValid),
+                  values.allSatisfy({ seen.insert($0).inserted }) else {
+                return ShortcutAction.defaultShortcuts.mapValues { [$0] }
+            }
+            result[action] = values
+        }
+        return result
+    }
+
+    private var legacyShortcuts: [ShortcutAction: KeyboardShortcut] {
         if snapshot.shortcuts.isEmpty { return ShortcutAction.defaultShortcuts }
         let isLegacy = (snapshot.shortcutLayoutVersion ?? 1) < 2
         let legacyDefaults = ShortcutAction.legacyDefaultShortcuts
@@ -326,10 +350,20 @@ final class PreferencesStore {
         guard shortcuts.count == ShortcutAction.allCases.count,
               ShortcutAction.allCases.allSatisfy({ shortcuts[$0]?.isValid == true }),
               Set(shortcuts.values).count == shortcuts.count else { return false }
-        let encoded = Dictionary(uniqueKeysWithValues: shortcuts.map { ($0.key.rawValue, $0.value) })
-        guard snapshot.shortcuts != encoded || snapshot.shortcutLayoutVersion != 2 else { return true }
-        snapshot.shortcuts = encoded
-        snapshot.shortcutLayoutVersion = 2
+        return setShortcutBindings(shortcuts.mapValues { [$0] })
+    }
+
+    @discardableResult
+    func setShortcutBindings(_ bindings: [ShortcutAction: [KeyboardShortcut]]) -> Bool {
+        let values = bindings.values.flatMap { $0 }
+        guard bindings.count == ShortcutAction.allCases.count,
+              ShortcutAction.allCases.allSatisfy({ bindings[$0] != nil && bindings[$0]!.count <= 2 }),
+              values.allSatisfy(\.isValid), Set(values).count == values.count else { return false }
+        let encoded = Dictionary(uniqueKeysWithValues: bindings.map { ($0.key.rawValue, $0.value) })
+        guard snapshot.shortcutBindings != encoded || snapshot.shortcutLayoutVersion != 3 else { return true }
+        snapshot.shortcutBindings = encoded
+        snapshot.shortcuts = encoded.compactMapValues(\.first)
+        snapshot.shortcutLayoutVersion = 3
         persist()
         return true
     }

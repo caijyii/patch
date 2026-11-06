@@ -46,182 +46,213 @@ enum ShortcutUpdateError: Error, Equatable, LocalizedError {
 
 @MainActor
 final class HotKeys {
-    private struct Registration {
-        let token: HotKeyToken
-        let eventID: UInt32
-    }
-    private struct PendingRelease {
-        let token: HotKeyToken
-        let actions: [ShortcutAction]
-    }
-
+    private struct Registration { let token: HotKeyToken; let eventID: UInt32 }
+    private struct PendingRelease { let token: HotKeyToken; let actions: [ShortcutAction] }
     private let backend: HotKeyBackend
     private var handlerStatus: Int32 = noErr
     private var registrations: [KeyboardShortcut: Registration] = [:]
     private var callbacks: [ShortcutAction: () -> Void] = [:]
-    private var eventActions: [UInt32: ShortcutAction] = [:]
+    private var eventBindings: [UInt32: (ShortcutAction, KeyboardShortcut)] = [:]
     private var nextEventID: UInt32 = 100
     private var recordingHandler: ((KeyboardShortcut) -> Void)?
-    private var unavailableActions: Set<ShortcutAction> = []
-    private(set) var unavailableReasons: [ShortcutAction: ShortcutUpdateError] = [:]
     private var pendingRelease: [PendingRelease] = []
     private(set) var cleanupWarnings: [Int32] = []
     private(set) var cleanupFailures: [ShortcutAction: Int32] = [:]
-    private(set) var registeredShortcuts: [ShortcutAction: KeyboardShortcut] = [:]
-
-    var unavailable: [UInt32] { unavailableActions.map(\.legacyID).sorted() }
+    private(set) var registeredBindings: [ShortcutAction: [KeyboardShortcut]] = [:]
+    private(set) var configuredBindings: [ShortcutAction: [KeyboardShortcut]] = [:]
+    private(set) var unavailableBindingReasons: [ShortcutAction: [KeyboardShortcut: ShortcutUpdateError]] = [:]
+    var registeredShortcuts: [ShortcutAction: KeyboardShortcut] { registeredBindings.compactMapValues(\.first) }
+    var unavailableReasons: [ShortcutAction: ShortcutUpdateError] {
+        unavailableBindingReasons.compactMapValues { $0.values.first }
+    }
+    /// An action remains available if either registered chord works.
+    var unavailable: [UInt32] {
+        unavailableBindingReasons.keys.filter { registeredBindings[$0, default: []].isEmpty }.map(\.legacyID).sorted()
+    }
     var isRecordingShortcut: Bool { recordingHandler != nil }
-
     init(backend: HotKeyBackend? = nil) {
         self.backend = backend ?? CarbonHotKeyBackend()
         handlerStatus = self.backend.installHandler { [weak self] eventID in self?.handle(eventID) }
     }
-
-    /// Compatibility for the old App delegate; new callers should install saved shortcuts.
     func register(id: UInt32, keyCode: Int, action: @escaping () -> Void) {
         guard let destination = ShortcutAction(legacyID: id), keyCode >= 0, keyCode <= Int(UInt32.max) else { return }
         let shortcut = KeyboardShortcut(keyCode: UInt32(keyCode), modifiers: [.control, .option])
-        var proposed = registeredShortcuts
-        proposed[destination] = shortcut
-        var actions = callbacks
-        actions[destination] = action
-        if case .failure(let error) = applyShortcuts(proposed, actions: actions) {
-            unavailableActions.insert(destination); unavailableReasons[destination] = error
+        var proposed = registeredBindings; proposed[destination] = [shortcut]
+        var actions = callbacks; actions[destination] = action
+        if case .failure(let error) = applyBindings(proposed, actions: actions) {
+            unavailableBindingReasons[destination, default: [:]][shortcut] = error
         }
     }
-
-    /// Launch each saved action independently so one unavailable key does not disable the rest.
     @discardableResult
-    func installShortcuts(_ desired: [ShortcutAction: KeyboardShortcut],
-                          actions: [ShortcutAction: () -> Void]) -> [ShortcutAction: ShortcutUpdateError] {
-        // Keep callbacks for failed launch registrations so Settings can repair them later.
+    func installShortcuts(_ desired: [ShortcutAction: KeyboardShortcut], actions: [ShortcutAction: () -> Void]) -> [ShortcutAction: ShortcutUpdateError] {
+        installBindings(desired.mapValues { [$0] }, actions: actions).compactMapValues { $0.values.first }
+    }
+    /// Startup is independent per chord, including two chords for one action.
+    @discardableResult
+    func installBindings(_ desired: [ShortcutAction: [KeyboardShortcut]], actions: [ShortcutAction: () -> Void]) -> [ShortcutAction: [KeyboardShortcut: ShortcutUpdateError]] {
         callbacks.merge(actions) { _, new in new }
-        var failures: [ShortcutAction: ShortcutUpdateError] = [:]
-        for destination in ShortcutAction.allCases {
-            guard let shortcut = desired[destination] else { continue }
-            var proposed = registeredShortcuts
-            proposed[destination] = shortcut
-            var nextActions = callbacks
-            nextActions[destination] = actions[destination]
-            if case .failure(let error) = applyShortcuts(proposed, actions: nextActions) {
-                failures[destination] = error
-                unavailableActions.insert(destination)
-                unavailableReasons[destination] = error
+        var failures: [ShortcutAction: [KeyboardShortcut: ShortcutUpdateError]] = [:]
+        for action in ShortcutAction.allCases {
+            for shortcut in desired[action, default: []] {
+                var proposed = registeredBindings
+                proposed[action, default: []].append(shortcut)
+                if case .failure(let error) = applyBindings(proposed) { failures[action, default: [:]][shortcut] = error }
             }
         }
+        configuredBindings = desired
+        unavailableBindingReasons = failures
         return failures
     }
-
-    /// Stage new registrations while old ones stay live. Swapped combinations reuse their refs.
-    /// A registration failure never changes current callbacks, registrations or saved preferences.
     @discardableResult
-    func applyShortcuts(_ proposed: [ShortcutAction: KeyboardShortcut],
-                        actions: [ShortcutAction: () -> Void]? = nil) -> Result<Void, ShortcutUpdateError> {
-        cleanupWarnings = []
-        cleanupFailures = [:]
-        retryPendingRelease()
+    func applyShortcuts(_ proposed: [ShortcutAction: KeyboardShortcut], actions: [ShortcutAction: () -> Void]? = nil) -> Result<Void, ShortcutUpdateError> {
+        applyBindings(proposed.mapValues { [$0] }, actions: actions)
+    }
+    /// Newly edited chords stage atomically. Existing unavailable saved chords
+    /// may be tolerated without dropping another working chord or losing their configuration.
+    @discardableResult
+    func applyBindings(_ proposed: [ShortcutAction: [KeyboardShortcut]], actions: [ShortcutAction: () -> Void]? = nil,
+                       allowingUnavailable: Set<KeyboardShortcut> = []) -> Result<Void, ShortcutUpdateError> {
+        cleanupWarnings = []; cleanupFailures = [:]; retryPendingRelease()
         if handlerStatus != noErr { return .failure(.handlerFailed(handlerStatus)) }
-        if let error = Self.validate(proposed) { return .failure(error) }
+        let local = Self.validationBindingIssues(proposed)
+        for action in ShortcutAction.allCases {
+            if proposed[action, default: []].count > 2 { return .failure(.invalid(action)) }
+            for key in proposed[action, default: []] {
+                if let error = local[action]?[key] {
+                    if case .applicationReserved = error, allowingUnavailable.contains(key) { continue }
+                    return .failure(error)
+                }
+            }
+        }
         let symbolic: Set<KeyboardShortcut>
         switch backend.symbolicShortcuts() {
         case .success(let shortcuts): symbolic = shortcuts
         case .failure(let error): return .failure(.systemCheckFailed(error.status))
         }
-        for destination in ShortcutAction.allCases {
-            if let shortcut = proposed[destination], symbolic.contains(shortcut) {
-                return .failure(.systemReserved(destination))
-            }
-        }
-
+        var failures: [ShortcutAction: [KeyboardShortcut: ShortcutUpdateError]] = [:]
         var staged: [KeyboardShortcut: Registration] = [:]
-        for destination in ShortcutAction.allCases {
-            guard let shortcut = proposed[destination], registrations[shortcut] == nil else { continue }
-            let eventID = freshEventID()
-            switch backend.register(shortcut, eventID: eventID) {
-            case .success(let token): staged[shortcut] = Registration(token: token, eventID: eventID)
-            case .failure(let error):
-                for (shortcut, registration) in staged {
-                    release(registration.token, actions: proposed.filter { $0.value == shortcut }.map(\.key))
+        func rollback() {
+            for (key, entry) in staged { release(entry.token, actions: proposed.filter { $0.value.contains(key) }.map(\.key)) }
+        }
+        for action in ShortcutAction.allCases {
+            for key in proposed[action, default: []] {
+                var failure = local[action]?[key]
+                if failure == nil, symbolic.contains(key) { failure = .systemReserved(action) }
+                if failure == nil, registrations[key] == nil, allowingUnavailable.contains(key) {
+                    // An unrelated save must not retry a saved unavailable chord.
+                    // Explicit repair and retryUnavailableBindings use the strict path.
+                    failure = unavailableBindingReasons[action]?[key] ?? .registrationFailed(action, Int32(eventNotHandledErr))
                 }
-                return .failure(.registrationFailed(destination, error.status))
+                if failure == nil, registrations[key] == nil {
+                    let id = freshEventID()
+                    switch backend.register(key, eventID: id) {
+                    case .success(let token): staged[key] = Registration(token: token, eventID: id)
+                    case .failure(let error): failure = .registrationFailed(action, error.status)
+                    }
+                }
+                if let failure {
+                    guard allowingUnavailable.contains(key) else { rollback(); return .failure(failure) }
+                    failures[action, default: [:]][key] = failure
+                }
             }
         }
-
-        let desiredKeys = Set(proposed.values)
-        let previousBindings = registeredShortcuts
+        let desiredKeys = Set(proposed.flatMap { action, keys in keys.filter { failures[action]?[$0] == nil } })
+        let previous = registeredBindings
         let removed = registrations.filter { !desiredKeys.contains($0.key) }
-        let retained = registrations.filter { desiredKeys.contains($0.key) }
-        registrations = retained.merging(staged) { _, new in new }
-        registeredShortcuts = proposed
+        registrations = registrations.filter { desiredKeys.contains($0.key) }.merging(staged) { _, new in new }
+        registeredBindings = proposed.mapValues { $0.filter { registrations[$0] != nil } }
+        configuredBindings = proposed
+        unavailableBindingReasons = failures
         if let actions { callbacks.merge(actions) { _, new in new } }
-        eventActions = Dictionary(uniqueKeysWithValues: proposed.compactMap { destination, shortcut in
-            registrations[shortcut].map { ($0.eventID, destination) }
-        })
-        unavailableActions = unavailableActions.filter { proposed[$0] == nil }
-        unavailableReasons = unavailableReasons.filter { proposed[$0.key] == nil }
-        for (shortcut, registration) in removed {
-            release(registration.token, actions: previousBindings.filter { $0.value == shortcut }.map(\.key))
-        }
+        eventBindings = [:]
+        for (action, keys) in registeredBindings { for key in keys {
+            if let entry = registrations[key] { eventBindings[entry.eventID] = (action, key) }
+        } }
+        for (key, entry) in removed { release(entry.token, actions: previous.filter { $0.value.contains(key) }.map(\.key)) }
         return .success(())
     }
-
+    /// Only unavailable chords are re-registered; healthy references are retained.
+    func retryUnavailableBindings() {
+        guard !isRecordingShortcut, !unavailableBindingReasons.isEmpty else { return }
+        // Retry one pending chord at a time so an old migrated duplicate cannot
+        // prevent unrelated pending chords from recovering.
+        var failures = unavailableBindingReasons
+        let desired = configuredBindings
+        for action in ShortcutAction.allCases {
+            for key in desired[action, default: []] where failures[action]?[key] != nil {
+                var proposed = registeredBindings
+                proposed[action, default: []].append(key)
+                switch applyBindings(proposed) {
+                case .success: failures[action]?.removeValue(forKey: key)
+                case .failure(let error): failures[action, default: [:]][key] = error
+                }
+            }
+        }
+        configuredBindings = desired
+        let active = registeredBindings
+        // Keep configured slot order without assigning a migrated duplicate to
+        // an action that never acquired that chord.
+        registeredBindings = [:]
+        for (action, keys) in desired {
+            registeredBindings[action] = keys.filter { active[action, default: []].contains($0) }
+        }
+        unavailableBindingReasons = failures.filter { !$0.value.isEmpty }
+    }
     static func validate(_ shortcuts: [ShortcutAction: KeyboardShortcut]) -> ShortcutUpdateError? {
         let issues = validationIssues(shortcuts)
         return ShortcutAction.allCases.compactMap { issues[$0] }.first
     }
-
     static func validationIssues(_ shortcuts: [ShortcutAction: KeyboardShortcut]) -> [ShortcutAction: ShortcutUpdateError] {
-        var issues: [ShortcutAction: ShortcutUpdateError] = [:]
+        validationBindingIssues(shortcuts.mapValues { [$0] }).compactMapValues { $0.values.first }
+    }
+    static func validationBindingIssues(_ bindings: [ShortcutAction: [KeyboardShortcut]]) -> [ShortcutAction: [KeyboardShortcut: ShortcutUpdateError]] {
+        var issues: [ShortcutAction: [KeyboardShortcut: ShortcutUpdateError]] = [:]
         var owners: [KeyboardShortcut: [ShortcutAction]] = [:]
-        for action in ShortcutAction.allCases {
-            guard let shortcut = shortcuts[action] else { continue }
-            if !shortcut.isValid { issues[action] = .invalid(action) }
-            else if shortcut.isApplicationReserved { issues[action] = .applicationReserved(action) }
-            else { owners[shortcut, default: []].append(action) }
-        }
-        for duplicates in owners.values where duplicates.count > 1 {
+        for action in ShortcutAction.allCases { for key in bindings[action, default: []] {
+            if !key.isValid || bindings[action, default: []].count > 2 { issues[action, default: [:]][key] = .invalid(action) }
+            else if key.isApplicationReserved { issues[action, default: [:]][key] = .applicationReserved(action) }
+            owners[key, default: []].append(action)
+        } }
+        for (key, duplicates) in owners where duplicates.count > 1 {
             for action in duplicates {
-                guard let other = duplicates.first(where: { $0 != action }) else { continue }
+                let other = duplicates.first(where: { $0 != action }) ?? action
                 let first = action.legacyID < other.legacyID ? action : other
                 let second = action.legacyID < other.legacyID ? other : action
-                issues[action] = .duplicate(first, second)
+                issues[action, default: [:]][key] = .duplicate(first, second)
             }
         }
         return issues
     }
-
-    /// Read-only preflight for row-level feedback. Registration still happens only when saved.
+    func bindingIssues(_ proposed: [ShortcutAction: [KeyboardShortcut]]) -> [ShortcutAction: [KeyboardShortcut: ShortcutUpdateError]] {
+        var issues = Self.validationBindingIssues(proposed)
+        let global: ShortcutUpdateError?
+        var symbolic = Set<KeyboardShortcut>()
+        if handlerStatus != noErr { global = .handlerFailed(handlerStatus) }
+        else {
+            switch backend.symbolicShortcuts() {
+            case .success(let keys): symbolic = keys; global = nil
+            case .failure(let error): global = .systemCheckFailed(error.status)
+            }
+        }
+        for (action, keys) in proposed { for key in keys where issues[action]?[key] == nil {
+            if let global { issues[action, default: [:]][key] = global }
+            else if symbolic.contains(key) { issues[action, default: [:]][key] = .systemReserved(action) }
+        } }
+        return issues
+    }
     func shortcutIssues(_ proposed: [ShortcutAction: KeyboardShortcut]) -> [ShortcutAction: ShortcutUpdateError] {
-        var issues = Self.validationIssues(proposed)
-        if handlerStatus != noErr {
-            for action in proposed.keys where issues[action] == nil { issues[action] = .handlerFailed(handlerStatus) }
-            return issues
-        }
-        switch backend.symbolicShortcuts() {
-        case .success(let symbolic):
-            for (action, shortcut) in proposed where issues[action] == nil && symbolic.contains(shortcut) {
-                issues[action] = .systemReserved(action)
-            }
-        case .failure(let error):
-            for action in proposed.keys where issues[action] == nil { issues[action] = .systemCheckFailed(error.status) }
-        }
-        return issues
+        bindingIssues(proposed.mapValues { [$0] }).compactMapValues { $0.values.first }
     }
-
     func beginRecording(_ handler: @escaping (KeyboardShortcut) -> Void) { recordingHandler = handler }
     func endRecording() { recordingHandler = nil }
-
     private func handle(_ eventID: UInt32) {
-        guard let destination = eventActions[eventID], let shortcut = registeredShortcuts[destination] else { return }
-        if let recordingHandler { recordingHandler(shortcut) }
-        else { callbacks[destination]?() }
+        guard let (action, shortcut) = eventBindings[eventID] else { return }
+        if let recordingHandler { recordingHandler(shortcut) } else { callbacks[action]?() }
     }
-
     private func freshEventID() -> UInt32 {
-        repeat { nextEventID &+= 1 } while nextEventID == 0 || eventActions[nextEventID] != nil
+        repeat { nextEventID &+= 1 } while nextEventID == 0 || eventBindings[nextEventID] != nil
         return nextEventID
     }
-
     private func release(_ token: HotKeyToken, actions: [ShortcutAction]) {
         let result = backend.unregister(token)
         if result != noErr {
@@ -230,10 +261,8 @@ final class HotKeys {
             pendingRelease.append(PendingRelease(token: token, actions: actions))
         }
     }
-
     private func retryPendingRelease() {
-        let previous = pendingRelease
-        pendingRelease = []
+        let previous = pendingRelease; pendingRelease = []
         previous.forEach { release($0.token, actions: $0.actions) }
     }
 }

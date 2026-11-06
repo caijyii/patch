@@ -6,16 +6,21 @@ task_work="$screenleaf_root/.build/verification/scroll-ui"
 mkdir -p "$task_work/module-cache"
 # Compile the capture HUD together with the production inline annotation workspace.
 cat Sources/ScreenLeaf/ScrollCapture.swift scripts/verify-scroll-ui.swift > "$task_work/ScrollUIVerification.swift"
+cp Sources/ScreenLeaf/ScrollStitcher.swift "$task_work/ScrollStitcher.swift"
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$task_work/module-cache" -target "$(uname -m)-apple-macosx15.0" \
     Sources/ScreenLeaf/CaptureRegion.swift Sources/ScreenLeaf/SelectionGeometry.swift \
-    Sources/ScreenLeaf/ScrollStitcher.swift Sources/ScreenLeaf/ScrollEventRouting.swift \
+    "$task_work/ScrollStitcher.swift" Sources/ScreenLeaf/ScrollEventRouting.swift \
     Sources/ScreenLeaf/HorizontalScrollFilter.swift Sources/ScreenLeaf/AnnotationControls.swift \
     Sources/ScreenLeaf/ImageTools.swift Sources/ScreenLeaf/Localization.swift Sources/ScreenLeaf/WindowTitle.swift Sources/ScreenLeaf/WindowActivation.swift Sources/ScreenLeaf/WindowAmbientBackground.swift Sources/ScreenLeaf/Preferences.swift \
     Sources/ScreenLeaf/SubjectExtraction.swift Sources/ScreenLeaf/SubjectSelection.swift \
     "$task_work/ScrollUIVerification.swift" \
     -o "$task_work/verify-scroll-ui"
-if "$task_work/verify-scroll-ui" > "$task_work/output.log" 2>&1; then
+if [[ "${1:-}" == "--build-only" ]]; then
+    printf 'BUILT: scroll HUD verification (not launched)\n'
+    exit 0
+fi
+if "$task_work/verify-scroll-ui" --verify > "$task_work/output.log" 2>&1; then
     probe_status=0
 else
     probe_status=$?

@@ -16,6 +16,10 @@ import Darwin
 @main private struct VerifyWorkflow {
     @MainActor private static var launchObserver: NSObjectProtocol?
     @MainActor static func main() {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+            fputs("FAIL: workflow verification timed out\n", stderr)
+            exit(1)
+        }
         AppLocalization.language = CommandLine.arguments.contains("--english") ? .english : .simplifiedChinese
         if CommandLine.arguments.contains("--status-layout") { runStatusLayoutProbe(); return }
         let app = NSApplication.shared
@@ -51,6 +55,17 @@ import Darwin
             print("PASS: native application activation and Home key-window state are ready")
             require(app.activationPolicy() == .regular, "Home must enable normal application activation before showing")
             require(prompts == 0 && activations == 0, "Opening Home unexpectedly requests access")
+            if CommandLine.arguments.contains("--startup-only") {
+                require(home.window?.isVisible == true, "Startup did not present Home")
+                let screenshotItem = delegate.workflowMenu.items.first { $0.title == ShortcutAction.screenshot.title }
+                require(screenshotItem?.keyEquivalent == preferences.shortcuts[.screenshot]?.menuKeyEquivalent,
+                        "Startup menu did not refresh after shortcut registration")
+                require(delegate.workflowMenuShortcuts == Set(preferences.shortcutBindings.values.flatMap { $0 }),
+                        "Startup menu did not receive the registered shortcuts")
+                print("PASS: complete startup initializes menu before hotkeys, then refreshes shortcuts and shows Home")
+                app.terminate(nil)
+                return
+            }
             home.tiles[.screenshot]!.launchButton.performClick(nil)
             require(prompts == 1 && activations == 1, "Home click missed foreground permission guidance")
             backend.fire(preferences.shortcuts[.screenshot]!)
@@ -193,9 +208,20 @@ import Darwin
             backend.fire(preferences.shortcuts[.togglePins]!)
             require(visiblePins().isEmpty && tools.arePinsHidden, "Hide all did not hide mixed old and new pins")
             backend.fire(preferences.shortcuts[.togglePins]!)
-            require(visiblePins().count == 3 && !tools.arePinsHidden, "Show all did not restore the complete pin set")
+            require(visiblePins().count == 2 && olderBatch.allSatisfy { !$0.isVisible } && !tools.arePinsHidden,
+                    "Restore must show only the most recently hidden group")
+            store.clear()
+            require(visiblePins().count == 2, "Deleting clipboard records closed independent desktop pins")
+            let restoredBatch = visiblePins()
+            tools.togglePins()
+            restoredBatch.forEach { $0.close() }
+            require(!tools.canTogglePins && olderBatch.allSatisfy { !$0.isVisible }
+                    && !delegate.validateMenuItem(visibilityItem),
+                    "Closing the latest hidden group made an older hidden group restorable")
+            tools.togglePins()
+            require(visiblePins().isEmpty, "A stale restore action revived an older group")
             tools.closeAll()
-            print("PASS: image/text clipboard and batch pins preserve hidden pins; bulk toggles and closing the last visible pin stay consistent")
+            print("PASS: image/text pins preserve older hidden groups; only the latest hidden group restores; history deletion leaves pins independent")
 
             let recorder = delegate.workflowRecording
             let screen = NSScreen.main!

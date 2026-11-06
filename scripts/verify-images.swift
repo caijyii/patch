@@ -85,19 +85,26 @@ extension ImageToolsPinController {
     fileprivate var verificationSelected: Bool { selected && surface.selected }
     fileprivate var verificationHUD: NSWindow? { hud }
     fileprivate var verificationHUDTitles: [String] { toolbar.rows.flatMap { $0.compactMap { ($0 as? NSButton)?.title } } }
-    fileprivate var verificationImageViewport: CGSize { scroll.contentView.bounds.size }
+    fileprivate var verificationImageViewport: CGSize { verificationPinViewportFrame.size }
+    fileprivate var verificationWholeImageFrame: CGRect? { imageFrame }
+    fileprivate var verificationImageUsesScrollView: Bool { imageView != nil && (imageView?.enclosingScrollView != nil || !scroll.isHidden) }
+    fileprivate var verificationImageSelectionRect: CGRect? {
+        selectionOutline.selectionRect.map { surface.convert($0, from: selectionOutline) }
+    }
+    fileprivate var verificationTextCornerRadius: CGFloat { selectionOutline.cornerRadius }
     fileprivate var verificationImageContentFrame: CGRect? {
-        imageView.map { surface.convert($0.bounds, from: $0) }
+        imageView.map { surface.convert($0.imageRect, from: $0) }
     }
     fileprivate var verificationOutlineFrame: CGRect { selectionOutline.frame }
     fileprivate var verificationPinViewportFrame: CGRect {
-        surface.convert(scroll.contentView.bounds, from: scroll.contentView)
+        if let imageView { return surface.convert(imageView.imageRect, from: imageView).intersection(surface.bounds) }
+        return surface.convert(scroll.contentView.bounds, from: scroll.contentView)
     }
     fileprivate var verificationTextDocumentSize: CGSize { textView?.frame.size ?? .zero }
     fileprivate var verificationTextSelection: NSRange? { textView?.selectedRange() }
     fileprivate var verificationTextRemainsEditable: Bool {
         textView?.isEditable == true && textView?.isSelectable == true
-            && textView?.textContainerInset == CGSize(width: 12, height: 12)
+            && textView?.textContainerInset == CGSize(width: 16, height: 16)
             && textView?.textContainer?.widthTracksTextView == false
     }
     fileprivate func verificationSelectText(_ range: NSRange) { setTextEditing(true); textView?.setSelectedRange(range) }
@@ -112,6 +119,7 @@ extension ImageToolsPinController {
         textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
     }
     fileprivate func verificationContentReceivesHit(at point: CGPoint) -> Bool {
+        if let imageView { return surface.hitTest(point) === imageView }
         let expected = scroll.hitTest(point)
         return expected != nil && surface.hitTest(point) === expected
     }
@@ -134,7 +142,7 @@ extension ImageToolsPinController {
         if useHUD { view = toolbar.rows.first?.first }
         else { view = imageView ?? textView }
         guard let view else { throw ImageToolsVerificationFailure(description: "Pin drag has no view") }
-        let hitView = useHUD ? view : scroll.contentView
+        let hitView: NSView = useHUD || imageView != nil ? view : scroll.contentView
         let start = source.convertPoint(toScreen: hitView.convert(CGPoint(x: hitView.bounds.midX, y: hitView.bounds.midY), to: nil))
         let flags: NSEvent.ModifierFlags = textView != nil && !useHUD && option ? [.option] : []
         func event(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
@@ -153,18 +161,18 @@ extension ImageToolsPinController {
     }
     fileprivate func verificationPrepareEditor() -> InlineAnnotationView? { annotateImage(); return inlineEditor }
     fileprivate func verificationWheel(_ amount: Int32, precise: Bool) throws {
-        guard let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: precise ? .pixel : .line,
-            wheelCount: 1, wheel1: amount, wheel2: 0, wheel3: 0) else {
-            throw ImageToolsVerificationFailure(description: "Cannot create local scroll fixture")
-        }
-        cgEvent.setIntegerValueField(.scrollWheelEventIsContinuous, value: precise ? 1 : 0)
-        guard let event = NSEvent(cgEvent: cgEvent) else { throw ImageToolsVerificationFailure(description: "Cannot bridge scroll fixture") }
-        if let imageView { imageView.scrollWheel(with: event) }
-        else { textView?.scrollWheel(with: event) }
+        guard let view: NSView = imageView ?? textView else { return }
+        let event = PinScrollEvent()
+        event.delta = CGFloat(amount); event.precise = precise
+        event.point = view.convert(CGPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+        view.scrollWheel(with: event)
     }
     fileprivate func verificationPinch(_ factor: CGFloat) {
-        if let imageView { imageView.onZoom?(factor, CGPoint(x: imageView.bounds.midX, y: imageView.bounds.midY)) }
-        else if let textView { textView.onZoom?(factor, CGPoint(x: textView.bounds.midX, y: textView.bounds.midY)) }
+        guard let view: NSView = imageView ?? textView else { return }
+        let event = PinAnnotationMagnifyEvent()
+        event.amount = factor - 1
+        event.point = view.convert(CGPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+        view.magnify(with: event)
     }
     fileprivate func verificationTextLayout() throws -> ImageToolsTextLayoutSnapshot {
         guard let textView, let container = textView.textContainer, let layout = textView.layoutManager else {
@@ -187,6 +195,12 @@ extension ImageToolsPinController {
     }
     fileprivate func verificationScale(_ newScale: CGFloat) {
         scale = newScale
+        if imageView != nil {
+            let visible = visibleArea()
+            let size = CGSize(width: baseSize.width * scale, height: baseSize.height * scale)
+            imageFrame = CGRect(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2,
+                                width: size.width, height: size.height)
+        }
         updateScale()
     }
 }
@@ -200,11 +214,23 @@ extension ImageToolsOCRController {
     fileprivate var verificationCopyEnabled: Bool { copyButton.isEnabled }
     fileprivate var verificationStatusHidden: Bool { status.isHidden }
     fileprivate var verificationText: String { textView.string }
+    fileprivate var verificationFontSize: CGFloat? { textView.font?.pointSize }
     fileprivate func verificationCopy() { copyText() }
     fileprivate func verificationEdit(_ text: String) {
         textView.string = text
         textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
     }
+}
+
+private final class PinScrollEvent: NSEvent {
+    var delta: CGFloat = 0
+    var precise = false
+    var point = CGPoint.zero
+    override var scrollingDeltaY: CGFloat { delta }
+    override var hasPreciseScrollingDeltas: Bool { precise }
+    override var modifierFlags: NSEvent.ModifierFlags { [] }
+    override var locationInWindow: NSPoint { point }
+    override var type: NSEvent.EventType { .scrollWheel }
 }
 
 private final class PinAnnotationMagnifyEvent: NSEvent {
@@ -218,9 +244,16 @@ private final class PinAnnotationMagnifyEvent: NSEvent {
 @main
 private struct ImageToolsVerification {
     @MainActor static func main() {
+        guard (2...3).contains(CommandLine.arguments.count), CommandLine.arguments[1].hasPrefix("/"),
+              CommandLine.arguments.count == 2 || CommandLine.arguments[2] == "--ocr" else { return }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 90) {
+            fputs("FAIL: image verification timed out\n", stderr); exit(1)
+        }
         do {
             _ = NSApplication.shared
             try verifyCapturePinSize()
+            try verifyWholeImagePinGeometry()
+            try verifyExternalPinWindowMovement()
             try verifyClipboardPinSize()
             try verifyCursorPinPlacement()
             let outputDirectory = CommandLine.arguments.dropFirst().first ?? "/private/tmp"
@@ -288,6 +321,21 @@ private struct ImageToolsVerification {
         return image
     }
 
+    @MainActor private static func verifyImageHost(_ pin: ImageToolsPinController, inset: CGFloat) throws {
+        guard let window = pin.window, let content = window.contentView,
+              let whole = pin.verificationWholeImageFrame, let local = pin.verificationImageContentFrame else {
+            throw ImageToolsVerificationFailure(description: "Missing whole-image presentation")
+        }
+        let desktop = NSScreen.screens.map(\.visibleFrame).reduce(CGRect.null) { $0.union($1) }
+        let expectedHost = whole.insetBy(dx: -inset, dy: -inset).intersection(desktop).integral
+        let mapped = local.offsetBy(dx: window.frame.minX, dy: window.frame.minY)
+        try require(window.frame == expectedHost && desktop.integral.contains(window.frame)
+                    && mapped.size == whole.size && abs(mapped.minX - whole.minX) < 0.000001
+                    && abs(mapped.minY - whole.minY) < 0.000001
+                    && pin.verificationPinViewportFrame == local.intersection(content.bounds),
+                    "Image host changed logical placement or allocated outside the desktop: whole=\(whole), local=\(local), host=\(window.frame), expected=\(expectedHost)")
+    }
+
     @MainActor private static func verifyCursorPinPlacement() throws {
         let main = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let secondary = CGRect(x: -1920, y: -160, width: 1920, height: 1080)
@@ -338,19 +386,24 @@ private struct ImageToolsVerification {
         let pin = coordinator.verificationPins.first!
         let framedSize = CGSize(width: size.width + 2, height: size.height + 2)
         let expected = ImageToolsPinPlacement.frame(size: framedSize, anchor: trigger, visible: nativeVisible)
+        let expectedImage = expected.insetBy(dx: 1, dy: 1)
         func sameNativeFrame(_ actual: CGRect, _ expected: CGRect) -> Bool {
             actual.size == expected.size && abs(actual.minX - expected.minX) <= 0.5 && abs(actual.minY - expected.minY) <= 0.5
         }
-        try require(sameNativeFrame(pin.window!.frame, expected) && pin.verificationImageContentFrame?.size == size && pin.verificationImage === source,
+        try verifyImageHost(pin, inset: 1)
+        try require(pin.verificationWholeImageFrame == expectedImage && nativeVisible.contains(pin.window!.frame)
+                    && pin.verificationImageContentFrame?.size == size && pin.verificationImage === source,
                     "Actual cursor pin differs: frame=\(String(describing: pin.window?.frame)), expected=\(expected), content=\(String(describing: pin.verificationImageContentFrame)), same source=\(pin.verificationImage === source)")
         coordinator.pinImage(source, pixelScale: 2, recordsHistory: false, anchor: trigger)
         let second = coordinator.verificationPins.first { $0 !== pin }!
-        try require(second.window!.frame != pin.window!.frame && sameNativeFrame(pin.window!.frame, expected),
+        try verifyImageHost(second, inset: 1)
+        try require(second.window!.frame != pin.window!.frame && pin.verificationWholeImageFrame == expectedImage,
                     "New repeated pin covered the first or moved the existing pin")
         coordinator.togglePins()
         coordinator.pinImage(source, pixelScale: 2, recordsHistory: false, anchor: trigger)
         let third = coordinator.verificationPins.first { $0 !== pin && $0 !== second }!
-        try require(sameNativeFrame(third.window!.frame, expected) && !pin.window!.isVisible && !second.window!.isVisible,
+        try verifyImageHost(third, inset: 1)
+        try require(third.verificationWholeImageFrame == expectedImage && !pin.window!.isVisible && !second.window!.isVisible,
                     "Hidden pins reserve placement or become visible when pinning")
         coordinator.pinText("Synthetic cursor placement", recordsHistory: false, anchor: trigger, batchIndex: 1)
         let textPin = coordinator.verificationPins.first { $0.verificationTextView != nil }!
@@ -359,6 +412,7 @@ private struct ImageToolsVerification {
         let edge = CGPoint(x: nativeVisible.maxX - 1, y: nativeVisible.minY + 1)
         let edgePin = ImageToolsPinController(image: source, pixelScale: 2, anchor: edge)
         defer { edgePin.close() }
+        try verifyImageHost(edgePin, inset: 1)
         try require(nativeVisible.contains(edgePin.window!.frame) && edgePin.verificationImageContentFrame?.size == size,
                     "Actual edge pin fell off-screen or changed screenshot dimensions")
         print("PASS: cursor-adjacent image/text pins, negative-origin display selection, edge clamping and five-item cascade preserve source size")
@@ -376,14 +430,94 @@ private struct ImageToolsVerification {
         pin.verificationScale(1)
         try require(pin.verificationImageContentFrame?.size == CGSize(width: 200, height: 120), "Reset must restore the original screen size")
         let large = try solidImage(width: 1600, height: 1200)
-        let largePin = ImageToolsPinController(image: large, pixelScale: 2)
+        let visible = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
+        let largePin = ImageToolsPinController(image: large, pixelScale: 2,
+            anchor: CGPoint(x: visible.midX, y: visible.midY))
         let standardPin = ImageToolsPinController(image: source, pixelScale: 1)
         defer { largePin.close(); standardPin.close() }
-        try require(largePin.verificationImageContentFrame?.size == CGSize(width: 800, height: 600),
-                    "Large captures must not inherit the arbitrary 560 × 500 preview limit")
+        let expectedFit = min(1, (visible.width / 2 - 2) / 800, (visible.height / 2 - 2) / 600)
+        try require(largePin.verificationImageContentFrame?.size == CGSize(width: 800 * expectedFit, height: 600 * expectedFit),
+                    "Large captures must initially fit within half the display width and height")
+        try verifyImageHost(largePin, inset: 1)
         try require(standardPin.verificationImageContentFrame?.size == CGSize(width: 400, height: 240),
                     "Standard-density captures must retain their screen size")
         print("PASS: 1x/2x capture pin size, large capture size, original export pixels, zoom and reset")
+    }
+
+    @MainActor private static func verifyWholeImagePinGeometry() throws {
+        let visible = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
+        let source = try solidImage(width: 800, height: 18000)
+        let pin = ImageToolsPinController(image: source, pixelScale: 2,
+            anchor: CGPoint(x: visible.midX, y: visible.midY))
+        defer { pin.close() }
+        guard let window = pin.window, let first = pin.verificationWholeImageFrame else {
+            throw ImageToolsVerificationFailure(description: "Missing whole-image pin")
+        }
+        let initialScale = pin.verificationZoom
+        try require(initialScale < 0.2 && initialScale > 0 && visible.contains(window.frame)
+                    && window.frame.width <= visible.width / 2 + 1 && window.frame.height <= visible.height / 2 + 1
+                    && abs(first.width / first.height - 800.0 / 18000.0) < 0.000001
+                    && !pin.verificationImageUsesScrollView,
+                    "Retina long capture was not initially fitted as a complete proportional image")
+        try pin.verificationWheel(8, precise: true)
+        try require(pin.verificationZoom > initialScale && pin.verificationZoom < initialScale * 1.1,
+                    "First two-finger zoom jumps to the old 20 percent floor")
+        let beforePinch = pin.verificationZoom
+        pin.verificationPinch(1.2)
+        try require(abs(pin.verificationZoom / beforePinch - 1.2) < 0.000001,
+                    "Native pinch magnification was not applied to the whole image")
+        pin.verificationScale(1)
+        guard let full = pin.verificationWholeImageFrame else { throw ImageToolsVerificationFailure(description: "Lost logical image") }
+        let frames = NSScreen.screens.map(\.visibleFrame)
+        let desktop = frames.reduce(CGRect.null) { $0.union($1) }.integral
+        try require(full.size == CGSize(width: 400, height: 9000) && desktop.contains(window.frame)
+                    && window.frame.height < full.height && !window.hasShadow,
+                    "Readable-size pin allocated an unbounded window or changed its original aspect ratio")
+        let beforeSelection = full
+        pin.verificationSelect()
+        try require(pin.verificationWholeImageFrame == beforeSelection,
+                    "Showing the detached toolbar resizes the complete image")
+        try pin.verificationDrag(dx: 0, dy: visible.minY + 12 - full.minY)
+        guard let bottom = pin.verificationWholeImageFrame else { throw ImageToolsVerificationFailure(description: "Drag lost image") }
+        try require(abs(bottom.minY - visible.minY - 12) < 0.1 && bottom.size == full.size,
+                    "Dragging the complete long image cannot reach its last rows")
+        try pin.verificationDrag(dx: 0, dy: visible.maxY - 12 - bottom.maxY)
+        guard let top = pin.verificationWholeImageFrame else { throw ImageToolsVerificationFailure(description: "Drag lost image") }
+        try require(abs(top.maxY - visible.maxY + 12) < 0.1 && top.size == full.size
+                    && pin.verificationImage === source && pin.verificationImage?.height == 18000,
+                    "Dragging cannot return to the first rows or changes export pixels")
+        print("PASS: Retina long pins fit completely, retain aspect ratio, zoom smoothly below 20 percent, keep bounded hosts and reach both image ends")
+    }
+
+    @MainActor private static func verifyExternalPinWindowMovement() throws {
+        let visible = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
+        let source = try solidImage(width: 400, height: 240)
+        let pin = ImageToolsPinController(image: source, pixelScale: 2,
+            anchor: CGPoint(x: visible.midX - 120, y: visible.midY + 100))
+        defer { pin.close() }
+        guard let window = pin.window, let original = pin.verificationWholeImageFrame else {
+            throw ImageToolsVerificationFailure(description: "Missing external-movement fixture")
+        }
+        let host = window.frame
+        window.setFrameOrigin(CGPoint(x: host.minX + 24, y: host.minY - 18))
+        // Let native move/backing notifications settle; no pointer events are posted.
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.03))
+        let expected = original.offsetBy(dx: window.frame.minX - host.minX, dy: window.frame.minY - host.minY)
+        try require(pin.verificationWholeImageFrame == expected && expected != original,
+                    "Native panel movement did not translate the logical whole image")
+        let movedHost = window.frame
+        pin.verificationSelect()
+        try require(pin.verificationWholeImageFrame == expected && window.frame == movedHost,
+                    "Selection jumps a natively moved pin back to its old position")
+        pin.verificationPinch(1.25)
+        pin.verificationPinch(1 / 1.25)
+        guard let restored = pin.verificationWholeImageFrame else {
+            throw ImageToolsVerificationFailure(description: "Zoom lost a natively moved pin")
+        }
+        try require(abs(restored.midX - expected.midX) < 0.5 && abs(restored.midY - expected.midY) < 0.5
+                    && restored.size == expected.size && pin.verificationImage === source,
+                    "Zoom after native panel movement returns to the old origin or changes source pixels")
+        print("PASS: native panel movement translates whole-image geometry, and subsequent selection/zoom retain the moved position")
     }
 
     @MainActor private static func verifyClipboardPinSize() throws {
@@ -1113,13 +1247,16 @@ private struct ImageToolsVerification {
                     guard let frame = pin.verificationImageContentFrame else {
                         throw ImageToolsVerificationFailure(description: "Missing displayed image frame")
                     }
+                    try verifyImageHost(pin, inset: 1)
                     let viewport = pin.verificationImageViewport
-                    try require(abs(content.bounds.width - frame.width - 2) < 0.5
-                                && abs(content.bounds.height - frame.height - 2) < 0.5
-                                && abs(frame.minX - 1) < 0.5 && abs(frame.minY - 1) < 0.5
-                                && abs(viewport.width - frame.width) < 0.5
-                                && abs(viewport.height - frame.height) < 0.5,
-                                "Outer border changed the source viewport: source=\(width)×\(height) scale=\(scale) selected=\(selected) window=\(content.bounds) image=\(frame) viewport=\(viewport)")
+                    let margins = [frame.minX - content.bounds.minX, frame.minY - content.bounds.minY,
+                                   content.bounds.maxX - frame.maxX, content.bounds.maxY - frame.maxY]
+                    try require(margins.allSatisfy { $0 >= 0.99 && $0 < 2.01 }
+                                && abs(frame.width / CGFloat(width) - scale) < 0.00001
+                                && abs(frame.height / CGFloat(height) - scale) < 0.00001
+                                && abs(viewport.width - frame.width) < 0.01
+                                && abs(viewport.height - frame.height) < 0.01,
+                                "Native backing alignment changed image aspect ratio or viewport: source=\(width)×\(height), scale=\(scale), image=\(frame), host=\(content.bounds)")
                 }
             }
             try require(pin.verificationImage === source, "Fitting the image changed its original raster")
@@ -1129,9 +1266,18 @@ private struct ImageToolsVerification {
             try cachePreview(content, output: outputDirectory.appendingPathComponent("image-pin-content-bounds-\(width).png"))
             let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
             content.cacheDisplay(in: content.bounds, to: bitmap)
-            let edge = bitmap.colorAt(x: 0, y: bitmap.pixelsHigh / 2)!.usingColorSpace(.deviceRGB)!
+            let edgeX = max(0, (pin.verificationImageContentFrame?.minX ?? 1) - 0.5)
+            let edge = bitmap.colorAt(x: Int(edgeX / content.bounds.width * CGFloat(bitmap.pixelsWide)),
+                                      y: bitmap.pixelsHigh / 2)!.usingColorSpace(.deviceRGB)!
             try require(edge.alphaComponent > 0.05 && edge.redComponent < 0.98,
                         "Opaque pin has no visible border outside the source viewport")
+            let imageRect = pin.verificationImageContentFrame!
+            let corner = CGPoint(x: imageRect.minX + 0.25, y: imageRect.minY + 0.25)
+            let bitmapY = content.isFlipped ? corner.y : content.bounds.maxY - corner.y
+            let cornerPixel = bitmap.colorAt(x: Int(corner.x / content.bounds.width * CGFloat(bitmap.pixelsWide)),
+                                            y: Int(bitmapY / content.bounds.height * CGFloat(bitmap.pixelsHigh)))!
+            try require(cornerPixel.alphaComponent < 0.1,
+                        "Opaque image pin did not round only its display corners")
         }
         guard let context = CGContext(data: nil, width: 80, height: 60, bitsPerComponent: 8,
             bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
@@ -1147,16 +1293,20 @@ private struct ImageToolsVerification {
         guard let transparentWindow = transparentPin.window, let content = transparentWindow.contentView else {
             throw ImageToolsVerificationFailure(description: "Missing transparent pin window")
         }
-        try require(!transparentWindow.hasShadow && content.bounds.size == CGSize(width: 80, height: 60),
+        try verifyImageHost(transparentPin, inset: 0)
+        try require(!transparentWindow.hasShadow && transparentPin.verificationImageContentFrame?.size == CGSize(width: 80, height: 60),
                     "Transparent image acquired an external frame, a rectangular shadow or cropped source canvas")
         for selected in [false, true] {
             if selected { transparentPin.verificationSelect() } else { transparentPin.verificationDeselect() }
             let url = outputDirectory.appendingPathComponent("transparent-pin-content-\(selected ? "selected" : "idle").png")
             try cachePreview(content, output: url)
             let bitmap = NSBitmapImageRep(data: try Data(contentsOf: url))!
+            let imageRect = transparentPin.verificationImageContentFrame!
             func pixel(_ x: CGFloat, _ y: CGFloat) -> NSColor {
-                bitmap.colorAt(x: Int(x / content.bounds.width * CGFloat(bitmap.pixelsWide)),
-                               y: Int(y / content.bounds.height * CGFloat(bitmap.pixelsHigh)))!
+                let point = CGPoint(x: imageRect.minX + x, y: imageRect.minY + y)
+                let bitmapY = content.isFlipped ? point.y : content.bounds.maxY - point.y
+                return bitmap.colorAt(x: Int(point.x / content.bounds.width * CGFloat(bitmap.pixelsWide)),
+                                      y: Int(bitmapY / content.bounds.height * CGFloat(bitmap.pixelsHigh)))!
             }
             try require(pixel(8, 8).alphaComponent < 0.01 && pixel(40, 30).alphaComponent > 0.99,
                         "Pin decoration fills a transparent source region or hides opaque content")
@@ -1179,7 +1329,8 @@ private struct ImageToolsVerification {
                     && transparentPin.verificationImage === transparent,
                     "Leaving transparent pin annotation retained a rectangular shell or changed its original size")
         transparentPin.verificationPrepareEditor()!.complete()
-        try require(!transparentWindow.hasShadow && content.bounds.size == CGSize(width: 80, height: 60)
+        try verifyImageHost(transparentPin, inset: 0)
+        try require(!transparentWindow.hasShadow && transparentPin.verificationImageContentFrame?.size == CGSize(width: 80, height: 60)
                     && ImageToolsUI.hasTransparentPixels(transparentPin.verificationImage!),
                     "Applying transparent annotation flattened alpha or retained the editor shadow")
         print("PASS: opaque image pins keep source-sized viewports inside a one-point frame and native shadow at normal, small and zoomed sizes")
@@ -1187,13 +1338,14 @@ private struct ImageToolsVerification {
     }
 
     @MainActor private static func verifyImagePinSelection(outputDirectory: URL) throws {
-        for (name, width, height) in [("normal", 260, 180), ("scrollable", 700, 18000)] {
+        for (name, width, height) in [("normal", 260, 180), ("oversized", 700, 18000)] {
             let source = try solidImage(width: width, height: height)
             let sourcePNG = try ImageToolsUI.png(source)
             let pin = ImageToolsPinController(image: source)
             defer { pin.close() }
-            if name == "scrollable" { pin.verificationScale(3) }
-            guard let content = pin.window?.contentView else {
+            pin.verificationScale(name == "oversized" ? 3 : 1)
+            guard let content = pin.window?.contentView,
+                  let imageRect = pin.verificationImageContentFrame else {
                 throw ImageToolsVerificationFailure(description: "Missing selection fixture view")
             }
             func snapshot(_ state: String) throws -> NSBitmapImageRep {
@@ -1201,49 +1353,51 @@ private struct ImageToolsVerification {
                 try cachePreview(content, output: url)
                 return NSBitmapImageRep(data: try Data(contentsOf: url))!
             }
-            func pixel(_ bitmap: NSBitmapImageRep, _ x: CGFloat, _ y: CGFloat) -> NSColor {
-                bitmap.colorAt(x: min(bitmap.pixelsWide - 1, Int(x / content.bounds.width * CGFloat(bitmap.pixelsWide))),
-                               y: min(bitmap.pixelsHigh - 1, Int(y / content.bounds.height * CGFloat(bitmap.pixelsHigh))))!
+            func pixel(_ bitmap: NSBitmapImageRep, _ point: CGPoint) -> NSColor {
+                bitmap.colorAt(x: min(bitmap.pixelsWide - 1, max(0, Int(point.x / content.bounds.width * CGFloat(bitmap.pixelsWide)))),
+                    y: min(bitmap.pixelsHigh - 1, max(0, Int(point.y / content.bounds.height * CGFloat(bitmap.pixelsHigh)))))!
                     .usingColorSpace(.deviceRGB)!
             }
             pin.verificationSelect()
-            if name == "scrollable" { pin.verificationScrollImage() }
-            let viewport = pin.verificationPinViewportFrame
-            try require(pin.verificationOutlineFrame == viewport,
-                        "Selection outline follows the offscreen image instead of the visible viewport")
+            try require(pin.verificationImageSelectionRect == imageRect,
+                        "Selection follows the clipped host boundary instead of the whole image")
+            let visible = imageRect.intersection(content.bounds)
+            let candidates = [CGPoint(x: imageRect.minX + 0.75, y: visible.midY),
+                              CGPoint(x: imageRect.maxX - 0.75, y: visible.midY),
+                              CGPoint(x: visible.midX, y: imageRect.minY + 0.75),
+                              CGPoint(x: visible.midX, y: imageRect.maxY - 0.75)]
+            let realEdges = candidates.filter { content.bounds.contains($0) }
             let selected = try snapshot("selected")
-            let edges = [CGPoint(x: viewport.minX + 0.75, y: viewport.midY),
-                         CGPoint(x: viewport.maxX - 0.75, y: viewport.midY),
-                         CGPoint(x: viewport.midX, y: viewport.minY + 0.75),
-                         CGPoint(x: viewport.midX, y: viewport.maxY - 0.75)]
-            for point in edges {
-                let color = pixel(selected, point.x, point.y)
+            for point in realEdges {
+                let color = pixel(selected, point)
                 try require(color.alphaComponent > 0.99 && color.blueComponent - color.redComponent > 0.12,
-                            "Selected \(name) pin has no visible blue-gray edge at \(point): \(color)")
-                try require(pin.verificationContentReceivesHit(at: point), "Selection outline intercepts image edge interaction")
+                            "Selected \(name) pin has no outline on a real visible image edge")
+                try require(pin.verificationContentReceivesHit(at: point), "Image selection steals its edge mouse target")
             }
-            let center = pixel(selected, content.bounds.midX, content.bounds.midY)
+            let hostEdges = [CGPoint(x: content.bounds.minX + 0.75, y: visible.midY),
+                             CGPoint(x: content.bounds.maxX - 0.75, y: visible.midY),
+                             CGPoint(x: visible.midX, y: content.bounds.minY + 0.75),
+                             CGPoint(x: visible.midX, y: content.bounds.maxY - 0.75)]
+            for point in hostEdges where imageRect.insetBy(dx: 4, dy: 4).contains(point) {
+                let color = pixel(selected, point)
+                try require(color.redComponent > 0.99 && color.greenComponent > 0.99,
+                            "Clipped desktop boundary acquired a fake image border")
+            }
+            let center = pixel(selected, CGPoint(x: visible.midX, y: visible.midY))
             try require(center.redComponent > 0.99 && center.greenComponent > 0.99,
-                        "Selection highlight tints image content")
+                        "Selection tints source content")
             pin.verificationDeselect()
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
             let idle = try snapshot("idle")
-            for point in edges {
-                try require(pixel(idle, point.x, point.y).redComponent > 0.99,
-                            "Deselected image retains its selection outline")
-            }
-            pin.verificationSelect()
-            pin.verificationDeselect()
-            pin.verificationSelect()
+            for point in realEdges { try require(pixel(idle, point).redComponent > 0.99, "Deselection retains an inner outline") }
+            pin.verificationSelect(); pin.verificationDeselect(); pin.verificationSelect()
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
             let reselected = try snapshot("reselected")
-            try require(pixel(reselected, viewport.minX + 0.75, viewport.midY).redComponent < 0.7,
-                        "An old fade hides the newly selected pin")
+            for point in realEdges { try require(pixel(reselected, point).redComponent < 0.7, "An old fade hides the new selection") }
             try require(pin.verificationImage === source && ImageToolsUI.png(pin.verificationImage!) == sourcePNG,
-                        "Selection decoration modifies copied or exported source pixels")
+                        "Selection changes the copied or exported image")
         }
-        print("PASS: selected image pins show passive inset blue-gray edges; deselection restores pixels and rapid reselection cancels fading")
-        print("PASS: scrollable image selection stays on all four visible viewport edges without tinting source content")
+        print("PASS: image selection follows true image edges, leaves cropped desktop boundaries unframed, preserves hit targets and source pixels")
     }
 
     @MainActor private static func verifyTextPinContentBounds(outputDirectory: URL) throws {
@@ -1258,7 +1412,7 @@ private struct ImageToolsVerification {
         let originalSize = pin.verificationTextDocumentSize
         let selection = NSRange(location: 0, length: 8)
         pin.verificationSelectText(selection)
-        try require(original.containerWidth == 416 && original.lineEnds.count >= 3
+        try require(original.containerWidth == 408 && original.lineEnds.count >= 3
                     && pin.verificationTextRemainsEditable,
                     "Text fixture lost its editable fixed-width container or internal text padding")
         for factor: CGFloat in [0.2, 1, 1.25, 2, 4] {
@@ -1369,8 +1523,8 @@ private struct ImageToolsVerification {
         for point in [CGPoint(x: 0.25, y: 0.25), CGPoint(x: content.bounds.maxX - 0.25, y: 0.25),
                       CGPoint(x: 0.25, y: content.bounds.maxY - 0.25),
                       CGPoint(x: content.bounds.maxX - 0.25, y: content.bounds.maxY - 0.25)] {
-            try require(try pixel(point).alphaComponent > 0.99,
-                        "Text pin retains a transparent or partially transparent external corner")
+            try require(try pixel(point).alphaComponent < 0.1,
+                        "Minimal text card did not preserve its rounded transparent external corner")
         }
         for point in [CGPoint(x: viewport.minX + 0.75, y: viewport.midY),
                       CGPoint(x: viewport.maxX - 0.75, y: viewport.midY),
@@ -1464,7 +1618,7 @@ private struct ImageToolsVerification {
         guard let pinWindow = imagePin.window, let imageContent = pinWindow.contentView else {
             throw ImageToolsVerificationFailure(description: "Image pin did not initialize")
         }
-        try require(pinWindow.styleMask.rawValue == NSWindow.StyleMask.borderless.rawValue && allButtons(imageContent).isEmpty,
+        try require(!pinWindow.styleMask.contains(.titled) && pinWindow.styleMask.contains(.nonactivatingPanel) && allButtons(imageContent).isEmpty,
                     "Image pin retains normal window chrome or an always-visible control bar")
         try require(!imagePin.verificationSelected && imagePin.verificationHUD?.isVisible == false && pinWindow.hasShadow,
                     "A new image pin has persistent selection controls or lacks its presentation shadow")
@@ -1503,9 +1657,10 @@ private struct ImageToolsVerification {
         try require(imagePin.verificationZoom > 1, "Mouse wheel did not enlarge image pin")
         let wheelZoom = imagePin.verificationZoom
         try imagePin.verificationWheel(8, precise: true)
-        try require(imagePin.verificationZoom == wheelZoom, "Trackpad scrolling unexpectedly changed image zoom")
+        try require(imagePin.verificationZoom > wheelZoom, "Two-finger scrolling did not zoom the whole image")
+        let trackpadZoom = imagePin.verificationZoom
         imagePin.verificationPinch(1.2)
-        try require(imagePin.verificationZoom > wheelZoom, "Pinch callback did not enlarge image pin")
+        try require(imagePin.verificationZoom > trackpadZoom, "Native pinch event did not enlarge image pin")
         try require(!imageHUD.frame.intersects(pinWindow.frame), "Zoom moved the pin under its floating action HUD")
         try require(try ImageToolsUI.png(imagePin.verificationImage!) == ImageToolsUI.png(source), "Zoom changed the source raster")
         let longSource = try solidImage(width: 700, height: 18000)
@@ -1517,12 +1672,13 @@ private struct ImageToolsVerification {
         guard let longWindow = longPin.window else { throw ImageToolsVerificationFailure(description: "Long pin window is missing") }
         let visible = longWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
-        try require(longWindow.frame.width >= 700 && visible.contains(longWindow.frame),
-                    "Long image cannot zoom to readable width inside the display")
+        let desktop = NSScreen.screens.map(\.visibleFrame).reduce(CGRect.null) { $0.union($1) }.integral
+        try require((longPin.verificationWholeImageFrame?.width ?? 0) >= 700 && desktop.contains(longWindow.frame),
+                    "Long image cannot zoom to a readable width with a bounded native host")
         try require(longPin.verificationImage === longSource, "Long-image zoom copied or replaced the source bitmap")
         try require(!imagePin.verificationSelected && longPin.verificationSelected
-                    && longPin.verificationHUD.map { visible.contains($0.frame) && !$0.frame.intersects(longWindow.frame) } == true,
-                    "Selecting another pin did not hide previous controls or keep its HUD outside a long image")
+                    && longPin.verificationHUD.map { desktop.contains($0.frame) } == true,
+                    "Selecting another pin did not hide previous controls or keep the long-image HUD reachable")
         longPin.verificationDeactivate()
         try require(!longPin.verificationSelected, "Application deactivation did not clear pin selection")
         imagePin.verificationSelect()
@@ -1550,13 +1706,18 @@ private struct ImageToolsVerification {
         }
         let backingScaleX = CGFloat(previewBitmap.pixelsWide) / imageContent.bounds.width
         let backingScaleY = CGFloat(previewBitmap.pixelsHigh) / imageContent.bounds.height
-        for point in [CGPoint(x: 1, y: 1), CGPoint(x: imageContent.bounds.maxX - 1, y: 1),
-                      CGPoint(x: 1, y: imageContent.bounds.maxY - 1),
-                      CGPoint(x: imageContent.bounds.maxX - 1, y: imageContent.bounds.maxY - 1)] {
-            guard let pixel = previewBitmap.colorAt(x: Int(point.x * backingScaleX), y: Int(point.y * backingScaleY)) else {
+        try verifyImageHost(imagePin, inset: 1)
+        guard let imageRect = imagePin.verificationImageContentFrame else {
+            throw ImageToolsVerificationFailure(description: "Applied pin has no source image rectangle")
+        }
+        let interior = imageRect.insetBy(dx: 5, dy: 5)
+        for point in [CGPoint(x: interior.minX, y: interior.minY), CGPoint(x: interior.maxX, y: interior.minY),
+                      CGPoint(x: interior.minX, y: interior.maxY), CGPoint(x: interior.maxX, y: interior.maxY)] {
+            let bitmapY = imageContent.isFlipped ? point.y : imageContent.bounds.maxY - point.y
+            guard let pixel = previewBitmap.colorAt(x: Int(point.x * backingScaleX), y: Int(bitmapY * backingScaleY)) else {
                 throw ImageToolsVerificationFailure(description: "Cannot inspect image-pin edges")
             }
-            try require(pixel.alphaComponent > 0.99, "Opaque image does not reach its pin's content edges")
+            try require(pixel.alphaComponent > 0.99, "Opaque source image has a transparent inner edge after annotation")
         }
         if let hudContent = imageHUD.contentView {
             try cachePreview(hudContent, output: outputDirectory.appendingPathComponent("image-pin-hud-preview.png"))
@@ -1565,10 +1726,15 @@ private struct ImageToolsVerification {
         guard let textWindow = textPin.window, let textContent = textWindow.contentView else {
             throw ImageToolsVerificationFailure(description: "Text pin did not initialize")
         }
-        try require(textWindow.styleMask.rawValue == NSWindow.StyleMask.borderless.rawValue && allButtons(textContent).isEmpty,
+        try require(!textWindow.styleMask.contains(.titled) && textWindow.styleMask.contains(.nonactivatingPanel) && allButtons(textContent).isEmpty,
                     "Text pin retains normal window chrome or an always-visible control bar")
         try require(textPin.verificationMenuTitles.contains("编辑文字") && textPin.verificationMenuTitles.contains("复制文字"),
                     "Borderless text pin has no reachable move/copy controls")
+        try require(textPin.verificationTextView?.font?.pointSize == 16
+                    && textPin.verificationTextView?.textContainerInset == CGSize(width: 16, height: 16)
+                    && textPin.verificationTextView?.defaultParagraphStyle?.lineSpacing == 3
+                    && textPin.verificationTextCornerRadius == 6,
+                    "Minimal text card lost its smaller type, padding, spacing or rounded selection")
         let textBefore = try textPin.verificationTextLayout()
         textWindow.setFrameOrigin(CGPoint(x: visible.midX - textWindow.frame.width / 2,
                                          y: visible.midY - textWindow.frame.height / 2))
@@ -1603,7 +1769,7 @@ private struct ImageToolsVerification {
         ocr.verificationCopy()
         try require(clipboardAttempts == 0 && ocrCloseCount == 0, "OCR loading state copied or closed its window")
         ocr.complete("屏幕文字\nScreen text")
-        try require(ocr.verificationStatusHidden && ocr.verificationCopyEnabled && ocr.verificationText == "屏幕文字\nScreen text",
+        try require(ocr.verificationFontSize == 14 && ocr.verificationStatusHidden && ocr.verificationCopyEnabled && ocr.verificationText == "屏幕文字\nScreen text",
                     "OCR completion did not show copyable text without persistent status copy")
         try cachePreview(ocrContent, output: outputDirectory.appendingPathComponent("ocr-result-preview.png"))
         ocr.verificationCopy()
@@ -1630,29 +1796,31 @@ private struct ImageToolsVerification {
 
     @MainActor private static func verifyFirstSelectionDrag(image: CGImage, preferences: PreferencesStore) throws {
         let imagePin = ImageToolsPinController(image: image, preferences: preferences)
-        imagePin.verificationPinch(1000)
         let textPin = ImageToolsPinController(text: String(repeating: "Long text pin fixture.\n", count: 700), preferences: preferences)
-        var failures: [String] = []
-        for (name, pin) in [("long image", imagePin), ("long text Option-drag", textPin)] {
-            guard let window = pin.window else { throw ImageToolsVerificationFailure(description: "Missing \(name) fixture window") }
-            let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
-                ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
-            try require(!pin.verificationSelected && window.frame.height > visible.height * 0.8,
-                        "First-selection drag fixture is selected or does not fill the available height")
-            window.setFrameOrigin(CGPoint(x: visible.midX - window.frame.width / 2, y: visible.minY + 20))
-            let original = window.frame
-            var selectedFrame: CGRect?
-            try pin.verificationDrag(dx: 0, dy: 10, afterMouseDown: { selectedFrame = window.frame })
-            guard let selectedFrame else { throw ImageToolsVerificationFailure(description: "Missing \(name) mouseDown frame") }
-            try require(pin.verificationSelected && selectedFrame.height < original.height,
-                        "First selection did not reserve detached HUD space for \(name)")
-            let delta = window.frame.minY - selectedFrame.minY
-            if abs(delta - 10) > 0.1 {
-                failures.append("\(name): pointer delta=10, actual window delta=\(delta), selection resized height \(original.height)→\(selectedFrame.height)")
-            }
-        }
-        try require(failures.isEmpty, "First-selection drag jumped after HUD layout: " + failures.joined(separator: "; "))
-        print("PASS: unselected full-height image and Option-text pins move by the first pointer delta after reserving HUD space")
+        defer { imagePin.close(); textPin.close() }
+        imagePin.verificationScale(4)
+        guard let whole = imagePin.verificationWholeImageFrame else { throw ImageToolsVerificationFailure(description: "Missing long-image geometry") }
+        var selectedImage: CGRect?
+        try imagePin.verificationDrag(dx: 0, dy: 10, afterMouseDown: { selectedImage = imagePin.verificationWholeImageFrame })
+        try require(imagePin.verificationSelected && selectedImage == whole
+                    && abs((imagePin.verificationWholeImageFrame?.minY ?? 0) - whole.minY - 10) < 0.1
+                    && imagePin.verificationWholeImageFrame?.size == whole.size,
+                    "Selecting or first-dragging a long image changed its scale, aspect ratio or pointer delta")
+        guard let window = textPin.window else { throw ImageToolsVerificationFailure(description: "Missing long-text window") }
+        let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
+            ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
+        try require(!textPin.verificationSelected && window.frame.height <= visible.height / 2 + 1
+                    && window.frame.width <= visible.width / 2 + 1,
+                    "Long-text fixture exceeds the initial half-display bounds")
+        window.setFrameOrigin(CGPoint(x: visible.midX - window.frame.width / 2, y: visible.minY + 20))
+        let original = window.frame
+        var selectedFrame: CGRect?
+        try textPin.verificationDrag(dx: 0, dy: 10, afterMouseDown: { selectedFrame = window.frame })
+        guard let selectedFrame else { throw ImageToolsVerificationFailure(description: "Missing text mouse-down frame") }
+        try require(textPin.verificationSelected && selectedFrame == original
+                    && abs(window.frame.minY - selectedFrame.minY - 10) < 0.1,
+                    "Selecting the smaller text card resizes it or loses the first drag delta")
+        print("PASS: first selection preserves whole-image geometry and both image/Option-text dragging retain the first pointer delta")
     }
 
     @MainActor private static func verifyOutsideRendering(outputDirectory: URL) throws {

@@ -35,6 +35,8 @@ extension SelectionView {
 }
 
 extension RegionSelector {
+    fileprivate func verificationSetCancellation(_ handler: @escaping () -> Void) { cancellation = handler }
+    fileprivate func verificationUserCancel() { cancelAndRestoreTarget() }
     fileprivate var verificationWindows: [NSWindow] { windows }
     fileprivate func verificationShowFrozenScreens(_ image: CGImage) {
         show(NSScreen.screens.map { ($0, image) }, candidates: [], primaryTop: NSScreen.screens.first?.frame.maxY ?? 0,
@@ -84,7 +86,7 @@ private final class SelectionUIFixture {
         self.source = source
         root = SelectionView(image: source, size: size, candidates: candidates, purpose: purpose, preferences: preferences ?? PreferencesStore(storage: MemoryPreferencesStorage()), toolbarArea: toolbarArea)
         window = SelectionWindow(contentRect: CGRect(origin: .zero, size: size),
-            styleMask: [.borderless], backing: .buffered, defer: false)
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = root
         root.onAction = { [weak self] action, rect, image in self?.actions.append((action, rect, image)) }
@@ -187,6 +189,13 @@ private final class SelectionUIFixture {
 @main
 private struct SelectionUIVerification {
     @MainActor static func main() {
+        guard (2...3).contains(CommandLine.arguments.count), CommandLine.arguments[1].hasPrefix("/"),
+              CommandLine.arguments.count == 2 || ["", "--scroll-only", "--overlay-only"].contains(CommandLine.arguments[2]) else {
+            print("Run scripts/verify-selection-ui.sh from Terminal."); return
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+            fputs("FAIL: selection UI verification timed out\n", stderr); exit(1)
+        }
         _ = NSApplication.shared
         let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/private/tmp")
         var failures = 0
@@ -197,6 +206,19 @@ private struct SelectionUIVerification {
         }
         do {
             let image = try fixtureImage()
+            if CommandLine.arguments.contains("--overlay-only") {
+                run("nonactivating overlays retain current application and route input on every display") { try verifyOverlayInputOwnership(image) }
+                run("cross-screen completion and undo target the selected display") { try verifyCrossScreenShortcuts(image) }
+                run("cross-screen Delete and Esc prioritize the selected annotation") { try verifyCrossScreenEditingKeys(image) }
+                print(failures == 0 ? "PASS: overlay checks completed; native fullscreen Spaces require manual verification" : "FAIL: overlay checks")
+                exit(failures == 0 ? 0 : 1)
+            }
+            if CommandLine.arguments.contains("--scroll-only") {
+                run("scroll selection keeps body dragging and explicit W window selection") { try verifyScrollBodySelection(image) }
+                run("reselection cancellation fires once and does not run on completion or shutdown") { try verifyReselectionCancellation(image) }
+                print(failures == 0 ? "PASS: scrolling selection checks completed" : "FAIL: scrolling selection checks")
+                exit(failures == 0 ? 0 : 1)
+            }
             run("preview feedback: subject exit, labeled actions and persistent recording modes") { try verifyPreviewFeedback(image) }
             run("production selection callbacks release views after repeated cancellation") { try verifySelectionLifetime(image) }
             run("production selection callbacks survive deactivation and release after completion") { try verifySelectionCallbackReuse(image) }
@@ -285,6 +307,30 @@ private struct SelectionUIVerification {
             }
             try require(retained == nil, "Cancelled screenshot still retains its view on iteration \(iteration)")
         }
+    }
+
+    @MainActor private static func verifyReselectionCancellation(_ image: CGImage) throws {
+        let selector = RegionSelector()
+        var cancellations = 0
+        selector.verificationSetCancellation { cancellations += 1 }
+        selector.verificationUserCancel()
+        selector.verificationUserCancel()
+        try require(cancellations == 1, "User cancellation was omitted or delivered more than once")
+        selector.verificationSetCancellation { cancellations += 1 }
+        selector.cancel()
+        selector.verificationUserCancel()
+        try require(cancellations == 1, "Shutdown or replacement restored a cancelled session")
+        var completed = false
+        let view = SelectionView(image: image, size: CGSize(width: 800, height: 600), candidates: [], purpose: .scroll,
+                                 preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+        selector.verificationAttachProductionAction(view) { _, _, _ in completed = true }
+        selector.verificationSetCancellation { cancellations += 1 }
+        view.onAction?(.scroll, CGRect(x: 30, y: 40, width: 200, height: 100), image)
+        let deadline = Date().addingTimeInterval(0.6)
+        while !completed && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        try require(completed && cancellations == 1, "Confirming a replacement selection also invoked cancellation")
+        selector.verificationUserCancel()
+        try require(cancellations == 1, "Completion retained the old cancellation handler")
     }
 
     @MainActor private static func verifySelectionCallbackReuse(_ image: CGImage) throws {
@@ -615,10 +661,20 @@ private struct SelectionUIVerification {
     @MainActor private static func verifyOverlayInputOwnership(_ image: CGImage) throws {
         try require(!NSScreen.screens.isEmpty, "No native displays available for overlay coverage check")
         NSApp.setActivationPolicy(.accessory)
+        let initialApplication = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let initiallyActive = NSApp.isActive
+        let initiallyRunningActive = NSRunningApplication.current.isActive
         let selector = RegionSelector()
         defer { selector.cancel() }
         selector.verificationShowFrozenScreens(image)
         let windows = selector.verificationWindows
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        print("INFO: overlay focus before frontmost=\(String(describing: initialApplication)) AppKit=\(initiallyActive) runningApplication=\(initiallyRunningActive); after frontmost=\(String(describing: NSWorkspace.shared.frontmostApplication?.processIdentifier)) AppKit=\(NSApp.isActive) runningApplication=\(NSRunningApplication.current.isActive)")
+        // AppKit may report the nonactivating panel's local focus as active.
+        // The system's frontmost owner and running-application state must stay unchanged.
+        try require(NSWorkspace.shared.frontmostApplication?.processIdentifier == initialApplication
+                    && NSRunningApplication.current.isActive == initiallyRunningActive,
+                    "Presenting screenshot overlays activated their application")
         try require(windows.count == NSScreen.screens.count, "Some displays have no frozen overlay")
         for screen in NSScreen.screens {
             guard let window = windows.first(where: { $0.frame == screen.frame }), let root = window.contentView else {
@@ -626,19 +682,64 @@ private struct SelectionUIVerification {
             }
             try require(!window.ignoresMouseEvents && window.isVisible && window.level == .screenSaver,
                         "Frozen overlay does not intercept input above the desktop")
+            guard let panel = window as? NSPanel else {
+                throw SelectionUIFailure(description: "Screenshot overlay is not a nonactivating panel")
+            }
+            try require(panel.styleMask.contains(.nonactivatingPanel) && !panel.hidesOnDeactivate
+                        && !panel.becomesKeyOnlyIfNeeded && panel.canBecomeKey && !panel.canBecomeMain,
+                        "Screenshot panel cannot accept keys while another application remains active")
+            try require(panel.collectionBehavior.contains([.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications]),
+                        "Screenshot overlay cannot join other applications' fullscreen Spaces")
             for point in [CGPoint(x: 2, y: 2), CGPoint(x: root.bounds.maxX - 2, y: root.bounds.maxY - 2),
                           CGPoint(x: root.bounds.midX, y: root.bounds.midY)] {
                 try require(root.hitTest(root.convert(point, to: root.superview)) != nil, "Frozen overlay has an input hole")
             }
             window.makeKey(); window.makeFirstResponder(root)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            try require(selector.verificationWindows.count == windows.count, "Changing the key display cancelled selection")
             try require(window.firstResponder === root, "Screenshot does not own its window's keyboard responder")
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                guard let event = NSEvent.mouseEvent(with: type, location: CGPoint(x: 20, y: 100), modifierFlags: [],
+                    timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                    clickCount: 1, pressure: 1) else { throw SelectionUIFailure(description: "Cannot construct overlay click") }
+                window.sendEvent(event)
+            }
         }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        try require(NSWorkspace.shared.frontmostApplication?.processIdentifier == initialApplication
+                    && NSRunningApplication.current.isActive == initiallyRunningActive,
+                    "Clicking a screenshot overlay activated its application")
         NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        try require(selector.verificationWindows.count == windows.count,
+                    "Application inactivity cancelled a panel that still owns keyboard focus")
+
+        guard let parent = windows.last else { throw SelectionUIFailure(description: "Missing overlay for child-focus check") }
+        let child = SelectionWindow(contentRect: CGRect(x: parent.frame.minX + 20, y: parent.frame.minY + 100, width: 120, height: 90),
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        child.isReleasedWhenClosed = false
+        child.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications]
+        child.hidesOnDeactivate = false
+        parent.addChildWindow(child, ordered: .above)
+        defer { parent.removeChildWindow(child); child.orderOut(nil) }
+        child.makeKeyAndOrderFront(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        try require(child.isKeyWindow, "Child-focus fixture did not obtain keyboard focus")
+        try require(selector.verificationWindows.count == windows.count, "A child picker taking focus cancelled selection")
+        parent.makeKey()
+        parent.removeChildWindow(child)
+        child.orderOut(nil)
+        windows.forEach { $0.resignKey() }
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: parent)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
         try require(selector.verificationWindows.isEmpty && windows.allSatisfy { !$0.isVisible },
                     "Frozen screens remain while another app receives keyboard input")
         selector.verificationShowFrozenScreens(image)
         NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: NSApp)
         try require(selector.verificationWindows.isEmpty, "Display change leaves stale input coverage")
+        selector.verificationShowFrozenScreens(image)
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        try require(selector.verificationWindows.isEmpty, "Space change leaves the previous desktop frozen over the new one")
     }
 
     @MainActor private static func verifyFourModes(_ image: CGImage) throws {
@@ -1122,9 +1223,8 @@ private struct SelectionUIVerification {
         try scroll.routedGesture(from: point, to: point)
         try require(scroll.root.verificationHover == nil && scroll.root.verificationSelection == nil
             && scroll.actions.isEmpty, "Default scroll click still selects or starts the whole window")
-        try require(scroll.root.verificationEmptyHint?.contains("拖动框选正文") == true
-            && scroll.root.verificationEmptyHint?.contains("W 窗口框选") == true,
-            "Default scroll guidance omits body dragging or the explicit window entry")
+        try require(scroll.root.verificationEmptyHint == "拖动框选范围 · W 选择窗口 · Esc 取消",
+            "Default scroll guidance omits free selection or the explicit window entry")
         try scroll.routedGesture(from: body.origin, to: CGPoint(x: body.maxX, y: body.maxY))
         try require(scroll.root.verificationSelection == body && scroll.actions.isEmpty,
                     "Scroll drag did not preserve the exact body rectangle for confirmation")
@@ -1137,8 +1237,8 @@ private struct SelectionUIVerification {
         let explicit = SelectionUIFixture(source: image, candidates: [candidate], purpose: .scroll)
         try require(explicit.root.handleShortcut(explicit.key(13, characters: "w")),
                     "Explicit scroll window shortcut was removed")
-        try require(explicit.root.verificationEmptyHint?.contains("R 返回正文框选") == true,
-                    "Explicit window guidance omits the route back to body selection")
+        try require(explicit.root.verificationEmptyHint == "单击选择窗口 · R 自由框选 · Esc 取消",
+                    "Explicit window guidance omits the route back to free selection")
         explicit.root.mouseMoved(with: explicit.mouse(.mouseMoved, at: point))
         try require(explicit.root.verificationHover == candidate,
                     "Explicit scroll window selection no longer highlights its candidate")

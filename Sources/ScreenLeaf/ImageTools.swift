@@ -11,11 +11,16 @@ import Vision
 final class ImageToolsCoordinator {
     private var windows: [UUID: NSWindowController] = [:]
     private var pins: [UUID: ImageToolsPinController] = [:]
+    private var lastHiddenPinIDs: [UUID] = []
     private var ocrQueue = ImageToolsOCRQueue()
     private var ocrJobs: [UUID: ImageToolsOCRJob] = [:]
     var onPinStateChange: (() -> Void)?
 
     var hasPins: Bool { !pins.isEmpty }
+    var canTogglePins: Bool {
+        pins.values.contains { $0.window?.isVisible == true }
+            || lastHiddenPinIDs.contains { pins[$0] != nil }
+    }
     // New pins can be visible while older ones remain hidden.
     var arePinsHidden: Bool { hasPins && pins.values.allSatisfy { $0.window?.isVisible != true } }
 
@@ -62,6 +67,7 @@ final class ImageToolsCoordinator {
         let controllers = Array(windows.values) + Array(pins.values)
         windows.removeAll()
         pins.removeAll()
+        lastHiddenPinIDs.removeAll()
         controllers.forEach { $0.close() }
         onPinStateChange?()
     }
@@ -105,14 +111,25 @@ final class ImageToolsCoordinator {
     }
 
     func togglePins() {
-        guard !pins.isEmpty else { return }
-        let hidePins = !arePinsHidden
-        for controller in pins.values {
-            guard let window = controller.window else { continue }
-            if hidePins {
+        guard canTogglePins else { return }
+        let visible = pins.filter { $0.value.window?.isVisible == true }
+        if !visible.isEmpty {
+            // Remember only this hide operation, in front-to-back order. Older
+            // hidden groups must not join a later restore operation.
+            lastHiddenPinIDs = NSApp.orderedWindows.compactMap { window in
+                visible.first { $0.value.window === window }?.key
+            }
+            lastHiddenPinIDs += visible.keys.filter { !lastHiddenPinIDs.contains($0) }
+            for controller in visible.values {
+                guard let window = controller.window else { continue }
                 window.orderOut(nil)
                 WindowActivationCoordinator.shared.unregister(window)
-            } else {
+            }
+        } else {
+            let restoring = lastHiddenPinIDs
+            lastHiddenPinIDs.removeAll()
+            for id in restoring.reversed() {
+                guard let controller = pins[id], let window = controller.window else { continue }
                 if controller.isAnnotating { WindowActivationCoordinator.shared.register(window) }
                 window.orderFrontRegardless()
             }
@@ -132,6 +149,7 @@ final class ImageToolsCoordinator {
         pins[id] = controller
         controller.onClose = { [weak self] in
             guard let self, self.pins.removeValue(forKey: id) != nil else { return }
+            self.lastHiddenPinIDs.removeAll { $0 == id }
             self.onPinStateChange?()
         }
         controller.showWindow(nil)
@@ -283,6 +301,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
     }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    override var needsPanelToBecomeKey: Bool { true }
 
     init(image: CGImage) {
         source = image
@@ -1159,6 +1178,7 @@ private final class ImageToolsEditorController: NSWindowController, NSWindowDele
             toolbar.trailingActions = [actions.last!]
         }
         controls.onUpdate = { [weak self] in self?.layoutEditor() }
+        toolbar.onDisplayMetricsChanged = { [weak self] in self?.layoutEditor() }
         canvas.onChange = { [weak self] in self?.controls.refresh(); self?.layoutEditor() }
         controls.choose(tool: .arrow)
         NotificationCenter.default.addObserver(self, selector: #selector(updateZoom),
@@ -1168,6 +1188,11 @@ private final class ImageToolsEditorController: NSWindowController, NSWindowDele
 
     private func layoutEditor() {
         guard let content = window?.contentView, controls != nil else { return }
+        let backingScale = window?.backingScaleFactor ?? 2
+        toolbar.configure(forBackingScaleFactor: backingScale)
+        controls.configureToolbar(forBackingScaleFactor: backingScale)
+        toolbar.prepareItems(actions)
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: toolbar.metrics.parameterSize, weight: .medium)
         let usableWidth = max(40, content.bounds.width - 24)
         toolbar.rows = controls.rows(appendingActions: actions, maxWidth: usableWidth)
         let size = toolbar.arrange(maxWidth: usableWidth)
@@ -1314,6 +1339,7 @@ final class InlineAnnotationView: NSView {
                     SelectionButton.confirmation(toolTip: completionHint) { [weak self] in self?.complete() }]
         toolbar.trailingActions = Array(actions.suffix(2))
         controls.onUpdate = { [weak self] in self?.refresh() }
+        toolbar.onDisplayMetricsChanged = { [weak self] in self?.refresh() }
         canvas.onChange = { [weak self] in self?.controls.refresh(); self?.refresh() }
         canvas.onCancel = { [weak self] in self?.onCancel?() }
         controls.choose(tool: .arrow)
@@ -1327,10 +1353,18 @@ final class InlineAnnotationView: NSView {
         needsDisplay = true
     }
     private func refresh() { needsLayout = true; layoutSubtreeIfNeeded() }
+    private func configureToolbarMetrics(backingScaleFactor: CGFloat? = nil) {
+        let backingScale = backingScaleFactor ?? window?.backingScaleFactor ?? 2
+        toolbar.configure(forBackingScaleFactor: backingScale)
+        controls.configureToolbar(forBackingScaleFactor: backingScale)
+        toolbar.prepareItems(actions)
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: toolbar.metrics.parameterSize, weight: .medium)
+    }
     override func layout() {
         super.layout()
         guard !arranging, controls != nil else { return }
         arranging = true; defer { arranging = false }
+        configureToolbarMetrics()
         let usableWidth = max(40, bounds.width - 16)
         toolbar.rows = controls.rows(appendingActions: actions, maxWidth: usableWidth)
         let size = toolbar.arrange(maxWidth: usableWidth)
@@ -1362,7 +1396,8 @@ final class InlineAnnotationView: NSView {
         setZoom(zoom)
         scrollTo(CGPoint(x: CGFloat(canvas.source.width) / 2, y: CGFloat(canvas.source.height) / 2))
     }
-    func preferredWindowSize(maximum: CGSize) -> CGSize {
+    func preferredWindowSize(maximum: CGSize, backingScaleFactor: CGFloat? = nil) -> CGSize {
+        configureToolbarMetrics(backingScaleFactor: backingScaleFactor)
         let usableWidth = max(40, maximum.width - 16)
         toolbar.rows = controls.rows(appendingActions: actions, maxWidth: usableWidth)
         let toolbarSize = toolbar.arrange(maxWidth: usableWidth)
@@ -1431,10 +1466,59 @@ final class InlineAnnotationView: NSView {
     }
 }
 
+/// Opt-in diagnostics for the development artifact only. The log contains no
+/// image/text content, keyboard input, or pointer coordinates.
+@MainActor
+private enum ImageToolsPinGestureDiagnostics {
+    static let enabled = Bundle.main.bundleIdentifier == "dev.screenleaf.development"
+        && Bundle.main.object(forInfoDictionaryKey: "PatchPinGestureDiagnosticsEnabled") as? Bool == true
+    static let eventMask: NSEvent.EventTypeMask = [.scrollWheel, .magnify, .beginGesture, .endGesture, .smartMagnify, .gesture]
+    private static var lineCount = 0
+    private static let output: FileHandle? = {
+        guard enabled else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("patch-pin-gestures.log")
+        guard FileManager.default.createFile(atPath: url.path, contents: Data()) else { return nil }
+        return try? FileHandle(forWritingTo: url)
+    }()
+
+    static func accepts(_ event: NSEvent) -> Bool {
+        switch event.type {
+        case .scrollWheel, .magnify, .beginGesture, .endGesture, .smartMagnify, .gesture: return true
+        default: return false
+        }
+    }
+
+    static func record(_ stage: String, event: NSEvent? = nil, window: NSWindow?,
+                       pointerInside: Bool? = nil, before: CGFloat? = nil, after: CGFloat? = nil) {
+        guard enabled, lineCount < 2_000, let output else { return }
+        var fields = ["stage=\(stage)", "window=\(window?.windowNumber ?? 0)", "isKey=\(window?.isKeyWindow ?? false)"]
+        if let event, accepts(event) {
+            fields += ["time=\(event.timestamp)", "type=\(event.type.rawValue)", "target=\(event.windowNumber)",
+                       "matchesWindow=\(event.window === window)", "phase=\(event.phase.rawValue)",
+                       "momentum=\(event.momentumPhase.rawValue)"]
+            if event.type == .scrollWheel {
+                fields += ["precise=\(event.hasPreciseScrollingDeltas)", "deltaY=\(event.scrollingDeltaY)"]
+            } else if event.type == .magnify { fields.append("magnification=\(event.magnification)") }
+        }
+        if let pointerInside { fields.append("pointerInside=\(pointerInside)") }
+        if let before { fields.append("scaleBefore=\(before)") }
+        if let after { fields.append("scaleAfter=\(after)") }
+        lineCount += 1
+        try? output.write(contentsOf: Data((fields.joined(separator: " ") + "\n").utf8))
+    }
+}
+
 private final class ImageToolsPinPanel: NSPanel {
     var onKeyEquivalent: ((NSEvent) -> Bool)?
+    var diagnosesImageGestures = false
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    override func sendEvent(_ event: NSEvent) {
+        if diagnosesImageGestures && ImageToolsPinGestureDiagnostics.accepts(event) {
+            ImageToolsPinGestureDiagnostics.record("window", event: event, window: self)
+        }
+        super.sendEvent(event)
+    }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if onKeyEquivalent?(event) == true { return true }
         return super.performKeyEquivalent(with: event)
@@ -1444,6 +1528,9 @@ private final class ImageToolsPinPanel: NSPanel {
 @MainActor
 private final class ImageToolsPinImageView: NSView {
     var image: CGImage
+    /// Full image geometry in this bounded, flipped view. It may extend offscreen.
+    var imageRect: CGRect { didSet { needsDisplay = true } }
+    var cornerRadius: CGFloat = 0 { didSet { needsDisplay = true } }
     var onMenu: (() -> NSMenu)?
     var onZoom: ((CGFloat, CGPoint) -> Void)?
     var onMouseDown: ((NSEvent) -> Void)?
@@ -1455,13 +1542,23 @@ private final class ImageToolsPinImageView: NSView {
     override var needsPanelToBecomeKey: Bool { true }
     init(image: CGImage, size: CGSize) {
         self.image = image
+        imageRect = CGRect(origin: .zero, size: size)
         super.init(frame: CGRect(origin: .zero, size: size))
         toolTip = L("拖动移动 · 滚轮或捏合缩放 · 右键操作")
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func draw(_ dirtyRect: NSRect) {
-        NSImage(cgImage: image, size: bounds.size).draw(in: bounds, from: .zero,
-            operation: .copy, fraction: 1, respectFlipped: true, hints: nil)
+        guard let mapping = ImageToolsPinImageGeometry.crop(imageSize: CGSize(width: image.width, height: image.height),
+                                                            imageRect: imageRect, visible: bounds),
+              let crop = image.cropping(to: mapping.pixels) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        if cornerRadius > 0 {
+            NSBezierPath(roundedRect: imageRect, xRadius: cornerRadius, yRadius: cornerRadius).addClip()
+        }
+        NSImage(cgImage: crop, size: mapping.destination.size).draw(in: mapping.destination, from: .zero,
+            operation: .copy, fraction: 1, respectFlipped: true,
+            hints: [.interpolation: NSImageInterpolation.high])
     }
     override func mouseDown(with event: NSEvent) {
         onMouseDown?(event)
@@ -1470,14 +1567,12 @@ private final class ImageToolsPinImageView: NSView {
     override func mouseUp(with event: NSEvent) { onMouseUp?(event) }
     override func menu(for event: NSEvent) -> NSMenu? { onMenu?() }
     override func scrollWheel(with event: NSEvent) {
-        if event.hasPreciseScrollingDeltas && !event.modifierFlags.contains(.option) {
-            super.scrollWheel(with: event)
-        } else {
-            let speed: CGFloat = event.hasPreciseScrollingDeltas ? 0.01 : 0.08
-            onZoom?(exp(max(-40, min(40, event.scrollingDeltaY)) * speed), convert(event.locationInWindow, from: nil))
-        }
+        ImageToolsPinGestureDiagnostics.record("image-view", event: event, window: window)
+        let speed: CGFloat = event.hasPreciseScrollingDeltas ? 0.01 : 0.08
+        onZoom?(exp(max(-40, min(40, event.scrollingDeltaY)) * speed), convert(event.locationInWindow, from: nil))
     }
     override func magnify(with event: NSEvent) {
+        ImageToolsPinGestureDiagnostics.record("image-view", event: event, window: window)
         onZoom?(max(0.1, 1 + event.magnification), convert(event.locationInWindow, from: nil))
     }
 }
@@ -1528,16 +1623,18 @@ private final class ImageToolsPinSurface: NSView {
     var displaysImage = false { didSet { needsDisplay = true } }
     var showsBorder = false { didSet { needsDisplay = true } }
     var selected = false { didSet { needsDisplay = true } }
+    var imageBorderRect: CGRect? { didSet { needsDisplay = true } }
     override var isOpaque: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
         if !displaysImage {
             NSColor.textBackgroundColor.setFill()
-            NSBezierPath(rect: bounds).fill()
+            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
         if showsBorder {
             ToolbarPalette.border.setStroke()
             let width = ImageToolsWindowBorder.width
-            let edge = NSBezierPath(rect: bounds.insetBy(dx: width / 2, dy: width / 2))
+            let rect = imageBorderRect ?? bounds.insetBy(dx: width / 2, dy: width / 2)
+            let edge = NSBezierPath(roundedRect: rect, xRadius: 5.5, yRadius: 5.5)
             edge.lineWidth = width
             edge.stroke()
         }
@@ -1550,6 +1647,8 @@ private final class ImageToolsPinSurface: NSView {
 private final class ImageToolsPinSelectionOutline: NSView {
     private var opacity: CGFloat = 0
     private var fadeTimer: Timer?
+    var selectionRect: CGRect? { didSet { needsDisplay = true } }
+    var cornerRadius: CGFloat = 0
     override var isOpaque: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -1578,15 +1677,18 @@ private final class ImageToolsPinSelectionOutline: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard opacity > 0 else { return }
-        let width = min(1.5, min(bounds.width, bounds.height) / 4)
+        let rect = selectionRect ?? bounds
+        let width = min(1.5, min(rect.width, rect.height) / 4)
         ToolbarPalette.accent.withAlphaComponent(opacity).setStroke()
-        let edge = NSBezierPath(rect: bounds.insetBy(dx: width / 2, dy: width / 2))
+        let edge = NSBezierPath(roundedRect: rect.insetBy(dx: width / 2, dy: width / 2),
+            xRadius: max(0, cornerRadius - width / 2), yRadius: max(0, cornerRadius - width / 2))
         edge.lineWidth = width
         edge.stroke()
         // A fine inner light edge keeps the selection visible over dark or blue images.
-        if min(bounds.width, bounds.height) >= 8 {
+        if min(rect.width, rect.height) >= 8 {
             NSColor.white.withAlphaComponent(opacity * 0.85).setStroke()
-            let inner = NSBezierPath(rect: bounds.insetBy(dx: width + 0.25, dy: width + 0.25))
+            let inner = NSBezierPath(roundedRect: rect.insetBy(dx: width + 0.25, dy: width + 0.25),
+                xRadius: max(0, cornerRadius - width - 0.25), yRadius: max(0, cornerRadius - width - 0.25))
             inner.lineWidth = 0.5
             inner.stroke()
         }
@@ -1618,6 +1720,56 @@ private final class ImageToolsPinDragHandle: NSView {
 }
 
 /// AppKit screen coordinates, with a stable target display for all pins in one batch.
+// PIN_IMAGE_GEOMETRY_BEGIN
+/// The whole image retains its aspect ratio. Only its on-desktop portion gets a
+/// native window/backing store; clipping never changes the stored source bitmap.
+enum ImageToolsPinImageGeometry {
+    static func initialAvailableSize(visible: CGSize) -> CGSize {
+        // Leave room for the frame; the initial card uses at most half of each display dimension.
+        CGSize(width: max(1, visible.width / 2 - 2), height: max(1, visible.height / 2 - 2))
+    }
+    static func naturalSize(pixels: CGSize, sourceScale: CGFloat?) -> CGSize {
+        let factor = sourceScale.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 1
+        return CGSize(width: pixels.width / factor, height: pixels.height / factor)
+    }
+    static func fitScale(size: CGSize, available: CGSize) -> CGFloat {
+        guard size.width > 0, size.height > 0 else { return 1 }
+        return min(1, max(0.0001, min(available.width / size.width, available.height / size.height)))
+    }
+    static func desktopBounds(_ frames: [CGRect]) -> CGRect {
+        frames.filter { !$0.isEmpty && !$0.isNull }.reduce(CGRect.null) { $0.union($1) }
+    }
+    static func hostFrame(image: CGRect, inset: CGFloat, desktop: CGRect) -> CGRect {
+        image.insetBy(dx: -inset, dy: -inset).intersection(desktop).integral
+    }
+    static func zoomed(_ rect: CGRect, factor: CGFloat, anchor: CGPoint) -> CGRect {
+        CGRect(x: anchor.x + (rect.minX - anchor.x) * factor,
+               y: anchor.y + (rect.minY - anchor.y) * factor,
+               width: rect.width * factor, height: rect.height * factor)
+    }
+    static func keepingReachable(_ rect: CGRect, within visible: CGRect) -> CGRect {
+        // A large image can move past any screen edge, while retaining a handle.
+        let gripX = min(32, rect.width), gripY = min(32, rect.height)
+        return CGRect(x: min(max(rect.minX, visible.minX + gripX - rect.width), visible.maxX - gripX),
+                      y: min(max(rect.minY, visible.minY + gripY - rect.height), visible.maxY - gripY),
+                      width: rect.width, height: rect.height)
+    }
+    static func crop(imageSize: CGSize, imageRect: CGRect, visible: CGRect) -> (pixels: CGRect, destination: CGRect)? {
+        let area = imageRect.intersection(visible)
+        guard !area.isNull, !area.isEmpty, imageRect.width > 0, imageRect.height > 0 else { return nil }
+        let x = imageSize.width / imageRect.width, y = imageSize.height / imageRect.height
+        // Include a source-pixel margin so interpolation does not introduce seams
+        // at the bounded window edge. The native context clips the extra pixels.
+        let pixels = CGRect(x: (area.minX - imageRect.minX) * x, y: (area.minY - imageRect.minY) * y,
+                            width: area.width * x, height: area.height * y)
+            .insetBy(dx: -2, dy: -2).integral.intersection(CGRect(origin: .zero, size: imageSize))
+        guard !pixels.isEmpty else { return nil }
+        return (pixels, CGRect(x: imageRect.minX + pixels.minX / x, y: imageRect.minY + pixels.minY / y,
+                               width: pixels.width / x, height: pixels.height / y))
+    }
+}
+// PIN_IMAGE_GEOMETRY_END
+
 enum ImageToolsPinPlacement {
     static func avoidingStack(_ preferred: CGRect, visible: CGRect, occupied: [CGRect]) -> CGRect {
         func hasSameCorner(_ candidate: CGRect) -> Bool {
@@ -1691,13 +1843,25 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     private var textColorButtons: [NSButton] = []
     private let preferences: PreferencesStore?
     private var baseSize = CGSize(width: 440, height: 240)
+    private var textViewportSize: CGSize?
     private var scale: CGFloat = 1
     private var imagePixelScale: CGFloat?
+    private var imageFrame: CGRect?
+    private var lastPresentedHostFrame: CGRect?
+    private var isUpdatingImageHost = false
+    private var beforeEditingImageFrame: CGRect?
+    private var minimumImageScale: CGFloat = 0.05
+    private var hudScreenPoint: CGPoint?
     // Recompute only when the source image changes, never while zooming or selecting.
     private var imageHasTransparency = false
     private let initialAnchor: NSPoint
     private let initialBatchIndex: Int
     private var initialVisibleArea: CGRect?
+    private var gestureDiagnosticMonitor: Any?
+
+    deinit {
+        if let gestureDiagnosticMonitor { NSEvent.removeMonitor(gestureDiagnosticMonitor) }
+    }
 
     convenience init(image: CGImage, pixelScale: CGFloat? = nil, preferences: PreferencesStore? = nil,
                      anchor: NSPoint? = nil, batchIndex: Int = 0) {
@@ -1705,7 +1869,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         imagePixelScale = pixelScale
         let size = Self.initialImageSize(image, pixelScale: pixelScale)
         baseSize = size
-        let view = ImageToolsPinImageView(image: image, size: size)
+        let view = ImageToolsPinImageView(image: image, size: .zero)
         imageView = view
         imageHasTransparency = ImageToolsUI.hasTransparentPixels(image)
         surface.displaysImage = true
@@ -1715,31 +1879,62 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         view.onMouseDown = { [weak self] in self?.beginMoving(with: $0) }
         view.onMouseDragged = { [weak self] in self?.continueMoving(with: $0) }
         view.onMouseUp = { [weak self] in self?.endMoving(with: $0) }
-        scroll.documentView = view
+        scroll.isHidden = true
+        surface.addSubview(view, positioned: .below, relativeTo: selectionOutline)
+        let visible = visibleArea()
+        scale = ImageToolsPinImageGeometry.fitScale(size: size,
+            available: ImageToolsPinImageGeometry.initialAvailableSize(visible: visible.size))
+        minimumImageScale = min(0.2, scale / 4)
+        let inset = presentationInset
+        let initialSize = CGSize(width: size.width * scale + inset * 2, height: size.height * scale + inset * 2)
+        imageFrame = ImageToolsPinPlacement.frame(size: initialSize, anchor: initialAnchor,
+            visible: visible, batchIndex: initialBatchIndex).insetBy(dx: inset, dy: inset)
+        hudScreenPoint = initialAnchor
         configureHUD()
         updateScale()
         placeInitially()
+        installGestureDiagnostics()
+    }
+
+    private func installGestureDiagnostics() {
+        guard ImageToolsPinGestureDiagnostics.enabled, gestureDiagnosticMonitor == nil else { return }
+        (window as? ImageToolsPinPanel)?.diagnosesImageGestures = true
+        ImageToolsPinGestureDiagnostics.record("attached", window: window, after: scale)
+        gestureDiagnosticMonitor = NSEvent.addLocalMonitorForEvents(matching: ImageToolsPinGestureDiagnostics.eventMask) { [weak self] event in
+            guard let self, let window = self.window else { return event }
+            let pointerInside = window.isVisible && window.frame.contains(NSEvent.mouseLocation)
+            if event.window === window || pointerInside {
+                ImageToolsPinGestureDiagnostics.record("app", event: event, window: window, pointerInside: pointerInside)
+            }
+            return event
+        }
     }
 
     convenience init(text: String, preferences: PreferencesStore? = nil, anchor: NSPoint? = nil, batchIndex: Int = 0) {
         self.init(title: L("Patch · 文字贴图"), preferences: preferences, anchor: anchor ?? NSEvent.mouseLocation, batchIndex: batchIndex)
+        baseSize.width = min(baseSize.width, ImageToolsPinImageGeometry.initialAvailableSize(visible: visibleArea().size).width)
         let view = ImageToolsPinTextView(frame: CGRect(origin: .zero, size: baseSize))
         view.isRichText = true
         view.importsGraphics = false; view.allowsUndo = true
         view.isEditable = false; view.isSelectable = false
-        view.font = .systemFont(ofSize: 18)
+        view.font = .systemFont(ofSize: 16)
         view.textColor = .labelColor
         view.backgroundColor = .textBackgroundColor
-        view.textContainerInset = CGSize(width: 12, height: 12)
+        view.textContainerInset = CGSize(width: 16, height: 16)
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.widthTracksTextView = false
         view.textContainer?.heightTracksTextView = false
-        view.textContainer?.containerSize = CGSize(width: baseSize.width - 24, height: CGFloat.greatestFiniteMagnitude)
+        view.textContainer?.containerSize = CGSize(width: baseSize.width - 32, height: CGFloat.greatestFiniteMagnitude)
         view.isHorizontallyResizable = false; view.isVerticallyResizable = true
         view.autoresizingMask = []
         view.minSize = CGSize(width: baseSize.width, height: 100)
         view.maxSize = CGSize(width: baseSize.width, height: CGFloat.greatestFiniteMagnitude)
         view.string = text
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 3
+        view.defaultParagraphStyle = paragraph
+        view.textStorage?.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: (text as NSString).length))
+        view.typingAttributes[.paragraphStyle] = paragraph
         view.delegate = self
         view.toolTip = L("拖动移动 · 双击编辑文字 · 双指滚动 · 捏合缩放")
         view.onBeginEditing = { [weak self] in self?.setTextEditing(true) }
@@ -1750,11 +1945,17 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         view.onMouseDragged = { [weak self] in self?.continueMoving(with: $0) }
         view.onMouseUp = { [weak self] in self?.endMoving(with: $0) }
         textView = view
+        surface.wantsLayer = true
+        surface.layer?.cornerRadius = 6
+        surface.layer?.masksToBounds = true
+        selectionOutline.cornerRadius = 6
         scroll.documentView = view
         scroll.allowsMagnification = true
         scroll.minMagnification = 0.2; scroll.maxMagnification = 4
         configureHUD()
         resizeText()
+        textViewportSize = CGSize(width: baseSize.width,
+            height: ImageToolsPinImageGeometry.initialAvailableSize(visible: visibleArea().size).height)
         updateScale()
         placeInitially()
     }
@@ -1766,7 +1967,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         initialVisibleArea = ImageToolsPinPlacement.screenIndex(for: anchor, frames: screens.map(\.frame))
             .map { screens[$0].visibleFrame } ?? NSScreen.main?.visibleFrame
         let panel = ImageToolsPinPanel(contentRect: CGRect(x: 0, y: 0, width: 440, height: 240),
-            styleMask: [.borderless], backing: .buffered, defer: false)
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = title
         panel.isReleasedWhenClosed = false
         panel.isOpaque = false
@@ -1776,7 +1977,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         panel.becomesKeyOnlyIfNeeded = false
         panel.level = .floating
         panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications]
         panel.minSize = CGSize(width: 60, height: 52)
         super.init(window: panel)
         panel.delegate = self
@@ -1798,6 +1999,8 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             name: NSApplication.didResignActiveNotification, object: NSApp)
         NotificationCenter.default.addObserver(self, selector: #selector(applicationActivated),
             name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        NotificationCenter.default.addObserver(self, selector: #selector(displayConfigurationChanged),
+            name: NSApplication.didChangeScreenParametersNotification, object: NSApp)
         panel.onKeyEquivalent = { [weak self] event in
             guard let self else { return false }
             if let editor = self.inlineEditor { return editor.handleKeyEquivalent(event) }
@@ -1820,6 +2023,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
 
     private func placeInitially() {
         guard let window else { return }
+        if imageView != nil { initialVisibleArea = nil; layoutHUD(); return }
         let visible = visibleArea()
         // Layout first: text wrapping and image scale determine the actual viewport size.
         window.setFrame(ImageToolsPinPlacement.frame(size: window.frame.size, anchor: initialAnchor,
@@ -1831,20 +2035,20 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     func avoidInitialOverlap(with occupied: [CGRect]) {
         guard let window else { return }
         let frame = ImageToolsPinPlacement.avoidingStack(window.frame, visible: visibleArea(), occupied: occupied)
+        if let imageFrame {
+            self.imageFrame = imageFrame.offsetBy(dx: frame.minX - window.frame.minX, dy: frame.minY - window.frame.minY)
+            updateScale()
+            return
+        }
         window.setFrameOrigin(frame.origin)
         layoutHUD()
     }
 
     private static func initialImageSize(_ image: CGImage, pixelScale: CGFloat? = nil) -> CGSize {
-        // Captures keep native pixels for export, but occupy their original screen points.
-        // Use the source display scale, even if the pin opens on another display.
-        if let pixelScale, pixelScale.isFinite, pixelScale > 0 {
-            return CGSize(width: CGFloat(image.width) / pixelScale, height: CGFloat(image.height) / pixelScale)
-        }
-        let factor = min(1, min(560 / CGFloat(image.width), 500 / CGFloat(image.height)))
-        return CGSize(width: CGFloat(image.width) * factor, height: CGFloat(image.height) * factor)
+        ImageToolsPinImageGeometry.naturalSize(pixels: CGSize(width: image.width, height: image.height), sourceScale: pixelScale)
     }
     private func configureHUD() {
+        toolbar.onDisplayMetricsChanged = { [weak self] in self?.layoutHUD() }
         let handle = ImageToolsPinDragHandle()
         handle.toolTip = L("拖动移动贴图")
         handle.setAccessibilityLabel(L("移动贴图"))
@@ -1897,16 +2101,16 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         panel.isReleasedWhenClosed = false
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
         panel.level = .floating
-        panel.hidesOnDeactivate = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications]
         panel.contentView = toolbar
         hud = panel
         layoutHUD()
     }
     private func selectPin() {
-        // First clicks on a floating panel can arrive while the application is inactive.
+        // A nonactivating panel can take keyboard focus in another app's full-screen
+        // Space without bringing Patch's normal windows (and their Space) forward.
         if window?.isVisible == true {
-            NSApp.activate(ignoringOtherApps: true)
             window?.makeKeyAndOrderFront(nil)
             window?.makeFirstResponder(inlineEditor?.canvas ?? imageView ?? textView)
         }
@@ -1927,8 +2131,15 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         }
         updateScale()
     }
-    @objc private func applicationDeactivated(_ notification: Notification) { setSelected(false) }
+    @objc private func applicationDeactivated(_ notification: Notification) {
+        setSelected(window?.isKeyWindow == true)
+    }
     @objc private func applicationActivated(_ notification: Notification) { if selected { layoutHUD() } }
+    @objc private func displayConfigurationChanged(_ notification: Notification) {
+        guard imageView != nil, inlineEditor == nil else { return }
+        if let point = hudScreenPoint, !NSScreen.screens.contains(where: { $0.frame.contains(point) }) { hudScreenPoint = nil }
+        updateScale()
+    }
     private func screenPoint(for event: NSEvent) -> CGPoint? {
         (event.window ?? window)?.convertPoint(toScreen: event.locationInWindow)
     }
@@ -1937,36 +2148,48 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         guard let point = screenPoint(for: event) else { return }
         selectPin()
         guard let window else { return }
-        dragOrigin = (point, window.frame)
+        dragOrigin = (point, inlineEditor == nil ? (imageFrame ?? window.frame) : window.frame)
     }
     private func continueMoving(with event: NSEvent) {
         guard let dragOrigin, let point = screenPoint(for: event), let window else { return }
         let requested = dragOrigin.frame.offsetBy(dx: point.x - dragOrigin.point.x, dy: point.y - dragOrigin.point.y)
         // Choose the destination display by the pointer, including displays with negative origins.
         let visible = NSScreen.screens.first { $0.frame.contains(point) }?.visibleFrame ?? visibleArea()
+        if imageView != nil, inlineEditor == nil {
+            hudScreenPoint = point
+            imageFrame = ImageToolsPinImageGeometry.keepingReachable(requested, within: visible)
+            updateScale()
+            return
+        }
         window.setFrame(Self.frameFittingVisibleArea(requested, in: visible), display: true)
         layoutHUD()
     }
     private func endMoving(with event: NSEvent) { continueMoving(with: event); dragOrigin = nil }
     private func visibleArea() -> CGRect {
-        initialVisibleArea ?? window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
+        if let initialVisibleArea { return initialVisibleArea }
+        if imageView != nil, let point = hudScreenPoint,
+           let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) { return screen.visibleFrame }
+        return window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
     }
     private func layoutHUD() {
         guard inlineEditor == nil, let window, let hud else { return }
+        toolbar.configure(forBackingScaleFactor: hud.screen?.backingScaleFactor ?? window.backingScaleFactor)
         let visible = visibleArea()
         let size = toolbar.arrange(maxWidth: max(100, min(480, visible.width - 24)))
         hud.setContentSize(size)
         let gap: CGFloat = 6
+        let intersected = window.frame.intersection(visible)
+        let pin = imageView != nil && !intersected.isEmpty && !intersected.isNull ? intersected : window.frame
         let candidates = [
-            CGRect(x: window.frame.midX - size.width / 2, y: window.frame.minY - gap - size.height, width: size.width, height: size.height),
-            CGRect(x: window.frame.midX - size.width / 2, y: window.frame.maxY + gap, width: size.width, height: size.height),
-            CGRect(x: window.frame.maxX + gap, y: window.frame.midY - size.height / 2, width: size.width, height: size.height),
-            CGRect(x: window.frame.minX - gap - size.width, y: window.frame.midY - size.height / 2, width: size.width, height: size.height)
+            CGRect(x: pin.midX - size.width / 2, y: pin.minY - gap - size.height, width: size.width, height: size.height),
+            CGRect(x: pin.midX - size.width / 2, y: pin.maxY + gap, width: size.width, height: size.height),
+            CGRect(x: pin.maxX + gap, y: pin.midY - size.height / 2, width: size.width, height: size.height),
+            CGRect(x: pin.minX - gap - size.width, y: pin.midY - size.height / 2, width: size.width, height: size.height)
         ]
         let frame = candidates.map { Self.frameFittingVisibleArea($0, in: visible) }.first { !$0.intersects(window.frame) }
             ?? Self.frameFittingVisibleArea(candidates[0], in: visible)
         hud.setFrame(frame, display: true)
-        if selected && window.isVisible && NSApp.isActive {
+        if selected && window.isVisible && window.isKeyWindow {
             hud.order(.above, relativeTo: window.windowNumber)
         } else { hud.orderOut(nil) }
     }
@@ -1998,14 +2221,16 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
 
     func focusTextIfNeeded() {
         guard let textView else { return }
-        NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(textView)
         setSelected(true)
     }
     @objc private func zoomOut() { changeScale(by: 1 / 1.25) }
     @objc private func zoomIn() { changeScale(by: 1.25) }
-    @objc private func resetZoom() { scale = 1; updateScale() }
+    @objc private func resetZoom() {
+        if imageView != nil { changeScale(by: 1 / scale) }
+        else { scale = 1; updateScale() }
+    }
     @objc private func closePin() { close() }
     @objc private func toggleMoveMode() { if let textView { setTextEditing(textView.isMoving) } }
     private func setTextEditing(_ editing: Bool) {
@@ -2036,7 +2261,24 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         textColorButtons.forEach { $0.isEnabled = (textView?.selectedRange().length ?? 0) > 0 }
     }
     private func changeScale(by factor: CGFloat, anchoredAt point: CGPoint? = nil) {
+        let previousScale = scale
+        defer {
+            if imageView != nil {
+                ImageToolsPinGestureDiagnostics.record("scale", event: NSApp.currentEvent, window: window,
+                    before: previousScale, after: scale)
+            }
+        }
         guard factor.isFinite, factor > 0 else { return }
+        if let imageView, let imageFrame, let window {
+            let next = min(4, max(minimumImageScale, scale * factor))
+            let anchor = point.map { window.convertPoint(toScreen: imageView.convert($0, to: nil)) }
+                ?? CGPoint(x: window.frame.midX, y: window.frame.midY)
+            hudScreenPoint = anchor
+            self.imageFrame = ImageToolsPinImageGeometry.zoomed(imageFrame, factor: next / scale, anchor: anchor)
+            scale = next
+            updateScale()
+            return
+        }
         let document: NSView? = imageView ?? textView
         let oldSize = document?.frame.size ?? .zero
         let anchor = point ?? CGPoint(x: oldSize.width / 2, y: oldSize.height / 2)
@@ -2061,7 +2303,9 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     }
     private func updateScale() {
         guard inlineEditor == nil else { return }
-        let scaledSize = CGSize(width: baseSize.width * scale, height: baseSize.height * scale)
+        if imageView != nil { updateImagePresentation(); return }
+        let viewport = textViewportSize.map { CGSize(width: baseSize.width, height: min(baseSize.height, $0.height)) } ?? baseSize
+        let scaledSize = CGSize(width: viewport.width * scale, height: viewport.height * scale)
         // Native borderless windows round up to whole points; align the image
         // with that geometry so small zoom levels do not leave an empty strip.
         let size = imageView == nil ? scaledSize
@@ -2086,16 +2330,54 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         refreshPinPresentation()
         layoutHUD()
     }
+    private func updateImagePresentation() {
+        guard let window, let imageView, var rect = imageFrame else { return }
+        let size = CGSize(width: baseSize.width * scale, height: baseSize.height * scale)
+        if rect.size != size { rect = CGRect(x: rect.minX, y: rect.maxY - size.height, width: size.width, height: size.height) }
+        let screens = NSScreen.screens.map(\.visibleFrame)
+        let desktop = ImageToolsPinImageGeometry.desktopBounds(screens.isEmpty ? [visibleArea()] : screens)
+        if !screens.contains(where: { !$0.intersection(rect).isEmpty && !$0.intersection(rect).isNull }) {
+            rect = ImageToolsPinImageGeometry.keepingReachable(rect, within: visibleArea())
+        }
+        imageFrame = rect
+        let host = ImageToolsPinImageGeometry.hostFrame(image: rect, inset: presentationInset, desktop: desktop)
+        guard !host.isNull, !host.isEmpty else { return }
+        isUpdatingImageHost = true
+        window.setFrame(host, display: false)
+        lastPresentedHostFrame = window.frame
+        isUpdatingImageHost = false
+        imageView.frame = surface.bounds
+        imageView.imageRect = CGRect(x: rect.minX - host.minX, y: host.maxY - rect.maxY,
+                                     width: rect.width, height: rect.height)
+        scroll.isHidden = true
+        refreshPinPresentation()
+        layoutHUD()
+    }
     private var hasFramedContent: Bool { textView != nil || (imageView != nil && !imageHasTransparency) }
     private var presentationInset: CGFloat { hasFramedContent ? ImageToolsWindowBorder.width : 0 }
     private func layoutPinSurface() {
         guard inlineEditor == nil else { return }
+        if let imageView, let imageFrame, let window {
+            imageView.frame = surface.bounds
+            imageView.imageRect = CGRect(x: imageFrame.minX - window.frame.minX, y: window.frame.maxY - imageFrame.maxY,
+                                         width: imageFrame.width, height: imageFrame.height)
+            let local = imageFrame.offsetBy(dx: -window.frame.minX, dy: -window.frame.minY)
+            selectionOutline.frame = surface.bounds
+            selectionOutline.selectionRect = local
+            surface.imageBorderRect = local.insetBy(dx: -presentationInset / 2, dy: -presentationInset / 2)
+            return
+        }
+        selectionOutline.selectionRect = nil
+        surface.imageBorderRect = nil
         scroll.frame = surface.bounds.insetBy(dx: presentationInset, dy: presentationInset)
         selectionOutline.frame = scroll.frame
     }
     private func refreshPinPresentation() {
         surface.showsBorder = inlineEditor == nil && hasFramedContent
-        window?.hasShadow = inlineEditor != nil || hasFramedContent
+        imageView?.cornerRadius = imageHasTransparency ? 0 : 5
+        selectionOutline.cornerRadius = textView != nil ? 6 : (imageHasTransparency ? 0 : 5)
+        let fullyVisible = imageFrame.map { window?.frame.contains($0.insetBy(dx: -presentationInset, dy: -presentationInset)) == true } ?? true
+        window?.hasShadow = inlineEditor != nil || (hasFramedContent && fullyVisible)
         layoutPinSurface()
     }
     private static func frameFittingVisibleArea(_ requested: CGRect, in visible: CGRect) -> CGRect {
@@ -2107,6 +2389,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         guard inlineEditor == nil, let imageView, let window else { return }
         WindowActivationCoordinator.shared.register(window)
         beforeEditingFrame = window.frame
+        beforeEditingImageFrame = imageFrame
         let handle = ImageToolsPinDragHandle()
         handle.toolTip = L("拖动移动贴图")
         handle.onMouseDown = { [weak self] in self?.beginMoving(with: $0) }
@@ -2118,9 +2401,12 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         refreshPinPresentation()
         editor.onComplete = { [weak self] image in self?.endInlineEditing(image: image) }
         editor.onCancel = { [weak self] in self?.endInlineEditing(image: nil) }
-        hud?.orderOut(nil); scroll.isHidden = true; selectionOutline.isHidden = true
-        let visible = visibleArea().insetBy(dx: 20, dy: 20)
-        let preferredWidth = editor.preferredWindowSize(maximum: visible.size).width
+        hud?.orderOut(nil); scroll.isHidden = true; imageView.isHidden = true; selectionOutline.isHidden = true
+        let screenArea = visibleArea()
+        let visible = screenArea.insetBy(dx: 20, dy: 20)
+        let backingScale = NSScreen.screens.first { $0.visibleFrame == screenArea }?.backingScaleFactor
+            ?? window.backingScaleFactor
+        let preferredWidth = editor.preferredWindowSize(maximum: visible.size, backingScaleFactor: backingScale).width
         let size = CGSize(width: preferredWidth,
                           height: min(visible.height, max(480, window.frame.height)))
         window.setFrame(Self.frameFittingVisibleArea(CGRect(x: window.frame.minX, y: window.frame.maxY - size.height,
@@ -2133,7 +2419,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     private func endInlineEditing(image: CGImage?) {
         if let window { WindowActivationCoordinator.shared.unregister(window) }
         inlineEditor?.removeFromSuperview(); inlineEditor = nil
-        scroll.isHidden = false; selectionOutline.isHidden = false
+        scroll.isHidden = imageView != nil; imageView?.isHidden = false; selectionOutline.isHidden = false
         if let image, let imageView {
             // Keep the original image's pixel-to-point scale when outside marks
             // expand the document, rather than stretching it into the old frame.
@@ -2148,9 +2434,12 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         }
         if let frame = beforeEditingFrame, let start = inlineWindowFrame, let window {
             let restored = frame.offsetBy(dx: window.frame.minX - start.minX, dy: window.frame.minY - start.minY)
-            window.setFrame(Self.frameFittingVisibleArea(restored, in: visibleArea()), display: true)
+            if let original = beforeEditingImageFrame {
+                imageFrame = original.offsetBy(dx: window.frame.minX - start.minX, dy: window.frame.minY - start.minY)
+            } else { window.setFrame(Self.frameFittingVisibleArea(restored, in: visibleArea()), display: true) }
         }
         beforeEditingFrame = nil
+        beforeEditingImageFrame = nil
         inlineWindowFrame = nil
         updateScale(); selectPin()
     }
@@ -2191,16 +2480,32 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     private func resizeText() {
         guard let textView, let container = textView.textContainer, let layout = textView.layoutManager else { return }
         layout.ensureLayout(for: container)
-        baseSize.height = max(120, layout.usedRect(for: container).height + 28)
+        baseSize.height = max(120, layout.usedRect(for: container).height + 36)
         textView.setFrameSize(baseSize)
     }
     func textDidChange(_ notification: Notification) { resizeText(); updateScale() }
     func windowDidBecomeKey(_ notification: Notification) { setSelected(true) }
     func windowDidResignKey(_ notification: Notification) { setSelected(false) }
-    func windowDidMove(_ notification: Notification) { layoutHUD() }
+    func windowDidMove(_ notification: Notification) {
+        // Window managers and macOS may move the bounded host without invoking
+        // our drag gesture. Keep the whole image at that new screen position.
+        if !isUpdatingImageHost, inlineEditor == nil, let imageFrame, let window,
+           let previous = lastPresentedHostFrame {
+            let dx = window.frame.minX - previous.minX, dy = window.frame.minY - previous.minY
+            if dx != 0 || dy != 0 {
+                self.imageFrame = imageFrame.offsetBy(dx: dx, dy: dy)
+                hudScreenPoint = nil
+                updateImagePresentation()
+            }
+        }
+        layoutHUD()
+    }
     func windowDidResize(_ notification: Notification) { layoutPinSurface(); layoutHUD() }
     func windowDidChangeScreen(_ notification: Notification) { layoutHUD() }
+    func windowDidChangeBackingProperties(_ notification: Notification) { imageView?.needsDisplay = true; layoutHUD() }
     func windowWillClose(_ notification: Notification) {
+        if let gestureDiagnosticMonitor { NSEvent.removeMonitor(gestureDiagnosticMonitor) }
+        gestureDiagnosticMonitor = nil
         setSelected(false)
         NotificationCenter.default.removeObserver(self)
         hud?.close(); hud = nil
@@ -2453,7 +2758,7 @@ private final class ImageToolsOCRController: NSWindowController, NSWindowDelegat
         textView.frame = CGRect(x: 0, y: 0, width: 416, height: 220)
         textView.isRichText = false; textView.isEditable = false; textView.isSelectable = true
         textView.drawsBackground = false
-        textView.font = .systemFont(ofSize: 16)
+        textView.font = .systemFont(ofSize: 14)
         textView.textContainerInset = CGSize(width: 4, height: 4)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false

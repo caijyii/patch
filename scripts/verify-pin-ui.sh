@@ -11,6 +11,10 @@ xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     Sources/ScreenLeaf/AnnotationControls.swift Sources/ScreenLeaf/DemoImage.swift \
     Sources/ScreenLeaf/SubjectExtraction.swift Sources/ScreenLeaf/SubjectSelection.swift \
     "$task_work/PinUIVerification.swift" -o "$task_work/verify-pin-ui"
+if [[ "${1:-}" == "--build-only" ]]; then
+    printf 'BUILT: pin native UI verification (not launched)\n'
+    exit 0
+fi
 if [[ "${1:-}" == "--app" ]]; then
 task_app="$task_work/PinUIVerification.app"
 mkdir -p "$task_app/Contents/MacOS"
@@ -44,7 +48,7 @@ elif [[ "$#" -eq 0 ]]; then
         probe_status=$?
     fi
 else
-    printf 'Usage: scripts/verify-pin-ui.sh [--app]\n' >&2
+    printf 'Usage: scripts/verify-pin-ui.sh [--app|--build-only]\n' >&2
     exit 2
 fi
 cat "$task_work/output.log"

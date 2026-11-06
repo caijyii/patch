@@ -60,6 +60,15 @@ private final class RecorderFocusSink: NSView {
 @main
 private struct PreferencesVerification {
     @MainActor static func main() {
+        guard (2...3).contains(CommandLine.arguments.count), CommandLine.arguments[1].hasPrefix("/"),
+              CommandLine.arguments.count == 2 || CommandLine.arguments[2] == "--model-only" else {
+            print("Usage: verify-preferences <absolute-output-directory> [--model-only]")
+            exit(2)
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+            print("FAIL: preference verification exceeded 60 seconds")
+            exit(1)
+        }
         let modelOnly = CommandLine.arguments.contains("--model-only")
         if !modelOnly {
             let app = NSApplication.shared
@@ -72,7 +81,27 @@ private struct PreferencesVerification {
             ("old 5/6/7-action defaults migrate; custom bindings win conflicts with new actions", legacyShortcuts),
             ("batch count and language preferences persist independently with safe boundaries", batchAndLanguagePreferences),
             ("sticker order persists, normalizes stable IDs and inserts new items beside default neighbours", stickerOrder),
-            ("release failures are tracked and retried without dispatching obsolete callbacks", releaseRetry)
+            ("release failures are tracked and retried without dispatching obsolete callbacks", releaseRetry),
+            ("zero, one and two bindings persist without overwriting legacy preferences", multipleShortcutPreferences),
+            ("two bindings dispatch independently and retries preserve healthy registrations", multipleShortcutBackend),
+            ("multi-slot edits reject new conflicts and preserve saved unavailable alternatives", multipleShortcutEditor),
+            ("correcting or deleting draft slots preserves only their current registration intent", correctedMultiSlotIntent),
+            ("transactional shortcut replacement and key swaps preserve action routing", transactions),
+            ("failed registration rolls back all staged registrations and preserves old keys", rollback),
+            ("duplicate, system-reserved and backend errors leave old keys live", conflicts),
+            ("application commands cannot become global shortcuts and saved conflicts remain visible", applicationPolicy),
+            ("launch registration failure leaves other keys usable and can be repaired", launchRepair),
+            ("shortcut recording receives registered combinations without invoking actions", recording),
+            ("failed duplicate save clears both row errors after completing a key swap", resolvedDuplicateSwap),
+            ("batch edits isolate unavailable launch keys and clear committed or cancelled edit intent", batchPartialLaunch),
+            ("batch same-value repairs retain failed edit intent and default restoration remains complete", batchSameValueRepair),
+            ("batch swaps preserve routing beside unavailable keys and reject duplicates of saved inactive keys", batchPartialSwap),
+            ("immediate recording registers, persists and retries failures without Save", immediateCommitAndRetry),
+            ("immediate invalid, duplicate, application and system conflicts preserve active keys", immediateConflicts),
+            ("a failed immediate candidate does not block another shortcut edit", immediateFailureIsolation),
+            ("immediate edits preserve unrelated launch failures and can repair them", immediatePartialLaunch),
+            ("immediate cleanup warnings retain the successful binding and retry safely", immediateCleanup),
+            ("immediate default restoration commits or rolls back the complete configuration", immediateDefaults)
         ]
         let checks: [(String, () throws -> Void)] = [
             ("Shift-function/navigation keys work without allowing Shift typing shortcuts", shiftShortcuts),
@@ -101,7 +130,8 @@ private struct PreferencesVerification {
             ("settings preview and visible row bounds fit the native window", settingsPreview)
         ]
         var failed = 0
-        let selectedChecks = modelChecks + (modelOnly ? [] : checks)
+        let modelTitles = Set(modelChecks.map { $0.0 })
+        let selectedChecks = modelChecks + (modelOnly ? [] : checks.filter { !modelTitles.contains($0.0) })
         for (title, check) in selectedChecks {
             do { try check(); print("PASS: \(title)") }
             catch { failed += 1; print("FAIL: \(title): \(error)") }
@@ -144,10 +174,172 @@ private struct PreferencesVerification {
                     "A deliberately reordered blue cat was moved back to its default neighbour")
     }
 
+    @MainActor private static func multipleShortcutPreferences() throws {
+        let legacy = try legacyStorage(ShortcutAction.defaultShortcuts, layoutVersion: 2)
+        let store = PreferencesStore(storage: legacy)
+        try require(store.shortcutBindings == ShortcutAction.defaultShortcuts.mapValues { [$0] } && legacy.writeCount == 0,
+                    "Legacy single bindings were changed or rewritten during loading")
+        let alternate = KeyboardShortcut(keyCode: 122, modifiers: [.option])
+        var bindings = store.shortcutBindings
+        bindings[.screenshot, default: []].append(alternate)
+        bindings[.pin] = []
+        try require(store.setShortcutBindings(bindings), "Zero/two binding configuration was rejected")
+        let restarted = PreferencesStore(storage: legacy)
+        try require(restarted.shortcutBindings == bindings && restarted.shortcuts[.pin] == nil
+                    && restarted.shortcuts[.screenshot] == bindings[.screenshot]?.first,
+                    "Zero/two bindings or the legacy primary projection did not survive restart")
+        let writes = legacy.writeCount
+        var invalid = bindings
+        invalid[.screenshot]?.append(KeyboardShortcut(keyCode: 120, modifiers: [.option]))
+        try require(!store.setShortcutBindings(invalid) && legacy.writeCount == writes, "A third binding was persisted")
+        invalid = bindings; invalid[.scroll] = [alternate]
+        try require(!store.setShortcutBindings(invalid), "A cross-action duplicate was persisted")
+        invalid = bindings; invalid[.screenshot] = [alternate, alternate]
+        try require(!store.setShortcutBindings(invalid) && legacy.writeCount == writes, "A duplicate within one action was persisted")
+        bindings[.screenshot] = []
+        try require(store.setShortcutBindings(bindings) && PreferencesStore(storage: legacy).shortcutBindings[.screenshot] == [],
+                    "Deleting the last binding restored a default on restart")
+    }
+
+    @MainActor private static func multipleShortcutBackend() throws {
+        let backend = FakeHotKeyBackend(), keys = HotKeys(backend: backend)
+        let alternate = KeyboardShortcut(keyCode: 122, modifiers: [.option])
+        var desired = ShortcutAction.defaultShortcuts.mapValues { [$0] }
+        desired[.screenshot]?.append(alternate); desired[.pin] = []
+        backend.blocked = [alternate]
+        var fired: [ShortcutAction] = []
+        let actions = Dictionary(uniqueKeysWithValues: ShortcutAction.allCases.map { action in (action, { fired.append(action) }) })
+        keys.installBindings(desired, actions: actions)
+        try require(keys.unavailableBindingReasons[.screenshot]?[alternate] != nil && keys.unavailable.isEmpty
+                    && keys.registeredBindings[.screenshot] == [ShortcutAction.screenshot.defaultShortcut]
+                    && keys.registeredBindings[.pin, default: []].isEmpty,
+                    "One failed alternative disabled the healthy binding or enabled an empty action")
+        let healthyTokens = Set(backend.registrations.keys)
+        backend.attempts = []; keys.retryUnavailableBindings()
+        try require(backend.attempts == [alternate] && Set(backend.registrations.keys) == healthyTokens && backend.released.isEmpty,
+                    "Retry touched healthy registrations")
+        backend.blocked = []; backend.attempts = []; keys.retryUnavailableBindings()
+        try require(backend.attempts == [alternate] && healthyTokens.isSubset(of: Set(backend.registrations.keys))
+                    && keys.unavailableBindingReasons.isEmpty && keys.registeredBindings[.screenshot] == desired[.screenshot],
+                    "The unavailable alternative did not recover independently")
+        backend.emit(ShortcutAction.screenshot.defaultShortcut); backend.emit(alternate)
+        try require(fired == [.screenshot, .screenshot], "Both alternatives did not dispatch their shared action")
+        var captured: KeyboardShortcut?
+        keys.beginRecording { captured = $0 }; backend.emit(alternate); keys.endRecording()
+        try require(captured == alternate && fired.count == 2, "Secondary hotkey recording captured the primary or invoked the feature")
+        let allTokens = Set(backend.registrations.keys), previousAttempts = backend.attempts.count
+        let oldScroll = desired[.scroll]![0]
+        desired[.screenshot]![1] = oldScroll; desired[.scroll] = [alternate]
+        try keys.applyBindings(desired).get()
+        try require(Set(backend.registrations.keys) == allTokens && backend.attempts.count == previousAttempts,
+                    "A binding swap re-registered or released existing chords")
+        backend.emit(oldScroll); backend.emit(alternate)
+        try require(Array(fired.suffix(2)) == [.screenshot, .scroll], "Swapped secondary binding routed to the previous action")
+        var third = desired; third[.screenshot]?.append(KeyboardShortcut(keyCode: 120, modifiers: [.option]))
+        if case .failure(.invalid(.screenshot)) = keys.applyBindings(third) {} else {
+            throw VerificationError(description: "Backend accepted a third shortcut")
+        }
+        desired[.screenshot] = []; try keys.applyBindings(desired).get()
+        let count = fired.count
+        backend.emit(oldScroll); backend.emit(ShortcutAction.screenshot.defaultShortcut)
+        try require(fired.count == count && keys.registeredBindings[.screenshot] == [], "Deleted bindings still dispatched")
+        let primary = ShortcutAction.screenshot.defaultShortcut
+        let firstFailedBackend = FakeHotKeyBackend(), firstFailed = HotKeys(backend: firstFailedBackend)
+        firstFailedBackend.blocked = [primary]
+        firstFailed.installBindings([.screenshot: [primary, alternate]], actions: [:])
+        try require(firstFailed.registeredBindings[.screenshot] == [alternate], "A failed primary disabled the second slot")
+        firstFailedBackend.blocked = []; firstFailed.retryUnavailableBindings()
+        try require(firstFailed.registeredBindings[.screenshot] == [primary, alternate], "Retry changed the saved slot order")
+        let duplicatesBackend = FakeHotKeyBackend(), duplicates = HotKeys(backend: duplicatesBackend)
+        duplicatesBackend.blocked = [alternate]
+        var duplicateFired: [ShortcutAction] = []
+        duplicates.installBindings([.screenshot: [primary], .scroll: [primary], .text: [alternate]],
+            actions: [.screenshot: { duplicateFired.append(.screenshot) }, .scroll: { duplicateFired.append(.scroll) },
+                      .text: { duplicateFired.append(.text) }])
+        duplicatesBackend.blocked = []; duplicatesBackend.attempts = []; duplicates.retryUnavailableBindings()
+        try require(duplicates.registeredBindings[.screenshot] == [primary] && duplicates.registeredBindings[.scroll] == []
+                    && duplicates.unavailable == [ShortcutAction.scroll.legacyID] && duplicates.registeredBindings[.text] == [alternate]
+                    && duplicatesBackend.attempts == [alternate], "Retry assigned a duplicate key to two actions or blocked an independent recovery")
+        duplicatesBackend.emit(primary); duplicatesBackend.emit(alternate)
+        try require(duplicateFired == [.screenshot, .text], "Retry changed the owner of a migrated duplicate key")
+    }
+
+    @MainActor private static func multipleShortcutEditor() throws {
+        let memory = MemoryPreferencesStorage(), store = PreferencesStore(storage: memory)
+        let alternate = KeyboardShortcut(keyCode: 122, modifiers: [.option])
+        var saved = store.shortcutBindings; saved[.screenshot]?.append(alternate)
+        try require(store.setShortcutBindings(saved), "Cannot prepare two saved bindings")
+        let backend = FakeHotKeyBackend(), keys = HotKeys(backend: backend)
+        backend.blocked = [alternate]; keys.installBindings(saved, actions: [:]); backend.attempts = []
+        let editor = ShortcutEditorSession(hotKeys: keys, store: store)
+        try require(!editor.hasIssue(.screenshot, index: 0) && editor.hasIssue(.screenshot, index: 1)
+                    && !editor.hasBlockingShortcutIssues && editor.message(.screenshot, index: 1).contains("另一组"),
+                    "Saved failed alternative was not a local nonblocking warning")
+        let replacement = KeyboardShortcut(keyCode: 120, modifiers: [.option])
+        editor.startRecording(.scroll); _ = editor.capture(try event(120, [.option]))
+        try require(editor.save() && store.shortcutBindings[.screenshot] == saved[.screenshot]
+                    && store.shortcutBindings[.scroll] == [replacement] && backend.attempts == [replacement],
+                    "A saved unavailable alternative blocked or was retried by another edit")
+        let oldStore = store.shortcutBindings, oldActive = keys.registeredBindings, oldWrites = memory.writeCount
+        let blockedNew = KeyboardShortcut(keyCode: 99, modifiers: [.option]); backend.blocked.insert(blockedNew)
+        editor.startRecording(.screenshot, index: 1); _ = editor.capture(try event(99, [.option]))
+        try require(!editor.save() && store.shortcutBindings == oldStore && keys.registeredBindings == oldActive
+                    && memory.writeCount == oldWrites, "Failed edited alternative changed saved or live bindings")
+        editor.reset(); backend.blocked.remove(alternate); backend.attempts = []
+        editor.retryUnavailableBindings()
+        try require(backend.attempts == [alternate] && !editor.hasIssue(.screenshot, index: 1)
+                    && keys.registeredBindings[.screenshot] == saved[.screenshot], "Home retry did not clear the saved warning")
+        editor.startRecording(.screenshot, index: 1)
+        _ = editor.capture(try event(UInt16(ShortcutAction.screenshot.defaultShortcut.keyCode), [.option]))
+        try require(editor.hasBlockingShortcutIssues && editor.hasIssue(.screenshot, index: 0)
+                    && editor.hasIssue(.screenshot, index: 1) && !editor.save(), "Duplicate slots within one action were allowed")
+        editor.reset(); editor.removeShortcut(.screenshot, index: 0)
+        try require(editor.bindingDraft[.screenshot] == [alternate] && editor.save(), "Removing the primary lost its alternative")
+        editor.removeShortcut(.screenshot, index: 0)
+        try require(editor.save() && store.shortcutBindings[.screenshot] == [] && keys.registeredBindings[.screenshot] == [],
+                    "Removing the last shortcut was rejected")
+        editor.startRecording(.screenshot, index: 0); _ = editor.capture(try event(122, [.option]))
+        try require(editor.save() && PreferencesStore(storage: memory).shortcutBindings[.screenshot] == [alternate],
+                    "An empty action could not regain a binding")
+        editor.startRecording(.screenshot, index: 2)
+        try require(editor.recordingAction == nil, "A nonexistent third recorder could be started")
+    }
+
+    @MainActor private static func correctedMultiSlotIntent() throws {
+        let (store, _, keys, backend, editor, _) = try partialBatchFixture()
+        let missing = ShortcutAction.subject.defaultShortcut
+        editor.startRecording(.screenshot)
+        _ = editor.capture(try event(UInt16(missing.keyCode), [.option]))
+        try require(editor.hasBlockingShortcutIssues, "A draft duplicate of the saved unavailable key was not detected")
+        editor.startRecording(.screenshot); _ = editor.capture(try event(122, [.option]))
+        let corrected = KeyboardShortcut(keyCode: 122, modifiers: [.option])
+        try require(editor.save() && backend.attempts == [corrected] && store.shortcuts[.screenshot] == corrected
+                    && keys.registeredBindings[.subject, default: []].isEmpty,
+                    "A corrected draft retained the abandoned key's strict registration intent")
+
+        // Removing a saved owner must not clear an explicit same-chord edit in
+        // another slot: that moved key still requires a successful registration.
+        editor.startRecording(.text); _ = editor.capture(try event(UInt16(missing.keyCode), [.option]))
+        editor.removeShortcut(.subject, index: 0); backend.attempts = []
+        try require(!editor.save() && backend.attempts == [missing] && store.shortcuts[.subject] == missing,
+                    "Removing a duplicate's saved owner erased another slot's registration intent")
+        backend.blocked.remove(missing); backend.attempts = []
+        try require(editor.save() && backend.attempts == [missing] && store.shortcutBindings[.subject] == []
+                    && keys.registeredBindings[.text] == [missing], "The explicitly moved shortcut could not be repaired")
+    }
+
     @MainActor private static func preferences() throws {
         let memory = MemoryPreferencesStorage()
         let first = PreferencesStore(storage: memory)
-        try require(first.annotation(for: "箭头") == AnnotationPreference(), "Unexpected new-store defaults")
+        let drawingDefault = AnnotationPreference(width: 3.5)
+        for tool in ["箭头", "画笔", "方框", "圆形"] {
+            try require(first.annotation(for: tool) == drawingDefault, "Unexpected drawing default for \(tool)")
+        }
+        try require(first.annotation(for: "贴纸").fontSize == 36
+                    && first.annotation(for: "马赛克").mosaicBlockSize == 8
+                    && first.annotation(for: "文字").fontSize == 18
+                    && first.annotation(for: "序号").numberSize == 24
+                    && memory.writeCount == 0, "Initial tool sizes differ or reading defaults writes preferences")
         var arrow = first.annotation(for: "箭头")
         arrow.colorID = 3; arrow.width = 8
         first.setAnnotation(arrow, for: "箭头")
@@ -158,7 +350,7 @@ private struct PreferencesVerification {
         let restarted = PreferencesStore(storage: memory)
         try require(restarted.annotation(for: "箭头") == arrow, "Arrow settings were lost after store reconstruction")
         try require(restarted.annotation(for: "文字") == text, "Text settings were lost after store reconstruction")
-        try require(restarted.annotation(for: "圆形") == AnnotationPreference(), "Unconfigured tool inherited another tool")
+        try require(restarted.annotation(for: "圆形") == drawingDefault, "Unconfigured tool inherited another tool")
         try require(memory.writeCount == writes, "Reading settings rewrote them")
         restarted.setAnnotation(arrow, for: "箭头")
         try require(memory.writeCount == writes, "Unchanged setting produced a redundant write")
@@ -291,7 +483,7 @@ private struct PreferencesVerification {
         backend.emit(repaired[.recentContent]!); backend.emit(repaired[.pinRecent]!)
         try require(fired == [.screenshot, .togglePins, .recentContent, .pinRecent], "New repaired shortcuts lost their action callbacks")
         let encoded = try JSONSerialization.jsonObject(with: conflictMemory.data!) as! [String: Any]
-        try require(encoded["shortcutLayoutVersion"] as? Int == 2, "Saving shortcuts omitted the layout migration marker")
+        try require(encoded["shortcutLayoutVersion"] as? Int == 3, "Saving shortcuts omitted the multi-binding layout migration marker")
 
         // A marked layout must not be mistaken for an untouched old default layout.
         let markedMemory = try legacyStorage(oldDefaults, layoutVersion: 2)

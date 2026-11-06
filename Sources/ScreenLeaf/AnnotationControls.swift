@@ -3,6 +3,31 @@
 
 import AppKit
 
+/// Logical-point sizes. A 1× display uses larger native artwork, never a
+/// magnified bitmap of the compact toolbar.
+struct ToolbarMetrics: Equatable {
+    let buttonWidth: CGFloat
+    let buttonHeight: CGFloat
+    let symbolSize: CGFloat
+    let glyphSize: CGFloat
+    let captionSize: CGFloat
+    let parameterSize: CGFloat
+    static let compact = ToolbarMetrics(buttonWidth: 32, buttonHeight: 28,
+        symbolSize: 13, glyphSize: 16, captionSize: 12, parameterSize: 11)
+    static let comfortable = ToolbarMetrics(buttonWidth: 40, buttonHeight: 36,
+        symbolSize: 17, glyphSize: 20, captionSize: 13, parameterSize: 12)
+    static func forBackingScaleFactor(_ factor: CGFloat) -> ToolbarMetrics {
+        factor.isFinite && factor > 0 && factor < 1.5 ? .comfortable : .compact
+    }
+    @MainActor func apply(to items: [NSView]) {
+        for item in items {
+            if let button = item as? SelectionButton { button.toolbarMetrics = self }
+            else if let size = item as? AnnotationSizeControl { size.toolbarMetrics = self }
+            else if let separator = item as? ToolbarSeparator { separator.toolbarMetrics = self }
+        }
+    }
+}
+
 enum ToolbarPalette {
     static let accent = AppTheme.color(NSColor(srgbRed: 82 / 255, green: 108 / 255, blue: 131 / 255, alpha: 1), NSColor(srgbRed: 0.55, green: 0.72, blue: 0.87, alpha: 1))
     static let ink = AppTheme.color(NSColor(srgbRed: 45 / 255, green: 57 / 255, blue: 68 / 255, alpha: 1), NSColor(srgbRed: 0.88, green: 0.91, blue: 0.94, alpha: 1))
@@ -139,7 +164,8 @@ class ToolbarMaterialView: NSView {
 
 /// A passive divider between groups in the same toolbar strip.
 final class ToolbarSeparator: NSView {
-    override var intrinsicContentSize: NSSize { CGSize(width: 8, height: 28) }
+    var toolbarMetrics = ToolbarMetrics.compact { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    override var intrinsicContentSize: NSSize { CGSize(width: 8, height: toolbarMetrics.buttonHeight) }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) {
         ToolbarPalette.border.setFill()
@@ -176,6 +202,13 @@ class SelectionButton: NSButton {
     }
 
     var isPrimaryAction = false { didSet { updateInteraction() } }
+    var toolbarMetrics = ToolbarMetrics.compact {
+        didSet {
+            guard toolbarMetrics != oldValue else { return }
+            caption.font = .systemFont(ofSize: toolbarMetrics.captionSize, weight: .medium)
+            invalidateIntrinsicContentSize(); needsLayout = true; needsDisplay = true
+        }
+    }
     private var retainsSelection = false
     var actionBlock: (() -> Void)?
     private let glyph = PassiveImageView()
@@ -185,7 +218,7 @@ class SelectionButton: NSButton {
     private let hoverSurface = CALayer()
     private var hoverWork: DispatchWorkItem?
     private var hoverIsReady = false
-    // A dwell avoids motion while scanning; only the glyph scales, never the hit target.
+    // A dwell avoids flashing while scanning; hit targets and glyph geometry stay stable.
     var allowsMotion: Bool { !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     var usesDarkAppearance: Bool { effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
 
@@ -257,9 +290,9 @@ class SelectionButton: NSButton {
     }
 
     override var intrinsicContentSize: NSSize {
-        if imagePosition == .imageOnly || title.isEmpty { return CGSize(width: 32, height: 28) }
-        let leading: CGFloat = image == nil || imagePosition == .noImage ? 0 : 21
-        return CGSize(width: captionSize.width + leading + 12, height: 28)
+        if imagePosition == .imageOnly || title.isEmpty { return CGSize(width: toolbarMetrics.buttonWidth, height: toolbarMetrics.buttonHeight) }
+        let leading: CGFloat = image == nil || imagePosition == .noImage ? 0 : toolbarMetrics.glyphSize + 5
+        return CGSize(width: max(toolbarMetrics.buttonWidth, captionSize.width + leading + 12), height: toolbarMetrics.buttonHeight)
     }
 
     private var captionSize: NSSize {
@@ -278,11 +311,17 @@ class SelectionButton: NSButton {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        needsLayout = true
         if window == nil {
             hoverWork?.cancel(); hoverWork = nil
             isPointerInside = false; hoverIsReady = false
             updateInteraction()
         }
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        needsLayout = true; needsDisplay = true
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -339,21 +378,13 @@ class SelectionButton: NSButton {
             fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
             hoverSurface.add(fade, forKey: "hoverFade")
         }
+        // Keep small symbol strokes on the native pixel grid. Hover still fades
+        // its surface, but does not resample the icon at a fractional scale.
         guard let layer = glyph.layer else { return }
-        let animates = allowsMotion && isEnabled && !glyph.isHidden
-        let scale: CGFloat = animates ? (isHighlighted ? 0.97 : hovered ? 1.03 : 1) : 1
-        let current = layer.presentation()?.transform.m11 ?? layer.transform.m11
-        let changed = abs(layer.transform.m11 - scale) > 0.0001
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        layer.transform = CATransform3DMakeScale(scale, scale, 1)
+        layer.transform = CATransform3DIdentity
+        layer.removeAnimation(forKey: "interactionScale")
         CATransaction.commit()
-        if !animates { layer.removeAllAnimations(); return }
-        guard changed else { return }
-        let transition = CABasicAnimation(keyPath: "transform.scale")
-        transition.fromValue = current; transition.toValue = scale
-        transition.duration = isHighlighted ? 0.10 : 0.16
-        transition.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        layer.add(transition, forKey: "interactionScale")
     }
 
     override func layout() {
@@ -393,14 +424,14 @@ class SelectionButton: NSButton {
         let selected = state == .on || isPrimaryAction
         let ink = selected ? ToolbarPalette.selectedInk : contentTintColor ??
             (usesDarkAppearance ? NSColor.labelColor.withAlphaComponent(0.88) : ToolbarPalette.ink)
-        glyph.image = image?.withSymbolConfiguration(.init(pointSize: 13, weight: selected ? .semibold : .medium)) ?? image
+        glyph.image = image?.withSymbolConfiguration(.init(pointSize: toolbarMetrics.symbolSize, weight: selected ? .semibold : .medium)) ?? image
         glyph.contentTintColor = ink
         glyph.alphaValue = isEnabled ? 1 : 0.36
         glyph.isHidden = image == nil || imagePosition == .noImage
         caption.stringValue = title
         caption.textColor = ink.withAlphaComponent(isEnabled ? 1 : 0.36)
         caption.isHidden = title.isEmpty || imagePosition == .imageOnly
-        let glyphSize: CGFloat = 16
+        let glyphSize = toolbarMetrics.glyphSize
         if caption.isHidden {
             glyph.frame = CGRect(x: bounds.midX - glyphSize / 2, y: bounds.midY - glyphSize / 2, width: glyphSize, height: glyphSize)
         } else {
@@ -411,12 +442,24 @@ class SelectionButton: NSButton {
             caption.frame = CGRect(x: x + leading, y: bounds.midY - textSize.height / 2,
                                    width: textSize.width, height: textSize.height)
         }
+        if window != nil {
+            glyph.frame = backingAlignedRect(glyph.frame, options: .alignAllEdgesNearest)
+            caption.frame = backingAlignedRect(caption.frame, options: .alignAllEdgesNearest)
+        }
     }
 }
 
 /// One continuous size value shared by stepping, dragging and accessibility.
 @MainActor
 final class AnnotationSizeControl: NSControl {
+    var toolbarMetrics = ToolbarMetrics.compact {
+        didSet {
+            guard toolbarMetrics != oldValue else { return }
+            minus.toolbarMetrics = toolbarMetrics; plus.toolbarMetrics = toolbarMetrics
+            valueLabel.font = .monospacedDigitSystemFont(ofSize: toolbarMetrics.parameterSize, weight: .medium)
+            invalidateIntrinsicContentSize(); needsLayout = true
+        }
+    }
     private final class DragSlider: NSSlider {
         var begin: (() -> Void)?
         var end: (() -> Void)?
@@ -435,7 +478,8 @@ final class AnnotationSizeControl: NSControl {
     var onEnd: (() -> Void)?
     lazy var minus = SelectionButton(L("减小"), symbol: "minus") { [weak self] in self?.adjust(-1) }
     lazy var plus = SelectionButton(L("增大"), symbol: "plus") { [weak self] in self?.adjust(1) }
-    override var intrinsicContentSize: NSSize { NSSize(width: 218, height: 28) }
+    private var stepButtonWidth: CGFloat { toolbarMetrics == .compact ? 28 : toolbarMetrics.buttonWidth }
+    override var intrinsicContentSize: NSSize { NSSize(width: 218 + (stepButtonWidth - 28) * 2, height: toolbarMetrics.buttonHeight) }
     override var isEnabled: Bool { didSet { slider.isEnabled = isEnabled; minus.isEnabled = isEnabled; plus.isEnabled = isEnabled; sync() } }
     override init(frame: NSRect) {
         slider = DragSlider(value: 18, minValue: 8, maxValue: 72, target: nil, action: nil)
@@ -457,12 +501,14 @@ final class AnnotationSizeControl: NSControl {
     }
     override func layout() {
         super.layout()
-        minus.frame = NSRect(x: 0, y: 0, width: 28, height: 28)
-        plus.frame = NSRect(x: bounds.width - 28, y: 0, width: 28, height: 28)
-        let labelHeight = min(28, max(14, valueLabel.fittingSize.height))
-        valueLabel.frame = NSRect(x: bounds.width - 68, y: bounds.midY - labelHeight / 2,
+        let buttonWidth = stepButtonWidth, height = toolbarMetrics.buttonHeight
+        minus.frame = NSRect(x: 0, y: 0, width: buttonWidth, height: height)
+        plus.frame = NSRect(x: bounds.width - buttonWidth, y: 0, width: buttonWidth, height: height)
+        let labelHeight = min(height, max(14, valueLabel.fittingSize.height))
+        valueLabel.frame = NSRect(x: bounds.width - buttonWidth - 40, y: bounds.midY - labelHeight / 2,
                                   width: 38, height: labelHeight)
-        slider.frame = NSRect(x: 30, y: 4, width: max(20, bounds.width - 102), height: 20)
+        slider.frame = NSRect(x: buttonWidth + 2, y: bounds.midY - 10,
+                             width: max(20, bounds.width - buttonWidth * 2 - 46), height: 20)
     }
     func configure(category: String, value: Double, range: ClosedRange<Double>, step: Double) {
         self.category = category; self.step = step
@@ -498,6 +544,12 @@ final class AnnotationSizeControl: NSControl {
 /// Shared screenshot/editor controls. Stored defaults and selected-object values are separate.
 @MainActor
 final class AnnotationControls {
+    private var toolbarMetrics = ToolbarMetrics.compact
+    func configureToolbar(forBackingScaleFactor factor: CGFloat) {
+        toolbarMetrics = .forBackingScaleFactor(factor)
+        toolbarMetrics.apply(to: Array(toolButtons.values) + colorButtons + stickerButtons
+            + [undoButton, moreStickerButton, sizeControl, parameterSeparator, actionSeparator])
+    }
     static let displayOrder: [ImageToolsTool] = [.arrow, .pen, .rectangle, .ellipse, .text, .number, .sticker, .mosaic]
     let canvas: ImageToolsCanvas
     private let preferences: PreferencesStore
@@ -578,6 +630,7 @@ final class AnnotationControls {
                 self?.chooseSticker(sticker.id)
             }
             button.identifier = NSUserInterfaceItemIdentifier(sticker.id)
+            button.toolbarMetrics = toolbarMetrics
             return button
         }
     }
@@ -731,7 +784,7 @@ final class AnnotationControls {
     }
     private func group(_ title: String, _ buttons: [NSView]) -> [NSView] {
         let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.font = .systemFont(ofSize: toolbarMetrics.parameterSize, weight: .medium)
         label.textColor = ToolbarPalette.secondaryInk
         return [label] + buttons
     }
@@ -765,10 +818,16 @@ class SelectionOptionButton: SelectionButton {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override var intrinsicContentSize: NSSize {
+        if toolbarMetrics != .compact {
+            return CGSize(width: max(toolbarMetrics.buttonWidth, sampleWidth), height: toolbarMetrics.buttonHeight)
+        }
+        return CGSize(width: sampleWidth, height: toolbarMetrics.buttonHeight)
+    }
+    private var sampleWidth: CGFloat {
         switch sample {
-        case .color, .sticker: return CGSize(width: 30, height: 28)
-        case .font: return CGSize(width: 34, height: 28)
-        default: return CGSize(width: 38, height: 28)
+        case .color, .sticker: return 30
+        case .font: return 34
+        default: return 38
         }
     }
 
@@ -788,7 +847,8 @@ class SelectionOptionButton: SelectionButton {
         let ink = selected ? ToolbarPalette.selectedInk : usesDarkAppearance ? NSColor.labelColor : ToolbarPalette.ink
         switch sample {
         case .color(let color):
-            let box = CGRect(x: bounds.midX - 8, y: bounds.midY - 8, width: 16, height: 16)
+            let side = toolbarMetrics.glyphSize
+            let box = CGRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
             color.setFill()
             NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4).fill()
             neutral.withAlphaComponent(0.15).setStroke()
@@ -839,10 +899,11 @@ class SelectionOptionButton: SelectionButton {
             }
             NSGraphicsContext.current?.restoreGraphicsState()
         case .sticker(let sticker):
-            let rect = CGRect(x: bounds.midX - 10, y: bounds.midY - 10, width: 20, height: 20)
+            let side = toolbarMetrics == .compact ? CGFloat(20) : 24
+            let rect = CGRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
             if !StickerCatalog.draw(sticker, in: rect) {
                 centeredText(StickerCatalog.item(for: sticker)?.emoji ?? sticker,
-                             font: NSFont(name: "Apple Color Emoji", size: 20) ?? .systemFont(ofSize: 20), color: .white)
+                             font: NSFont(name: "Apple Color Emoji", size: side) ?? .systemFont(ofSize: side), color: .white)
             }
         }
     }
@@ -1017,7 +1078,41 @@ private final class StickerDragButton: SelectionOptionButton {
 final class SelectionToolbar: NSView {
     private static let horizontalInset: CGFloat = 8
     private static let itemGap: CGFloat = 2
-    var rows: [[NSView]] = []
+    var rows: [[NSView]] = [] { didSet { metrics.apply(to: rows.flatMap { $0 }) } }
+    private(set) var metrics = ToolbarMetrics.compact
+    private var metricsUpdateQueued = false
+    /// The owner relays this to its full layout, so a detached HUD also resizes.
+    var onDisplayMetricsChanged: (() -> Void)?
+    @discardableResult func configure(forBackingScaleFactor factor: CGFloat) -> Bool {
+        let next = ToolbarMetrics.forBackingScaleFactor(factor)
+        guard next != metrics else { return false }
+        metrics = next; metrics.apply(to: rows.flatMap { $0 })
+        needsLayout = true
+        return true
+    }
+    func prepareItems(_ items: [NSView]) { metrics.apply(to: items) }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshDisplayMetrics()
+    }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        refreshDisplayMetrics()
+    }
+    private func refreshDisplayMetrics() {
+        guard let window else { return }
+        if configure(forBackingScaleFactor: window.backingScaleFactor), !metricsUpdateQueued {
+            // A window can change displays while its owner is placing the HUD.
+            // Re-enter the owner's complete layout after that placement finishes.
+            metricsUpdateQueued = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.metricsUpdateQueued = false
+                if self.window != nil { self.onDisplayMetricsChanged?() }
+            }
+        }
+        needsDisplay = true
+    }
     /// Reserve the upper-right corner for final actions while other tools wrap below.
     var trailingActions: [NSView] = []
     private var installedItems: [NSView] = []
@@ -1046,10 +1141,12 @@ final class SelectionToolbar: NSView {
     }
 
     func arrange(maxWidth: CGFloat, maxHeight: CGFloat? = nil) -> CGSize {
+        if let window { configure(forBackingScaleFactor: window.backingScaleFactor) }
+        metrics.apply(to: rows.flatMap { $0 })
         let visible = rows.flatMap { $0 }
         installedItems.filter { child in !visible.contains(where: { $0 === child }) }.forEach { $0.removeFromSuperview() }
         installedItems = visible
-        let widthLimit = max(40, maxWidth)
+        let widthLimit = max(metrics.buttonWidth + Self.horizontalInset * 2, maxWidth)
         let horizontalInset = Self.horizontalInset
         let itemGap = Self.itemGap
         var placements: [(NSView, CGRect)] = []
@@ -1058,9 +1155,10 @@ final class SelectionToolbar: NSView {
         var widest: CGFloat = 0
         var height: CGFloat = 0
         // Keep normal spacing when it fits. In a short display area, tighten
-        // only the row padding and gaps; buttons keep their 28-point hit targets.
-        for spacing in [(padding: CGFloat(6), row: CGFloat(4), line: CGFloat(32)),
-                        (padding: CGFloat(4), row: CGFloat(2), line: CGFloat(30))] {
+        // only the row padding and gaps; native button targets retain their size.
+        let buttonHeight = metrics.buttonHeight
+        for spacing in [(padding: CGFloat(6), row: CGFloat(4), line: buttonHeight + 4),
+                        (padding: CGFloat(4), row: CGFloat(2), line: buttonHeight + 2)] {
             placements.removeAll(keepingCapacity: true)
             rowFrames.removeAll(keepingCapacity: true)
             top = 0; widest = 0
@@ -1090,7 +1188,7 @@ final class SelectionToolbar: NSView {
                     if x + width > lineLimit, x > horizontalInset || (pinsActions && lineTop == firstLine) {
                         lineTop += spacing.line; x = horizontalInset
                     }
-                    placements.append((item, CGRect(x: x, y: lineTop, width: width, height: 28)))
+                    placements.append((item, CGRect(x: x, y: lineTop, width: width, height: buttonHeight)))
                     x += width + itemGap
                     rowWidth = max(rowWidth, x - itemGap + horizontalInset)
                 }
@@ -1098,11 +1196,11 @@ final class SelectionToolbar: NSView {
                     var actionX = rowLimit - horizontalInset - groupWidth
                     for action in trailingActions {
                         let width = itemWidth(action, limit: widthLimit)
-                        placements.append((action, CGRect(x: actionX, y: firstLine, width: width, height: 28)))
+                        placements.append((action, CGRect(x: actionX, y: firstLine, width: width, height: buttonHeight)))
                         actionX += width + itemGap
                     }
                 }
-                let rowHeight = lineTop + 28 + spacing.padding - top
+                let rowHeight = lineTop + buttonHeight + spacing.padding - top
                 rowFrames.append(CGRect(x: 0, y: top, width: min(widthLimit, rowWidth), height: rowHeight))
                 widest = max(widest, rowWidth)
                 top += rowHeight + spacing.row
@@ -1140,7 +1238,7 @@ final class SelectionToolbar: NSView {
             rule.frame = CGRect(x: horizontalInset, y: size.height - offset - 0.5, width: max(0, size.width - horizontalInset * 2), height: 1)
         }
         for (item, rect) in placements {
-            let height = item is NSTextField ? min(28, max(14, item.fittingSize.height)) : rect.height
+            let height = item is NSTextField ? min(buttonHeight, max(14, item.fittingSize.height)) : rect.height
             item.frame = CGRect(x: rect.minX, y: size.height - rect.maxY + (rect.height - height) / 2,
                                 width: rect.width, height: height)
             if item.superview !== self { addSubview(item) }
@@ -1153,8 +1251,9 @@ final class SelectionToolbar: NSView {
     }
 
     /// The same widths and spacing used during placement, before any wrapping.
-    static func singleLineWidth(_ items: [NSView]) -> CGFloat {
-        horizontalInset * 2 + items.reduce(CGFloat(0)) { $0 + idealItemWidth($1) }
+    static func singleLineWidth(_ items: [NSView], metrics: ToolbarMetrics? = nil) -> CGFloat {
+        metrics?.apply(to: items)
+        return horizontalInset * 2 + items.reduce(CGFloat(0)) { $0 + idealItemWidth($1) }
             + CGFloat(max(0, items.count - 1)) * itemGap
     }
 

@@ -48,6 +48,10 @@ private class HomeFlippedView: NSView {
 final class HomeFeatureTile: NSView {
     let launchButton: NSButton
     let shortcutButton: NSButton
+    var shortcutButtons: [NSButton] { [keycap, alternateKeycap] }
+    var removeShortcutButtons: [NSButton] { removeButtons }
+    let addShortcutButton = NSButton(title: "+", target: nil, action: nil)
+    var shortcutControls: [NSView] { shortcutButtons + removeShortcutButtons + [addShortcutButton] }
     let surface = CALayer()
     let fixedFrame = CALayer()
     private let glassStage = HomeFlippedView()
@@ -55,9 +59,12 @@ final class HomeFeatureTile: NSView {
     private let polish = CAGradientLayer()
     private let fogMask = CALayer()
     private let latch = CALayer()
-    private let shortcutFill = CALayer()
     private var pointerOverShortcut = false
-    private var shortcutHasError = false
+    private var shortcutIssues: [String?] = []
+    private var shortcutTitles: [String] = []
+    private var shortcutEditing = false
+    private var recordedSlot: Int?
+    private var hoveredShortcut: NSButton?
     private(set) var isShortcutHovered = false
     private(set) var isLaunchHovered = false
     private var tracking: NSTrackingArea?
@@ -68,8 +75,14 @@ final class HomeFeatureTile: NSView {
     var topInset: CGFloat = 0 { didSet { needsLayout = true } }
     var onLaunch: (() -> Void)?
     var onEdit: (() -> Void)?
+    var onEditShortcut: ((Int) -> Void)?
+    var onAddShortcut: (() -> Void)?
+    var onRemoveShortcut: ((Int) -> Void)?
     private let launch: HomeActionButton
     private let keycap: HomeActionButton
+    private let alternateKeycap = HomeActionButton(frame: .zero)
+    private let removeButtons = [NSButton(title: "×", target: nil, action: nil), NSButton(title: "×", target: nil, action: nil)]
+    private var allowsShortcutEditing = true
     private let reducedTransparency: () -> Bool
 
     init(action: ShortcutAction? = nil, reducedTransparency: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency }) {
@@ -81,6 +94,7 @@ final class HomeFeatureTile: NSView {
         launch.target = launch; launch.action = #selector(HomeActionButton.invoke)
         launch.title = action?.title ?? L("退出")
         launchButton = launch; shortcutButton = keycap
+        allowsShortcutEditing = action != nil
         super.init(frame: .zero)
         wantsLayer = true; glassStage.wantsLayer = true; moving.wantsLayer = true
         addSubview(glassStage); glassStage.addSubview(moving)
@@ -104,13 +118,12 @@ final class HomeFeatureTile: NSView {
         polish.opacity = 0; moving.layer?.addSublayer(polish)
         latch.backgroundColor = NSColor.white.cgColor; latch.borderColor = HomeWindowPalette.edge.cgColor
         latch.borderWidth = 1; latch.cornerRadius = 2; moving.layer?.addSublayer(latch)
-        shortcutFill.backgroundColor = NSColor(srgbRed: 0.80, green: 0.86, blue: 0.82, alpha: 0.65).cgColor
-        shortcutFill.cornerRadius = 6; shortcutFill.opacity = 0
-        shortcutFill.zPosition = 99
-        layer?.addSublayer(shortcutFill)
-        addSubview(launch); addSubview(keycap)
+        addSubview(launch)
+        shortcutControls.forEach { addSubview($0) }
         // Keep controls in a separate, frontmost plane, beyond the sash's positive-Z lift.
-        for button in [launch, keycap] { button.wantsLayer = true; button.layer?.zPosition = 100 }
+        for button in [launch] + shortcutButtons + removeShortcutButtons + [addShortcutButton] {
+            button.wantsLayer = true; button.layer?.zPosition = 100
+        }
         launch.image = NSImage(systemSymbolName: action.flatMap { symbols[$0] } ?? "power", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 24, weight: .regular))
         if action == .recentContent { launch.image = WindowGlyph.image(.records) }
         if action == .pinRecent { launch.image = WindowGlyph.image(.batch) }
@@ -134,6 +147,37 @@ final class HomeFeatureTile: NSView {
         keycap.onClick = { [weak self] in self?.onEdit?() }
         keycap.toolTip = action == nil ? L("退出当前应用（⌘Q）") : L("修改快捷键")
         keycap.isEnabled = action != nil
+        alternateKeycap.isHidden = true
+        for (index, button) in shortcutButtons.enumerated() {
+            button.isBordered = false; button.bezelStyle = .regularSquare
+            button.font = .systemFont(ofSize: 12, weight: .medium)
+            button.cell?.wraps = false; button.cell?.usesSingleLineMode = true
+            button.lineBreakMode = .byTruncatingMiddle
+            button.isEnabled = allowsShortcutEditing
+            // One rounded surface owns both hover fill and focus outline.
+            button.focusRingType = .none
+            (button.cell as? NSButtonCell)?.highlightsBy = []
+            button.layer?.cornerRadius = 6
+            (button as? HomeActionButton)?.onFocusChange = { [weak self] in self?.updateSurface() }
+            if index > 0 { button.identifier = NSUserInterfaceItemIdentifier("home.shortcut.\(action?.rawValue ?? "quit").\(index)") }
+            button.setAccessibilityLabel(action == nil ? L("退出快捷键，固定为 ⌘Q") : LF("修改%@快捷键", launch.title))
+        }
+        keycap.onClick = { [weak self] in self?.editShortcut(at: 0) }
+        alternateKeycap.onClick = { [weak self] in self?.editShortcut(at: 1) }
+        for (index, button) in removeButtons.enumerated() {
+            button.tag = index; button.target = self; button.action = #selector(removeShortcut(_:))
+            button.identifier = NSUserInterfaceItemIdentifier("home.shortcut-remove.\(action?.rawValue ?? "quit").\(index)")
+            button.toolTip = L("移除这组快捷键"); button.setAccessibilityLabel(L("移除这组快捷键"))
+        }
+        addShortcutButton.target = self; addShortcutButton.action = #selector(addShortcut)
+        addShortcutButton.identifier = NSUserInterfaceItemIdentifier("home.shortcut-add.\(action?.rawValue ?? "quit")")
+        addShortcutButton.toolTip = L("添加快捷键（最多 2 组）")
+        addShortcutButton.setAccessibilityLabel(L("添加快捷键（最多 2 组）"))
+        for button in removeButtons + [addShortcutButton] {
+            button.isBordered = false; button.bezelStyle = .regularSquare
+            button.font = .systemFont(ofSize: 12); button.contentTintColor = HomeWindowPalette.muted
+            button.isHidden = true
+        }
         updateSurface()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -154,20 +198,68 @@ final class HomeFeatureTile: NSView {
         let center = topInset + (bounds.height - topInset) * 0.48
         launch.frame = bounds
         (launch.cell as? HomeLaunchCell)?.contentRect = backingAlignedRect(CGRect(x: 12, y: center - 47, width: bounds.width - 24, height: 73), options: .alignAllEdgesNearest)
-        let keyWidth = min(bounds.width - 20, max(40, keycap.intrinsicContentSize.width + 16))
-        keycap.frame = backingAlignedRect(CGRect(x: (bounds.width - keyWidth) / 2, y: center + 28, width: keyWidth, height: 28), options: .alignAllEdgesNearest)
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        shortcutFill.frame = keycap.frame
-        CATransaction.commit()
+        layoutShortcuts(y: center + 28)
     }
     func configure(shortcut: String, editing: Bool, launchesEnabled: Bool, hasError: Bool) {
-        keycap.title = shortcut; keycap.toolTip = shortcut
-        shortcutHasError = hasError
+        configure(shortcuts: [shortcut], editing: editing, recordingIndex: nil, launchesEnabled: launchesEnabled,
+                  issues: [hasError ? L("快捷键暂时不可用") : nil])
+    }
+    func configure(shortcuts: [String], editing: Bool, recordingIndex: Int?, launchesEnabled: Bool, issues: [String?]) {
+        shortcutTitles = Array(shortcuts.prefix(2)); shortcutIssues = Array(issues.prefix(2))
+        shortcutEditing = editing && allowsShortcutEditing; recordedSlot = recordingIndex
+        let count = min(2, max(1, max(shortcutTitles.count, (recordingIndex ?? -1) + 1)))
+        for (index, button) in shortcutButtons.enumerated() {
+            button.isHidden = index >= count
+            let full = index < shortcutTitles.count ? shortcutTitles[index] : recordingIndex == index ? L("按组合键") : L("未设置")
+            button.title = Self.compactShortcut(full)
+            let issue = index < shortcutIssues.count ? shortcutIssues[index] : nil
+            button.toolTip = issue.map { full + "\n" + $0 } ?? full
+            button.setAccessibilityValue(recordingIndex == index ? LF("%@，正在编辑", full) : full)
+            removeButtons[index].isHidden = !shortcutEditing || index >= shortcutTitles.count
+        }
+        addShortcutButton.isHidden = !shortcutEditing || count >= 2
+            || (recordingIndex.map { $0 >= shortcutTitles.count } ?? false)
         needsLayout = true
         launch.isEnabled = launchesEnabled; isEditingShortcut = editing
-        keycap.setAccessibilityValue(editing ? LF("%@，正在编辑", shortcut) : shortcut)
         updateSurface()
     }
+    private static func compactShortcut(_ value: String) -> String {
+        value.replacingOccurrences(of: "Page Down", with: "⇟").replacingOccurrences(of: "Page Up", with: "⇞")
+            .replacingOccurrences(of: "Home", with: "↖").replacingOccurrences(of: "End", with: "↘")
+            .replacingOccurrences(of: "空格", with: "␣").replacingOccurrences(of: "Space", with: "␣")
+    }
+    private func layoutShortcuts(y: CGFloat) {
+        let keys = shortcutButtons.filter { !$0.isHidden }
+        let gap: CGFloat = keys.count > 1 ? 4 : 0
+        let actionWidth: CGFloat = 14
+        let addWidth: CGFloat = addShortcutButton.isHidden ? 0 : 18
+        let addGap: CGFloat = addWidth > 0 ? 4 : 0
+        let available = max(1, bounds.width - 20 - addWidth - addGap - gap)
+        let maximum = available / CGFloat(max(1, keys.count))
+        var widths: [CGFloat] = []
+        for (index, button) in keys.enumerated() {
+            let removeWidth: CGFloat = removeButtons[index].isHidden ? 0 : actionWidth
+            let normal = NSFont.systemFont(ofSize: 12, weight: .medium)
+            let measured = (button.title as NSString).size(withAttributes: [.font: normal]).width + 8
+            button.font = .systemFont(ofSize: measured + removeWidth > maximum ? 11 : 12, weight: .medium)
+            let natural = (button.title as NSString).size(withAttributes: [.font: button.font!]).width + 8
+            widths.append(min(maximum, max(keys.count == 1 ? 40 : 24, natural) + removeWidth))
+        }
+        let total = widths.reduce(0, +) + gap + addGap + addWidth
+        var x = (bounds.width - total) / 2
+        for (index, button) in keys.enumerated() {
+            let removeWidth: CGFloat = removeButtons[index].isHidden ? 0 : actionWidth
+            // Frames include the editing affordances; long chords stay single-line
+            // with the complete combination available in the tooltip/accessibility value.
+            button.frame = backingAlignedRect(CGRect(x: x, y: y, width: max(1, widths[index] - removeWidth), height: 28), options: .alignAllEdgesNearest)
+            removeButtons[index].frame = backingAlignedRect(CGRect(x: x + widths[index] - removeWidth, y: y, width: removeWidth, height: 28), options: .alignAllEdgesNearest)
+            x += widths[index] + gap
+        }
+        addShortcutButton.frame = backingAlignedRect(CGRect(x: (bounds.width + total) / 2 - addWidth, y: y, width: addWidth, height: 28), options: .alignAllEdgesNearest)
+    }
+    private func editShortcut(at index: Int) { if let onEditShortcut { onEditShortcut(index) } else { onEdit?() } }
+    @objc private func addShortcut() { onAddShortcut?() }
+    @objc private func removeShortcut(_ sender: NSButton) { onRemoveShortcut?(sender.tag) }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }
@@ -179,11 +271,13 @@ final class HomeFeatureTile: NSView {
     private func updatePointer(with event: NSEvent) {
         isHovered = true
         // Use the stationary pane coordinates so opening the sash cannot shift hover targets.
-        pointerOverShortcut = keycap.frame.contains(convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        hoveredShortcut = shortcutButtons.first { !$0.isHidden && $0.frame.contains(point) }
+        pointerOverShortcut = shortcutControls.contains { !$0.isHidden && $0.frame.contains(point) }
         updateSurface()
     }
-    override func mouseExited(with event: NSEvent) { isHovered = false; pointerOverShortcut = false; updateSurface() }
-    func resetInteraction() { isHovered = false; pointerOverShortcut = false; launch.highlight(false); keycap.highlight(false); moving.layer?.removeAnimation(forKey: "open"); updateSurface() }
+    override func mouseExited(with event: NSEvent) { isHovered = false; pointerOverShortcut = false; hoveredShortcut = nil; updateSurface() }
+    func resetInteraction() { isHovered = false; pointerOverShortcut = false; hoveredShortcut = nil; launch.highlight(false); shortcutButtons.forEach { $0.highlight(false) }; moving.layer?.removeAnimation(forKey: "open"); updateSurface() }
     func stopFeedback() { fogMask.removeAllAnimations(); polish.removeAllAnimations() }
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance(); updateSurface()
@@ -196,23 +290,23 @@ final class HomeFeatureTile: NSView {
         surface.borderColor = AppTheme.color(HomeWindowPalette.edge.withAlphaComponent(0.25), HomeWindowPalette.highlight.withAlphaComponent(0.32)).cgColor
         latch.backgroundColor = HomeWindowPalette.wood.cgColor
         latch.borderColor = HomeWindowPalette.edge.cgColor
-        shortcutFill.backgroundColor = HomeWindowPalette.edge.withAlphaComponent(0.25).cgColor
         isShortcutHovered = isHovered && pointerOverShortcut && keycap.isEnabled
         isLaunchHovered = isHovered && !pointerOverShortcut && launch.isEnabled
         let emphasized = isEditingShortcut || isHovered || launch.isHighlighted
         launch.font = .systemFont(ofSize: 14, weight: .medium)
         launch.contentTintColor = HomeWindowPalette.ink
-        keycap.contentTintColor = shortcutHasError ? .systemOrange : isShortcutHovered ? HomeWindowPalette.ink : HomeWindowPalette.muted
-        let fillOpacity: Float = isShortcutHovered ? 1 : 0
-        if shortcutFill.opacity != fillOpacity {
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = shortcutFill.presentation()?.opacity ?? shortcutFill.opacity
-            fade.toValue = fillOpacity
-            fade.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
-            shortcutFill.add(fade, forKey: "hover")
+        for (index, button) in shortcutButtons.enumerated() {
+            let hasIssue = index < shortcutIssues.count && shortcutIssues[index] != nil
+            let selected = (shortcutEditing && recordedSlot == index) || (button.isEnabled && (button as? HomeActionButton)?.hasKeyboardFocus == true)
+            let hovered = isShortcutHovered && button === hoveredShortcut
+            button.contentTintColor = hasIssue ? .systemOrange : selected || hovered ? HomeWindowPalette.ink : HomeWindowPalette.muted
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            button.layer?.backgroundColor = HomeWindowPalette.edge.withAlphaComponent(selected || hovered ? 0.25 : 0).cgColor
+            button.layer?.borderColor = (hasIssue ? NSColor.systemOrange : HomeWindowPalette.edge).cgColor
+            button.layer?.borderWidth = selected ? 1 : 0
+            CATransaction.commit()
         }
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        shortcutFill.opacity = fillOpacity
         surface.backgroundColor = HomeWindowPalette.glass.withAlphaComponent(reducedTransparency() ? 1 : emphasized ? 0.48 : 0.64).cgColor
         fixedFrame.borderColor = HomeWindowPalette.edge.withAlphaComponent(emphasized ? 0.95 : 0.6).cgColor
         CATransaction.commit()
@@ -284,6 +378,18 @@ final class HomeFeatureTile: NSView {
 @MainActor private final class HomeActionButton: NSButton {
     var onClick: (() -> Void)?
     var onPress: (() -> Void)?
+    var onFocusChange: (() -> Void)?
+    private(set) var hasKeyboardFocus = false
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { hasKeyboardFocus = true; onFocusChange?() }
+        return accepted
+    }
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { hasKeyboardFocus = false; onFocusChange?() }
+        return accepted
+    }
     override init(frame: NSRect) { super.init(frame: frame); target = self; action = #selector(invoke) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     @objc func invoke() { onClick?() }
@@ -366,6 +472,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     private(set) var tiles: [ShortcutAction: HomeFeatureTile] = [:]
     private(set) var isEditing = false
     private var editingAction: ShortcutAction?
+    private var editingIndex = 0
     private let onLaunch: (ShortcutAction) -> Void
     private let content = HomeContentView()
     private let arch = HomeArchView()
@@ -447,12 +554,25 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
                 self.editor.stopRecording(); self.onLaunch(action); self.refreshShortcuts()
             }
             tile.onEdit = { [weak self] in self?.beginEditing(action) }
+            tile.onEditShortcut = { [weak self] index in self?.beginEditing(action, index: index) }
+            tile.onAddShortcut = { [weak self] in
+                guard let self else { return }
+                self.beginEditing(action, index: self.editor.bindingDraft[action]?.count ?? 0)
+            }
+            tile.onRemoveShortcut = { [weak self] index in
+                guard let self else { return }
+                if !self.isEditing { self.isEditing = true; self.editor.reset() }
+                self.editingAction = action; self.editingIndex = max(0, index - 1)
+                self.editor.removeShortcut(action, index: index)
+                self.refreshShortcuts()
+            }
             tiles[action] = tile
         }
         quitTile.onLaunch = { [weak self] in self?.quitClicked() }
         arch.addTiles(allTiles)
         content.addSubview(footer)
         feedback.font = .systemFont(ofSize: 12); feedback.textColor = HomeWindowPalette.muted
+        feedback.usesSingleLineMode = true; feedback.lineBreakMode = .byTruncatingTail
         feedback.isSelectable = true
         feedback.identifier = NSUserInterfaceItemIdentifier("home.shortcut-status")
         footer.addSubview(feedback)
@@ -478,6 +598,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     override func showWindow(_ sender: Any?) {
         if let window { WindowActivationCoordinator.shared.register(window) }
         if window?.isVisible != true && !isEditing { editor.reset() }
+        if !isEditing { editor.retryUnavailableBindings() }
         allTiles.forEach { $0.resetInteraction() }
         window?.deminiaturize(nil); super.showWindow(sender)
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
@@ -490,6 +611,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         if let window { PatchWindowTitle.apply(to: window, title: L("Patch · 更多设置")) }
         arch.isHidden = true; footer.isHidden = true; permissionBanner.isHidden = true
         optionsPage.isHidden = false; optionsPage.refreshAppearanceSelection()
+        resizePage(height: 48 + AppOptionsView.preferredContentHeight)
         refreshPermissions(); layoutContent()
         arch.scenery.setMotionActive(false)
         window?.makeFirstResponder(nil)
@@ -498,6 +620,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         isShowingOptions = false
         if let window { PatchWindowTitle.apply(to: window, title: L("Patch · 设置")) }
         optionsPage.isHidden = true; arch.isHidden = false; footer.isHidden = false
+        resizePage(height: 536)
         refreshShortcuts(); refreshPermissions()
         window?.makeFirstResponder(nil)
         arch.scenery.setMotionActive(window?.isVisible == true)
@@ -511,13 +634,21 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     @objc private func requestPermission() {
         onRequestScreenPermission(); refreshPermissions()
     }
-    func beginEditing(_ action: ShortcutAction? = nil) {
+    private func resizePage(height: CGFloat) {
+        guard let window else { return }
+        let original = window.frame
+        let frameHeight = original.height + height - content.bounds.height
+        window.setFrame(NSRect(x: original.minX, y: original.maxY - frameHeight,
+                               width: original.width, height: frameHeight), display: true)
+    }
+    func beginEditing(_ action: ShortcutAction? = nil, index: Int = 0) {
         if isShowingOptions { showHomePage() }
         if !isEditing { isEditing = true; editor.reset() }
         tiles.values.forEach { $0.stopFeedback() }
         if let action {
-            editingAction = action; editor.startRecording(action)
-            window?.makeFirstResponder(tiles[action]?.shortcutButton)
+            editingAction = action; editingIndex = min(1, max(0, index))
+            editor.startRecording(action, index: editingIndex)
+            window?.makeFirstResponder(tiles[action]?.shortcutButtons[editingIndex])
         }
         refreshShortcuts()
     }
@@ -532,11 +663,18 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     func refreshShortcuts() {
         guard !isRefreshing else { return }
         isRefreshing = true; defer { isRefreshing = false }
+        editor.refreshAvailability()
         let previousFeedback = feedback.stringValue
         for action in ShortcutAction.settingsOrder {
             let recording = editor.recordingAction == action
-            let title = recording && editor.recordingTitle(action).contains(L("录入中")) ? L("按组合键") : editor.recordingTitle(action)
-            tiles[action]?.configure(shortcut: title, editing: isEditing && editingAction == action, launchesEnabled: !isEditing, hasError: editor.hasIssue(action))
+            let count = editor.bindingDraft[action]?.count ?? 0
+            let titles = (0..<count).map { index in editor.recordingTitle(action, index: index) }
+            let issues: [String?] = (0..<max(count, (recording ? (editor.recordingIndex ?? -1) : -1) + 1)).map { index in
+                editor.hasIssue(action, index: index) ? editor.message(action, index: index) : nil
+            }
+            tiles[action]?.configure(shortcuts: titles, editing: isEditing,
+                recordingIndex: recording ? editor.recordingIndex : nil,
+                launchesEnabled: !isEditing, issues: issues)
         }
         let state = pinState()
         tiles[.togglePins]?.launchButton.title = state.hidden ? L("显示全部贴图") : L("隐藏全部贴图")
@@ -550,9 +688,10 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         let issue = editingAction.flatMap { issues.contains($0) ? $0 : nil } ?? issues.first
         if let issue { feedback.stringValue = editor.conciseMessage(issue); feedback.textColor = .systemOrange }
         else {
-            feedback.stringValue = ""
+            feedback.stringValue = isEditing ? L("每项最多 2 组 · Esc 取消编辑") : ""
             feedback.textColor = HomeWindowPalette.muted
         }
+        feedback.toolTip = feedback.stringValue.isEmpty ? nil : feedback.stringValue
         optionsButton.isHidden = isEditing
         refreshPermissions()
         footer.isHidden = isShowingOptions
@@ -613,12 +752,12 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     @discardableResult
     func finishEditing(resumingInput: Bool = true) -> Bool {
         guard isEditing else { return true }
-        if editor.draft == store.shortcuts && !ShortcutAction.allCases.contains(where: { editor.hasIssue($0) }) {
+        if editor.bindingDraft == store.shortcutBindings && !ShortcutAction.allCases.contains(where: { editor.hasIssue($0) }) {
             cancelEditing(); return true
         }
-        let previous = store.shortcuts
+        let previous = store.shortcutBindings
         let saved = editor.save()
-        let changed = ShortcutAction.settingsOrder.filter { previous[$0] != store.shortcuts[$0] }
+        let changed = ShortcutAction.settingsOrder.filter { previous[$0] != store.shortcutBindings[$0] }
         if saved { isEditing = false; editingAction = nil; clearEditingFocus(); refreshShortcuts() }
         else if resumingInput { resumeEditingInput() }
         changed.forEach { tiles[$0]?.polishGlass() }
@@ -627,8 +766,9 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     private func resumeEditingInput() {
         if isEditing, editor.recordingAction == nil,
            let action = editingAction {
-            editor.startRecording(action)
-            window?.makeFirstResponder(tiles[action]?.shortcutButton)
+            editingIndex = min(editingIndex, editor.bindingDraft[action]?.count ?? 0)
+            editor.startRecording(action, index: editingIndex)
+            window?.makeFirstResponder(tiles[action]?.shortcutButtons[editingIndex])
         }
     }
     @objc private func optionsClicked() { showOptions() }
@@ -639,20 +779,20 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         guard isEditing, window != nil else { return false }
         let point = content.convert(event.locationInWindow, from: nil)
         let hit = content.hitTest(content.convert(point, to: content.superview))
-        let editors: [NSView] = tiles.values.map { $0.shortcutButton } + [defaults, done, cancelEdit, closeHome, feedback]
+        let editors: [NSView] = tiles.values.flatMap { $0.shortcutControls } + [defaults, done, cancelEdit, closeHome, feedback]
         if let hit, editors.contains(where: { hit === $0 || hit.isDescendant(of: $0) }) { return false }
         // Failed validation keeps the draft and consumes this click, avoiding an accidental launch.
         return !finishEditing()
     }
     @objc private func quitClicked() { if finishEditing() { onQuit() } }
     @objc private func defaultsClicked() {
-        let previous = store.shortcuts
+        let previous = store.shortcutBindings
         allTiles.forEach { $0.stopFeedback() }
         let saved = editor.restoreDefaultsImmediately()
         if saved { isEditing = false; editingAction = nil; clearEditingFocus(); refreshShortcuts() }
         // Registration cleanup can warn after the defaults were successfully committed.
         if editor.defaultsWereCommitted {
-            ShortcutAction.settingsOrder.filter { previous[$0] != store.shortcuts[$0] }
+            ShortcutAction.settingsOrder.filter { previous[$0] != store.shortcutBindings[$0] }
                 .forEach { tiles[$0]?.polishGlass() }
         }
     }
@@ -667,7 +807,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     }
     private static func handleImage(reset: Bool) -> NSImage {
         NSImage(size: NSSize(width: 20, height: 20), flipped: true) { _ in
-            HomeWindowPalette.muted.setStroke(); HomeWindowPalette.wood.setFill()
+            HomeWindowPalette.ink.setStroke(); HomeWindowPalette.wood.setFill()
             let plate = NSBezierPath(roundedRect: CGRect(x: 8, y: 2, width: 5, height: 15), xRadius: 2, yRadius: 2)
             plate.lineWidth = 1.2; plate.fill(); plate.stroke()
             let lever = NSBezierPath(roundedRect: reset ? CGRect(x: 3, y: 7, width: 10, height: 3) : CGRect(x: 10, y: 7, width: 3, height: 11), xRadius: 1.3, yRadius: 1.3)
@@ -681,7 +821,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
 
     private static func dismissImage(closing: Bool) -> NSImage {
         NSImage(size: NSSize(width: 20, height: 20), flipped: true) { _ in
-            HomeWindowPalette.muted.setStroke(); HomeWindowPalette.wood.setFill()
+            HomeWindowPalette.ink.setStroke(); HomeWindowPalette.wood.setFill()
             let path = NSBezierPath(); path.lineWidth = 1.2
             path.lineCapStyle = .round; path.lineJoinStyle = .round
             if closing {

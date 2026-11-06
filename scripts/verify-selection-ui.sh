@@ -9,8 +9,8 @@ if [[ ! -d "$task_sdk" ]]; then
     printf 'FAIL: verification SDK does not exist: %s\n' "$task_sdk" >&2
     exit 1
 fi
-if [[ "$#" -ne 0 ]]; then
-    printf 'Usage: scripts/verify-selection-ui.sh\n' >&2
+if [[ "$#" -gt 1 || ( "$#" -eq 1 && "$1" != "--scroll-only" && "$1" != "--overlay-only" && "$1" != "--build-only" ) ]]; then
+    printf 'Usage: scripts/verify-selection-ui.sh [--scroll-only|--overlay-only|--build-only]\n' >&2
     exit 2
 fi
 mkdir -p "$task_work/module-cache"
@@ -31,4 +31,8 @@ xcrun swiftc -parse-as-library -swift-version 5 -sdk "$task_sdk" \
     "$task_root/Sources/ScreenLeaf/AnnotationControls.swift" \
     "$task_root/Sources/ScreenLeaf/DemoImage.swift" \
     "$task_work/SelectionUIVerification.swift" -o "$task_work/verify-selection-ui"
-"$task_work/verify-selection-ui" "$task_work"
+if [[ "${1:-}" == "--build-only" ]]; then
+    printf 'BUILT: selection UI verification (not launched)\n'
+    exit 0
+fi
+"$task_work/verify-selection-ui" "$task_work" "${1:-}"

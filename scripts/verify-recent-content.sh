@@ -11,4 +11,8 @@ done
 xcrun swiftc -parse-as-library -swift-version 5 -sdk "$screenleaf_sdk" \
     -module-cache-path "$screenleaf_cache" -target "$(uname -m)-apple-macosx15.0" \
     "${task_sources[@]}" scripts/verify-recent-content.swift -o "$task_work/verify-recent-content"
+if [[ "${1:-}" == "--build-only" ]]; then
+    printf 'BUILT: recent content verification (not launched)\n'
+    exit 0
+fi
 "$task_work/verify-recent-content" "$task_work" | tee "$task_work/results.log"

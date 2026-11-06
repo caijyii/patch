@@ -13,6 +13,8 @@ enum HomeFooterLayout {
 /// The secondary page lives in the Home window; it never creates another settings window.
 @MainActor
 final class AppOptionsView: NSView {
+    /// Excludes the Home window's titlebar/top inset; the parent sizes this page on entry.
+    static let preferredContentHeight: CGFloat = 328
     let appearanceControl = SettingsSelector(frame: .zero, pullsDown: true)
     let languageControl = SettingsSelector(frame: .zero, pullsDown: true)
     let countControl = SettingsSelector(frame: .zero, pullsDown: true)
@@ -22,7 +24,6 @@ final class AppOptionsView: NSView {
     private let onRequestPermission: () -> Void
     private let back = NSButton(title: L("返回首页"), target: nil, action: nil)
     private let close = NSButton(title: L("关闭"), target: nil, action: nil)
-    private let title = NSTextField(labelWithString: L("更多设置"))
     private let general = NSTextField(labelWithString: L("通用"))
     private let appearanceLabel = NSTextField(labelWithString: L("外观"))
     private let languageLabel = NSTextField(labelWithString: L("语言"))
@@ -33,7 +34,6 @@ final class AppOptionsView: NSView {
     private let permissionState = NSTextField(labelWithString: "")
     private let authorize = NSButton(title: L("去授权"), target: nil, action: nil)
     private let permissionHint = NSTextField(wrappingLabelWithString: L("用于截图、提取屏幕文字和录屏。"))
-    private let historyHint = NSTextField(wrappingLabelWithString: L("运行期间自动收录图片和文字，最多保留 20 条。退出后清空。"))
 
     override var isFlipped: Bool { true }
     init(preferences: PreferencesStore, onBack: @escaping () -> Void,
@@ -70,21 +70,25 @@ final class AppOptionsView: NSView {
         appearanceControl.setAccessibilityLabel(appearanceLabel.stringValue)
         languageControl.setAccessibilityLabel(languageLabel.stringValue)
         countControl.setAccessibilityLabel(countLabel.stringValue)
-        title.font = .systemFont(ofSize: 23, weight: .medium)
+        appearanceLabel.identifier = NSUserInterfaceItemIdentifier("options.appearance-label")
+        languageLabel.identifier = NSUserInterfaceItemIdentifier("options.language-label")
+        countLabel.identifier = NSUserInterfaceItemIdentifier("options.count-label")
         for label in [general, permissions] {
             label.font = .systemFont(ofSize: 12, weight: .semibold); label.textColor = HomeWindowPalette.muted
         }
         for label in [appearanceLabel, languageLabel, countLabel, permissionLabel, permissionState] { label.font = .systemFont(ofSize: 13) }
         permissionState.textColor = HomeWindowPalette.muted
-        permissionState.alignment = .right
+        permissionState.alignment = .left
         permissionLabel.identifier = NSUserInterfaceItemIdentifier("options.permission-label")
         permissionState.identifier = NSUserInterfaceItemIdentifier("options.permission-state")
         permissionHint.identifier = NSUserInterfaceItemIdentifier("options.permission-hint")
-        for label in [permissionHint, historyHint, languageHint] {
+        for label in [permissionHint, languageHint, permissionState] {
             label.font = .systemFont(ofSize: 12); label.textColor = HomeWindowPalette.muted
         }
-        for view in [back, close, title, general, appearanceLabel, appearanceControl, languageLabel, languageControl, languageHint, countLabel, countControl, permissions,
-                     permissionLabel, permissionState, authorize, permissionHint, historyHint] { addSubview(view) }
+        languageHint.identifier = NSUserInterfaceItemIdentifier("options.language-restart-hint")
+        languageHint.textColor = .systemOrange
+        for view in [back, close, general, appearanceLabel, appearanceControl, languageLabel, languageControl, languageHint, countLabel, countControl, permissions,
+                     permissionLabel, permissionState, authorize, permissionHint] { addSubview(view) }
         refreshAppearanceSelection()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -92,6 +96,7 @@ final class AppOptionsView: NSView {
         appearanceControl.selectItem(at: AppAppearancePreference.allCases.firstIndex(of: preferences.appearancePreference) ?? 0)
         languageControl.selectItem(at: AppLanguagePreference.allCases.firstIndex(of: preferences.languagePreference) ?? 0)
         countControl.selectItem(at: preferences.pinRecentCount - 1)
+        languageHint.isHidden = AppLocalization.resolvesToEnglish(preferences.languagePreference) == AppLocalization.isEnglish
         for control in [appearanceControl, languageControl, countControl] {
             // AppKit hides the first item when adding pull-down entries even with
             // a separate button title. All entries here are actual setting values.
@@ -114,25 +119,29 @@ final class AppOptionsView: NSView {
         let closeWidth = max(84, close.fittingSize.width), backWidth = max(112, back.fittingSize.width)
         close.frame = CGRect(x: bounds.maxX - closeWidth, y: HomeFooterLayout.buttonY(in: bounds), width: closeWidth, height: HomeFooterLayout.buttonHeight)
         back.frame = CGRect(x: close.frame.minX - 12 - backWidth, y: close.frame.minY, width: backWidth, height: HomeFooterLayout.buttonHeight)
-        title.frame = CGRect(x: formInset, y: 0, width: right - formInset, height: 32)
-        general.frame = CGRect(x: formInset, y: 51, width: right - formInset, height: 18)
-        appearanceLabel.frame = CGRect(x: formInset, y: 89, width: 230, height: 22)
-        appearanceControl.frame = CGRect(x: right - controlWidth, y: 84, width: controlWidth, height: 30)
-        languageLabel.frame = CGRect(x: formInset, y: 133, width: 230, height: 22)
-        languageControl.frame = CGRect(x: right - controlWidth, y: 128, width: controlWidth, height: 30)
-        languageHint.frame = CGRect(x: formInset, y: 159, width: right - formInset, height: 18)
-        countLabel.frame = CGRect(x: formInset, y: 196, width: 230, height: 22)
-        countControl.frame = CGRect(x: right - controlWidth, y: 191, width: controlWidth, height: 30)
-        historyHint.frame = CGRect(x: formInset, y: 235, width: right - formInset, height: 38)
-        permissions.frame = CGRect(x: formInset, y: 300, width: right - formInset, height: 18)
-        permissionLabel.frame = CGRect(x: formInset, y: 340, width: 230, height: 22)
-        permissionState.frame = CGRect(x: right - controlWidth, y: 340, width: controlWidth, height: 22)
-        authorize.frame = CGRect(x: right - controlWidth, y: 374, width: controlWidth, height: 30)
-        permissionHint.frame = CGRect(x: formInset, y: 378, width: right - controlWidth - 24 - formInset, height: 38)
+        general.frame = CGRect(x: formInset, y: 8, width: right - formInset, height: 18)
+        appearanceLabel.frame = CGRect(x: formInset, y: 46, width: 230, height: 22)
+        appearanceControl.frame = CGRect(x: right - controlWidth, y: 41, width: controlWidth, height: 30)
+        languageLabel.frame = CGRect(x: formInset, y: 90, width: ceil(languageLabel.fittingSize.width), height: 22)
+        languageControl.frame = CGRect(x: right - controlWidth, y: 85, width: controlWidth, height: 30)
+        layoutStatus(languageHint, beside: languageLabel, trailingEdge: languageControl.frame.minX - 20)
+        countLabel.frame = CGRect(x: formInset, y: 134, width: 230, height: 22)
+        countControl.frame = CGRect(x: right - controlWidth, y: 129, width: controlWidth, height: 30)
+        permissions.frame = CGRect(x: formInset, y: 188, width: right - formInset, height: 18)
+        permissionLabel.frame = CGRect(x: formInset, y: 220, width: ceil(permissionLabel.fittingSize.width), height: 22)
+        let authorizeWidth = max(84, ceil(authorize.fittingSize.width))
+        authorize.frame = CGRect(x: right - authorizeWidth, y: 215, width: authorizeWidth, height: 30)
+        layoutStatus(permissionState, beside: permissionLabel, trailingEdge: authorize.frame.minX - 20)
+        permissionHint.frame = CGRect(x: formInset, y: 246, width: right - formInset, height: 18)
+    }
+    private func layoutStatus(_ status: NSTextField, beside label: NSTextField, trailingEdge: CGFloat) {
+        status.frame = CGRect(x: label.frame.maxX + 12, y: label.frame.minY,
+            width: max(0, trailingEdge - label.frame.maxX - 12), height: 22)
+        status.frame.origin.y += label.firstBaselineOffsetFromTop - status.firstBaselineOffsetFromTop
     }
     override func draw(_ dirtyRect: NSRect) {
         HomeWindowPalette.edge.withAlphaComponent(0.22).setFill()
-        CGRect(x: 24, y: 285, width: bounds.width - 48, height: 1).fill()
+        CGRect(x: 24, y: 174, width: bounds.width - 48, height: 1).fill()
     }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
     @objc private func goBack() { onBack() }
@@ -162,7 +171,7 @@ enum WindowGlyph {
     enum Kind { case records, batch, settings, authorize, back, close }
     static func image(_ kind: Kind) -> NSImage {
         let image = NSImage(size: NSSize(width: 20, height: 20), flipped: true) { _ in
-            NSColor.black.setStroke()
+            HomeWindowPalette.ink.setStroke()
             let path = NSBezierPath(); path.lineWidth = 1.2
             path.lineCapStyle = .round; path.lineJoinStyle = .round
             func arch(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) {
@@ -210,7 +219,9 @@ enum WindowGlyph {
             }
             path.stroke(); return true
         }
-        image.isTemplate = true
+        // Rounded AppKit buttons and borderless launch cells tint templates differently.
+        // Draw with the shared appearance-aware ink in both hosts.
+        image.isTemplate = false
         return image
     }
 }

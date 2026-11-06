@@ -4,8 +4,8 @@ import sys
 from pathlib import Path
 source = Path(sys.argv[1]).read_text()
 parts = ['import AppKit\n']
-for name in ['ToolbarPalette', 'ToolbarMaterialView', 'ToolbarSeparator', 'SelectionButton', 'SelectionToolbar']:
-    match = re.search(r'^(?:final )?(?:class|enum) ' + name + r'\b', source, re.M)
+for name in ['ToolbarMetrics', 'ToolbarPalette', 'ToolbarMaterialView', 'ToolbarSeparator', 'SelectionButton', 'AnnotationSizeControl', 'SelectionToolbar']:
+    match = re.search(r'^(?:final )?(?:class|enum|struct) ' + name + r'\b', source, re.M)
     if not match:
         raise SystemExit('Missing actual shared widget: ' + name)
     start = match.start()
