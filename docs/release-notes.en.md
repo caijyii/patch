@@ -11,6 +11,13 @@ This update adds pin capture preferences and fixes a background alert that could
 
 Requires Apple Silicon and macOS 15+. Save any pins you want to keep before quitting the old version, then replace Patch.app in its existing installation location. The app remains ad-hoc signed and is not notarized by Apple. Permissions may need to be granted again. See the [installation guide](install.en.md).
 
+## Validation status addendum
+
+This updates the current validation status without rewriting the results recorded at release time:
+
+- The v0.1.2 release records passing synthetic capture pixels, recording lifecycle, background alert focus, and focused bilingual settings checks. Follow-up menu-bar hover checks did not reproduce menu movement or clipping, but the original automated check still intermittently fails to complete its observations. The cause remains under investigation; this is not a claim that a product defect has been fixed.
+- Extended real recording and in-place upgrades from older versions still need testing on a real system. These are unverified, not known test failures. See the maintainer's [release checklist (Chinese)](release-checklist.md).
+
 ## Patch 0.1.1
 
 This update improves scrolling capture capacity and explains what to do when a limit is reached:

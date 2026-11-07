@@ -28,12 +28,14 @@
 
 需要 **macOS 15+、Apple Silicon（M 系列芯片）**。
 
-- **直接下载**：[GitHub 下载](https://github.com/caijyii/patch/releases/tag/v0.1.2)，提供 **DMG / ZIP**，打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。无需开发工具。
+- **直接下载**：[最新正式版 v0.1.2](https://github.com/caijyii/patch/releases/tag/v0.1.2)，推荐下载 **DMG**；ZIP 是另一种安装方式，二选一即可。打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。`Source code` 是源码，不是普通用户的安装包；安装无需开发工具。
 - **让 Agent 安装**：把下面这句话交给自己的 Agent。
 
 > 请从 https://github.com/caijyii/patch 的 GitHub Releases 下载适合我的 Mac 的 Patch 安装包并安装。
 
 当前安装包采用临时签名，尚未公证，首次打开可能需要你在系统设置中确认。[安装与权限说明](docs/install.md)
+
+目前需手动更新：到 [最新正式 Release](https://github.com/caijyii/patch/releases/latest) 下载新版，按[更新步骤](docs/install.md#更新与卸载)保存所需贴图、退出并替换旧版；应用没有自动检查或安装更新。
 
 ### 从源码构建
 
@@ -48,7 +50,7 @@ bash scripts/build-sandbox-app.sh
 ## 使用须知
 
 - 权限按功能申请；授权未生效时重启应用。
-- 运行期间自动收录剪贴板图片、文字与视频文件引用；剪贴记录和贴图在退出后清空。关闭首页后，应用仍在菜单栏运行。
+- 启动时读取当前剪贴板，运行期间自动收录图片、文字与视频文件引用，没有收录开关，也不能识别所有敏感内容。记录仅存于本次进程内存，退出后清空；贴图也随退出关闭。关闭首页后仍在菜单栏运行并继续收录；需从 Patch 菜单选择「退出」。
 - 长截图遇到动态布局或多个滚动区域时可能无法可靠拼接，固定栏与浮层可能保留或重复。
 
 详细操作见[使用说明](docs/usage.md)，数据处理见[隐私说明](docs/privacy-policy.md)。
@@ -72,7 +74,7 @@ bash scripts/build-sandbox-app.sh
 
 ## 近期更新
 
-长截图可在保留原始像素的前提下截得更长。达到内存预算或高度上限时，明确说明停止拼接的原因，并提示先保存当前段。
+0.1.2 新增截图／录屏时隐藏桌面贴图的独立选项，默认开启；修复后台错误提示未获得焦点、导致操作看似卡住的问题。
 
 详见[更新说明](docs/release-notes.md)。
 

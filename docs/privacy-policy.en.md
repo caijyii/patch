@@ -2,7 +2,7 @@
 
 [简体中文](privacy-policy.md) · [English](privacy-policy.en.md)
 
-Updated: November 6, 2026. This notice describes Patch 0.1.0. The maintainer is caijyii, reachable at [caijyii@163.com](mailto:caijyii@163.com).
+Updated: November 7, 2026. This notice describes Patch 0.1.2. The maintainer is caijyii, reachable at [caijyii@163.com](mailto:caijyii@163.com).
 
 ## Local processing
 
@@ -29,7 +29,7 @@ Copying places output on the system clipboard. Clearing Patch history does not c
 
 Images, text, and annotations are kept in memory during the session. Exported images and videos remain where you save them. Recording uses temporary files accessible to the app and attempts to remove them after a successful export; failed saves may leave temporary recordings for recovery. Uninstalling Patch does not automatically delete exported files.
 
-Shortcuts, annotation preferences, sticker order, appearance, interface language, and batch pin count are stored in local app preferences. History content is not included in those preferences. Interface translations are bundled with the app; clipboard content is not uploaded for translation. System logs may contain error codes, image dimensions, processing durations, and diagnostic metadata for scrolling events. Patch has no feature that automatically sends logs to the developer.
+Shortcuts, annotation preferences, sticker order, appearance, interface language, batch pin count, and screenshot / recording pin-hiding options are stored in local app preferences. History content is not included in those preferences. Interface translations are bundled with the app; clipboard content is not uploaded for translation. System logs may contain error codes, image dimensions, processing durations, and diagnostic metadata for scrolling events. Patch has no feature that automatically sends logs to the developer.
 
 ## Feedback and third-party services
 

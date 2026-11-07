@@ -6,7 +6,7 @@ Requires **Apple Silicon (M-series chips) and macOS 15 or later**. Xcode and Com
 
 ## Download and install
 
-1. Download a DMG or ZIP from [GitHub Releases](https://github.com/caijyii/patch/releases). Access depends on repository permissions. If the maintainer provided a DMG directly, start with step 2. The `Source code` downloads contain source files, not an installer.
+1. Download the [latest stable release](https://github.com/caijyii/patch/releases/latest), currently **v0.1.2**. **DMG is recommended**: `Patch-0.1.2-macOS-arm64.dmg`. ZIP is an alternative installation method; choose just one. `Source code` contains source files, not an installer for ordinary users. If the maintainer provided a DMG directly, start with step 2.
 2. **DMG**: Open it and drag `Patch.app` into the adjacent Applications folder, then eject the disk image. **ZIP**: Extract it and move `Patch.app` into Applications. Quit other Patch versions first and confirm any replacement of an existing installation.
 3. Open Patch from Applications and grant permissions for the features you use.
 
@@ -44,11 +44,11 @@ Compare the result with `SHA256SUMS.txt` from the same release. For a DMG, use `
 
 ## Update or uninstall
 
-You can replace an earlier preview installation with this release.
+Updates require manually downloading an installer; Patch does not automatically check for or install updates. Visit the [latest stable release](https://github.com/caijyii/patch/releases/latest), compare versions, read the release notes, and download the new DMG (or ZIP). Use the steps below to replace earlier preview installations too. In-place upgrade testing on a real system remains outstanding; this is not a validation claim for every older version.
 
-1. Choose Quit from the Patch menu bar menu. Quitting closes pins and clears the current clipboard history.
-2. Open the new DMG and drag `Patch.app` into Applications. Choose Replace if an older copy exists, keeping the same installation location.
-3. Eject the DMG and open Patch from Applications. If screen capture or recording permissions are requested again, grant them and restart Patch.
+1. Save any pins you want to keep and finish any capture or recording, then choose Quit from the Patch menu bar menu. Quitting closes pins and clears the current clipboard history; closing the home window alone does not quit.
+2. Open the new DMG (or extract the ZIP) and drag `Patch.app` into Applications. Choose Replace if an older copy exists, keeping the same installation location.
+3. Eject the disk image if you used a DMG, then open Patch from Applications. If screen capture or recording permissions are requested again, grant them and restart Patch.
 4. Shortcuts, appearance, language, and sticker order are retained under the same app identifier. An unchanged set of old default shortcuts migrates to the new order; custom shortcuts are preserved.
 
 If an older copy is in Downloads or another folder, quit it and move that copy to Trash. Launch the installed copy from Applications. Patch Development uses a separate identifier, preferences, and permissions; you can remove old development copies after quitting them.

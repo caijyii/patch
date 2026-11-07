@@ -19,10 +19,12 @@ See the [installation guide](install.en.md) for setup and updates, and the [rele
 - Click an image pin to activate Patch before pinching. After switching to another app, click the pin again. Scroll-wheel zoom works directly.
 - Pinning new content does not restore hidden pins. Show All Pins restores only the most recently hidden group at its previous positions.
 - Deleting or clearing history does not close existing pins. Quitting Patch closes all pins.
+- On the home screen, open More Settings → General for the separate Hide desktop pins in screenshots and Hide desktop pins in recordings switches. Both default to on and are saved automatically. Turn off screenshot hiding to include visible image and text pins in regular and scrolling captures; manually hidden pins stay hidden, and operation overlays remain excluded.
 
 ## Clipboard history
 
-- While running, Patch automatically collects clipboard images, plain text, video files copied in Finder, and recordings saved through Patch. History is cleared on quit.
+- Patch reads the current clipboard at startup and automatically collects images, plain text, video files copied in Finder, and recordings saved through Patch while running. Collection has no toggle and cannot detect all sensitive content.
+- History stays only in process memory, is not written to disk, and is cleared on quit. Closing the home window leaves Patch running and collecting in the menu bar; choose Quit from the Patch menu to exit.
 - Filter by images, text, or videos. Click an image or text card to pin it, or a video card to open it in the default app. Each record can be copied or deleted directly.
 - Clear removes only the selected category. Select All to clear every category.
 - Batch pinning uses recent images and text, regardless of the current filter. The default is 5 items, adjustable from 1 to 20 in More Settings.
@@ -35,6 +37,7 @@ See the [installation guide](install.en.md) for setup and updates, and the [rele
 - Pause and resume are supported. Paused time is excluded, and the result is saved as one MP4.
 - Hiding the control window keeps recording; use Show Controls in the menu to restore it. Closing the control window stops and saves the recording.
 - Pause, resume, or stop from the Patch menu, or stop with macOS's menu bar recording control. The control window, region border, and outer mask are excluded from the video.
+- Turn off More Settings → General → Hide desktop pins in recordings to include visible pins, including image and text pins added during recording. Other Patch feature windows remain excluded. The preference applies to the next recording and stays fixed across pause and resume; it does not control other recording apps.
 - If saving fails, recording segments are retained and the control window reappears so you can retry.
 
 ## Stickers and settings

@@ -28,12 +28,14 @@ Content is processed locally, with no accounts, ads, or cloud uploads. The inter
 
 Requires **macOS 15+ and Apple Silicon (M-series chips)**.
 
-- **Download**: Get the **DMG or ZIP** from the [GitHub release](https://github.com/caijyii/patch/releases/tag/v0.1.2). Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. No developer tools are required.
+- **Download**: Get the [latest stable release, v0.1.2](https://github.com/caijyii/patch/releases/tag/v0.1.2). **DMG is recommended**; ZIP is an alternative, so choose just one. Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. `Source code` contains source files, not an installer for ordinary users. No developer tools are required.
 - **Ask an agent to install**: Give your agent this instruction:
 
 > Download the Patch installer compatible with my Mac from the GitHub Releases at https://github.com/caijyii/patch and install it.
 
 The current release uses ad-hoc signing and is not notarized. You may need to confirm the first launch in System Settings. See the [installation and permissions guide](docs/install.en.md).
+
+Updates are manual: download a newer version from the [latest stable release](https://github.com/caijyii/patch/releases/latest), then follow the [update steps](docs/install.en.md#update-or-uninstall) to save any pins you need, quit, and replace the old app. Patch does not automatically check for or install updates.
 
 ### Build from source
 
@@ -48,7 +50,7 @@ Output: `.build/distribution-check/Patch.app` (Patch Development). This is an ad
 ## Usage notes
 
 - Permissions are requested as needed. Restart the app if a newly granted permission has not taken effect.
-- While running, Patch automatically collects clipboard images, text, and video file references. Clipboard history and desktop pins are cleared when you quit. Closing the home window leaves the app running in the menu bar.
+- Patch reads the current clipboard at startup and automatically collects images, text, and video file references while running. Collection has no toggle and cannot detect all sensitive content. History stays only in process memory and is cleared on quit; pins also close. Closing the home window leaves Patch running and collecting in the menu bar; choose Quit from the Patch menu to exit.
 - Scrolling captures may not stitch reliably with dynamic layouts or multiple scrollable areas. Fixed headers and overlays may remain visible or appear more than once.
 
 See the [usage guide](docs/usage.en.md) and [privacy notice](docs/privacy-policy.en.md).
@@ -72,7 +74,7 @@ See the [usage guide](docs/usage.en.md) and [privacy notice](docs/privacy-policy
 
 ## Recent updates
 
-Longer scrolling captures preserve the original pixels. When the memory budget or height limit is reached, the app clearly explains why stitching stopped and prompts you to save the current segment.
+Version 0.1.2 adds separate options to hide desktop pins in screenshots and recordings, both on by default. It also fixes background error alerts failing to receive focus and making the app appear unresponsive.
 
 See the [release notes](docs/release-notes.en.md).
 
