@@ -8,7 +8,7 @@
 
 [简体中文](README.md) · [English](README.en.md)
 
-**截图、长截图、录屏、标注、贴图，一个 Patch 就够。**
+**一款用起来顺手的 macOS 截图贴图工具。**
 
 ## 功能
 

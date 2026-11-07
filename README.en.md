@@ -8,7 +8,7 @@
 
 [简体中文](README.md) · [English](README.en.md)
 
-**Screenshots, scrolling captures, recording, annotations, and desktop pins—all in Patch.**
+**A macOS screenshot and desktop pinning tool that feels natural to use.**
 
 ## Features
 
