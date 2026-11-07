@@ -44,3 +44,9 @@ Swift 模块与源码目录统一为 `Patch`（`Sources/Patch`），测试模块
 `bash scripts/verify-pin-gestures.sh --interactive` 显示蓝色普通图和橙色合成长图，供真实触控板捏合诊断，180 秒自动关闭；仅输出手势类型、窗口编号和缩放比例，不采集图像或文字。`--verify` 同时覆盖普通、6,000 与 24,000 像素高的合成图，但模拟事件不能替代硬件事件派发验收。
 
 `bash scripts/verify-scroll-budget.sh --verify` 用合成的 2400 像素宽 Retina 场景对比 128／256／512 MiB 预算，并验证窄图达到 60,000 像素高度。逐像素检查拼接及 PNG 编码解码往返，记录测试进程在拼接和导出阶段的累计常驻内存峰值；这些数字不代表整个应用含 OCR、标注、历史记录的总峰值。支持 `--build-only`。
+
+`bash scripts/verify-images.sh --annotation-styles` 使用合成内容及独立命名剪贴板检查标注默认样式与主动选中编辑、文字贴图字号、粗斜体及撤销、图文编辑完成自动复制、富文本贴图往返和旧偏好兼容；不读写系统通用剪贴板。
+
+`bash scripts/verify-recent-content.sh --rich-text` 用合成富文本与独立剪贴板验证样式变化新增记录、相同样式去重、历史卡片预览、复制与再次贴出的样式保留，并检查原有容量和剪贴板流程。
+
+`bash scripts/verify-images.sh --text-pins` 用合成文本检查双向缩放、自适应宽度、全文展开、初始宽高不超过屏幕一半、长文拖动及可编辑性。模拟手势不替代真实触控板派发验收。

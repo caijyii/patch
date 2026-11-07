@@ -311,8 +311,13 @@ final class RecentContentWindowController: NSWindowController, NSWindowDelegate 
                 }
                 try ImageToolsUI.copyPNG(image, pixelScale: scale, to: pasteboard)
             case .text(let text):
+                let value = NSPasteboardItem()
+                value.setString(text, forType: .string)
+                if let rich = item.richText {
+                    value.setData(try ImageToolsUI.portableTextRTF(rich), forType: .rtf)
+                }
                 pasteboard.clearContents()
-                guard pasteboard.setString(text, forType: .string) else {
+                guard pasteboard.writeObjects([value]) else {
                     sender.showResult(success: false); return
                 }
             case .video(let video):
@@ -477,9 +482,12 @@ private final class RecentItemButton: NSButton {
                 CGRect(x: preview.midX - 22, y: preview.midY - 18, width: 44, height: 36))
         } else if case .text(let text) = item.content {
             let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byWordWrapping; paragraph.lineSpacing = 4
-            (String(text.prefix(2000)) as NSString).draw(with: preview.insetBy(dx: 6, dy: 5),
-                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                attributes: [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph])
+            let prefix = String(text.prefix(2000))
+            let styled = item.richText.map { NSMutableAttributedString(attributedString:
+                $0.attributedSubstring(from: NSRange(location: 0, length: (prefix as NSString).length))) }
+                ?? NSMutableAttributedString(string: prefix, attributes: [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.labelColor])
+            styled.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: styled.length))
+            styled.draw(with: preview.insetBy(dx: 6, dy: 5), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         }
         NSGraphicsContext.restoreGraphicsState()
         if case .video = item.content {

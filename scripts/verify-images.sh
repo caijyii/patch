@@ -9,8 +9,8 @@ if [[ ! -d "$task_sdk" ]]; then
     printf 'FAIL: verification SDK does not exist: %s\n' "$task_sdk" >&2
     exit 1
 fi
-if [[ "$#" -gt 1 ]] || [[ "$#" -eq 1 && "$1" != "--ocr" && "$1" != "--build-only" ]]; then
-    printf 'Usage: scripts/verify-images.sh [--ocr|--build-only]\n' >&2
+if [[ "$#" -gt 1 ]] || [[ "$#" -eq 1 && "$1" != "--ocr" && "$1" != "--build-only" && "$1" != "--annotation-styles" && "$1" != "--text-pins" ]]; then
+    printf 'Usage: scripts/verify-images.sh [--ocr|--build-only|--annotation-styles|--text-pins]\n' >&2
     exit 2
 fi
 mkdir -p "$task_work/module-cache"

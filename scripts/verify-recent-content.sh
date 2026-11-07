@@ -15,4 +15,4 @@ if [[ "${1:-}" == "--build-only" ]]; then
     printf 'BUILT: recent content verification (not launched)\n'
     exit 0
 fi
-"$task_work/verify-recent-content" "$task_work" | tee "$task_work/results.log"
+"$task_work/verify-recent-content" "$task_work" ${1:+"$1"} | tee "$task_work/results.log"

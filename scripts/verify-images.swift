@@ -13,6 +13,7 @@ private struct ImageToolsTextLayoutSnapshot: Equatable {
 }
 
 extension ImageToolsCanvas {
+    fileprivate func verificationSelectAnnotation(_ index: Int) { selectAnnotation(index) }
     fileprivate var verificationExportBounds: CGRect { exportBounds(for: annotations) }
     fileprivate var verificationHistoryRetainsRaster: Bool {
         history.contains { $0.annotations.contains { $0.mosaic != nil } }
@@ -49,7 +50,7 @@ extension ImageToolsEditorController {
         case .text: return [14, 18, 24, 32, 48]
         case .number: return [18, 24, 32, 40]
         case .mosaic: return [4, 8, 12, 20, 32]
-        default: return [1.5, 3, 5, 8]
+        default: return [1.5, 3.5, 5, 8]
         }
     }
     fileprivate var verificationWidthIndex: Int {
@@ -72,6 +73,11 @@ extension ImageToolsEditorController {
 }
 
 extension ImageToolsPinController {
+    fileprivate var verificationTextHasScrollbars: Bool { !scroll.isHidden && (scroll.hasVerticalScroller || scroll.hasHorizontalScroller) }
+    fileprivate var verificationTextDisplayedSize: CGSize { textView.map { $0.convert($0.bounds, to: surface).size } ?? .zero }
+    fileprivate var verificationTextSize: AnnotationSizeControl? { textSizeControl }
+    fileprivate var verificationTextStyles: [NSButton] { textStyleButtons }
+    fileprivate var verificationHUDMainButtons: [SelectionButton] { (toolbar.rows.first ?? []).compactMap { $0 as? SelectionButton } }
     fileprivate var verificationHUDButtons: [SelectionButton] { toolbar.rows.flatMap { $0 }.compactMap { $0 as? SelectionButton } }
     fileprivate var verificationCopyButtons: [SelectionButton] { toolbar.rows.flatMap { $0 }.compactMap { $0 as? SelectionButton }.filter { $0.title.hasPrefix("复制") } }
     fileprivate var verificationImage: CGImage? { imageView?.image }
@@ -87,6 +93,7 @@ extension ImageToolsPinController {
     fileprivate var verificationHUDTitles: [String] { toolbar.rows.flatMap { $0.compactMap { ($0 as? NSButton)?.title } } }
     fileprivate var verificationImageViewport: CGSize { verificationPinViewportFrame.size }
     fileprivate var verificationWholeImageFrame: CGRect? { imageFrame }
+    fileprivate var verificationWholeTextFrame: CGRect? { textFrame }
     fileprivate var verificationImageUsesScrollView: Bool { imageView != nil && (imageView?.enclosingScrollView != nil || !scroll.isHidden) }
     fileprivate var verificationImageSelectionRect: CGRect? {
         selectionOutline.selectionRect.map { surface.convert($0, from: selectionOutline) }
@@ -98,16 +105,19 @@ extension ImageToolsPinController {
     fileprivate var verificationOutlineFrame: CGRect { selectionOutline.frame }
     fileprivate var verificationPinViewportFrame: CGRect {
         if let imageView { return surface.convert(imageView.imageRect, from: imageView).intersection(surface.bounds) }
-        return surface.convert(scroll.contentView.bounds, from: scroll.contentView)
+        return textView.map { surface.convert($0.bounds, from: $0).intersection(surface.bounds) } ?? .zero
     }
-    fileprivate var verificationTextDocumentSize: CGSize { textView?.frame.size ?? .zero }
+    fileprivate var verificationTextDocumentSize: CGSize { baseSize }
     fileprivate var verificationTextSelection: NSRange? { textView?.selectedRange() }
     fileprivate var verificationTextRemainsEditable: Bool {
         textView?.isEditable == true && textView?.isSelectable == true
             && textView?.textContainerInset == CGSize(width: 16, height: 16)
             && textView?.textContainer?.widthTracksTextView == false
     }
-    fileprivate func verificationSelectText(_ range: NSRange) { setTextEditing(true); textView?.setSelectedRange(range) }
+    fileprivate func verificationSelectText(_ range: NSRange) {
+        if textView?.isMoving != false { setTextEditing(true) }
+        textView?.setSelectedRange(range)
+    }
     fileprivate func verificationTextReceivesHit() -> Bool {
         guard let textView, !textView.visibleRect.isEmpty else { return false }
         let point = surface.convert(CGPoint(x: textView.visibleRect.midX, y: textView.visibleRect.midY), from: textView)
@@ -120,12 +130,7 @@ extension ImageToolsPinController {
     }
     fileprivate func verificationContentReceivesHit(at point: CGPoint) -> Bool {
         if let imageView { return surface.hitTest(point) === imageView }
-        let expected = scroll.hitTest(point)
-        return expected != nil && surface.hitTest(point) === expected
-    }
-    fileprivate func verificationScrollImage() {
-        scroll.contentView.scroll(to: CGPoint(x: 0, y: 120))
-        scroll.reflectScrolledClipView(scroll.contentView)
+        return textView != nil && surface.hitTest(point) === textView
     }
     fileprivate func verificationSelect() { setSelected(true) }
     fileprivate func verificationDeselect() { setSelected(false) }
@@ -142,8 +147,8 @@ extension ImageToolsPinController {
         if useHUD { view = toolbar.rows.first?.first }
         else { view = imageView ?? textView }
         guard let view else { throw ImageToolsVerificationFailure(description: "Pin drag has no view") }
-        let hitView: NSView = useHUD || imageView != nil ? view : scroll.contentView
-        let start = source.convertPoint(toScreen: hitView.convert(CGPoint(x: hitView.bounds.midX, y: hitView.bounds.midY), to: nil))
+        let hitRect = view.visibleRect
+        let start = source.convertPoint(toScreen: view.convert(CGPoint(x: hitRect.midX, y: hitRect.midY), to: nil))
         let flags: NSEvent.ModifierFlags = textView != nil && !useHUD && option ? [.option] : []
         func event(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
             guard let result = NSEvent.mouseEvent(with: type, location: source.convertPoint(fromScreen: point),
@@ -159,7 +164,14 @@ extension ImageToolsPinController {
         view.mouseDragged(with: try event(.leftMouseDragged, at: end))
         view.mouseUp(with: try event(.leftMouseUp, at: end))
     }
-    fileprivate func verificationPrepareEditor() -> InlineAnnotationView? { annotateImage(); return inlineEditor }
+    fileprivate func verificationPrepareEditor() -> InlineAnnotationView? {
+        clipboard = NSPasteboard(name: .init("dev.screenleaf.verify.images.completion"))
+        annotateImage(); return inlineEditor
+    }
+    fileprivate func verificationUseClipboard(_ board: NSPasteboard) { clipboard = board }
+    fileprivate func verificationCompleteTextFromMenu() { toggleMoveMode() }
+    fileprivate func verificationCopy(to board: NSPasteboard) { clipboard = board; copyContent() }
+    fileprivate var verificationClipboard: NSPasteboard { clipboard }
     fileprivate func verificationWheel(_ amount: Int32, precise: Bool) throws {
         guard let view: NSView = imageView ?? textView else { return }
         let event = PinScrollEvent()
@@ -195,11 +207,12 @@ extension ImageToolsPinController {
     }
     fileprivate func verificationScale(_ newScale: CGFloat) {
         scale = newScale
-        if imageView != nil {
+        if imageView != nil || textView != nil {
             let visible = visibleArea()
             let size = CGSize(width: baseSize.width * scale, height: baseSize.height * scale)
-            imageFrame = CGRect(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2,
-                                width: size.width, height: size.height)
+            let frame = CGRect(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2,
+                               width: size.width, height: size.height)
+            if imageView != nil { imageFrame = frame } else { textFrame = frame }
         }
         updateScale()
     }
@@ -245,16 +258,40 @@ private final class PinAnnotationMagnifyEvent: NSEvent {
 private struct ImageToolsVerification {
     @MainActor static func main() {
         guard (2...3).contains(CommandLine.arguments.count), CommandLine.arguments[1].hasPrefix("/"),
-              CommandLine.arguments.count == 2 || CommandLine.arguments[2] == "--ocr" else { return }
+              CommandLine.arguments.count == 2 || CommandLine.arguments[2] == "--ocr" || CommandLine.arguments[2] == "--annotation-styles" || CommandLine.arguments[2] == "--text-pins" else { return }
         DispatchQueue.global().asyncAfter(deadline: .now() + 90) {
             fputs("FAIL: image verification timed out\n", stderr); exit(1)
         }
         do {
             _ = NSApplication.shared
+            if CommandLine.arguments.contains("--text-pins") {
+                try verifyTextPinGeometry()
+                try verifyTextPinContentBounds(outputDirectory: URL(fileURLWithPath: CommandLine.arguments[1]))
+                try verifyTextLayout()
+                return
+            }
+            if CommandLine.arguments.contains("--annotation-styles") {
+                try verifyTextStyleRoundTrip()
+                try verifyTextPinStyleControls()
+                try verifyDefaultTextColorCopy()
+                try verifyAnnotationStyleDefaults()
+                try verifyPinOutsideAnnotations()
+                try verifyObjectEditing()
+                try verifyMosaicEditing()
+                try verifyLegacyEditorBinding()
+                try verifyAnnotationToolbarConsistency()
+                print("PASS: annotation and rich-text interaction regression suite")
+                return
+            }
+            try verifyTextPinGeometry()
             try verifyCapturePinSize()
             try verifyWholeImagePinGeometry()
             try verifyExternalPinWindowMovement()
             try verifyClipboardPinSize()
+            try verifyTextStyleRoundTrip()
+            try verifyTextPinStyleControls()
+            try verifyDefaultTextColorCopy()
+            try verifyAnnotationStyleDefaults()
             try verifyCursorPinPlacement()
             let outputDirectory = CommandLine.arguments.dropFirst().first ?? "/private/tmp"
             try verifyPinOutsideAnnotations()
@@ -555,6 +592,287 @@ private struct ImageToolsVerification {
         print("PASS: complete screenshot/trimmed subject → isolated clipboard → pin at 1x/2x, full export pixels and external PNG metadata")
     }
 
+    @MainActor private static func verifyTextStyleRoundTrip() throws {
+        let board = NSPasteboard(name: .init("dev.screenleaf.verify.rich-text.\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        let text = NSMutableAttributedString(string: "彩色 Patch", attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: NSColor.labelColor])
+        let styledRange = NSRange(location: 3, length: 5)
+        let font = NSFontManager.shared.convert(NSFont.boldSystemFont(ofSize: 28), toHaveTrait: .italicFontMask)
+        text.addAttributes([.font: font, .foregroundColor: NSColor.systemRed], range: styledRange)
+        let pin = ImageToolsPinController(attributedText: text, preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+        defer { pin.close() }
+        pin.verificationCopy(to: board)
+        try require(board.string(forType: .string) == text.string && board.data(forType: .rtf) != nil,
+                    "Text copy must provide plain text and rich text: types=\(String(describing: board.types)), plain=\(String(describing: board.string(forType: .string))), selection=\(String(describing: pin.verificationTextSelection))")
+        let coordinator = ImageToolsCoordinator()
+        defer { coordinator.closeAll() }
+        coordinator.pinClipboard(from: board)
+        guard let pasted = coordinator.verificationPins.first, let storage = pasted.verificationTextView?.textStorage else {
+            throw ImageToolsVerificationFailure(description: "Rich clipboard did not create a text pin")
+        }
+        let restoredFont = storage.attribute(.font, at: 3, effectiveRange: nil) as? NSFont
+        let color = storage.attribute(.foregroundColor, at: 3, effectiveRange: nil) as? NSColor
+        try require(storage.string == text.string && restoredFont?.pointSize == 28,
+                    "Rich copy/pin round-trip lost text or font size")
+        try require(restoredFont.map { NSFontManager.shared.traits(of: $0).contains([.boldFontMask, .italicFontMask]) } == true,
+                    "Rich copy/pin round-trip lost bold or italic")
+        try require(color?.usingColorSpace(.deviceRGB)?.redComponent ?? 0 > 0.8,
+                    "Rich copy/pin round-trip lost text color")
+        pasted.verificationEditing(true)
+        try require(pasted.verificationTextRemainsEditable, "Imported rich text must remain editable")
+        pin.verificationSelectText(styledRange)
+        pin.verificationCopy(to: board)
+        try require(ImageToolsUI.clipboardText(from: board)?.string == "Patch", "Selected rich text copy included unselected text")
+        board.clearContents()
+        board.setData(try text.data(from: NSRange(location: 0, length: text.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]), forType: .rtf)
+        try require(ImageToolsUI.clipboardText(from: board)?.string == text.string, "External RTF-only clipboard was ignored")
+        board.clearContents(); board.setString("普通文字", forType: .string)
+        board.setData(Data("invalid rtf".utf8), forType: .rtf)
+        try require(ImageToolsUI.clipboardText(from: board)?.string == "普通文字", "Invalid RTF did not fall back to plain text")
+        let old = try JSONDecoder().decode(AnnotationPreference.self, from: Data(#"{"colorID":2,"width":5,"fontSize":24,"numberSize":32,"mosaicBlockSize":8}"#.utf8))
+        try require(old.fontSize == 24 && old.colorID == 2, "Old preferences lost their values after style upgrade")
+        print("PASS: colored rich text copy/pin, external RTF, selection copy, plain-text fallback and old preferences")
+    }
+
+    @MainActor private static func verifyTextPinStyleControls() throws {
+        let pin = ImageToolsPinController(text: "Patch colors", preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+        defer { pin.close() }
+        pin.verificationEditing(true)
+        guard let view = pin.verificationTextView, let storage = view.textStorage,
+              let size = pin.verificationTextSize, let undo = view.undoManager else {
+            throw ImageToolsVerificationFailure(description: "Text pin editing has no font-size control")
+        }
+        let buttons = pin.verificationTextStyles
+        try require(buttons.count == 2 && buttons.allSatisfy { !$0.isEnabled } && !size.isEnabled,
+                    "Style controls must be visible but disabled without selected text")
+        let selection = NSRange(location: 0, length: 5)
+        pin.verificationSelectText(selection)
+        try require(buttons.allSatisfy { $0.isEnabled } && size.isEnabled, "Selecting text did not enable its style controls")
+        let untouched = storage.attributedSubstring(from: NSRange(location: 5, length: 7))
+        func action(_ change: () -> Void) { undo.beginUndoGrouping(); change(); undo.endUndoGrouping() }
+        action { pin.verificationTextColor(.systemBlue) }
+        action { size.slider.doubleValue = 28; size.slider.sendAction(size.slider.action, to: size.slider.target) }
+        action { buttons[0].performClick(nil) }
+        action { buttons[1].performClick(nil) }
+        func font() -> NSFont { storage.attribute(.font, at: 0, effectiveRange: nil) as! NSFont }
+        try require(font().pointSize == 28 && NSFontManager.shared.traits(of: font()).contains(.boldFontMask) && ImageToolsUI.textIsItalic(storage.attributes(at: 0, effectiveRange: nil)),
+                    "Text pin toolbar did not apply size, bold and italic to selection")
+        try require(storage.attributedSubstring(from: NSRange(location: 5, length: 7)).isEqual(to: untouched)
+                    && view.selectedRange() == selection, "Text styling changed unselected characters or lost the selection")
+        undo.undo()
+        try require(!ImageToolsUI.textIsItalic(storage.attributes(at: 0, effectiveRange: nil)) && buttons[1].state == .off,
+                    "Undo did not restore text styles and toolbar state")
+        undo.redo()
+        try require(ImageToolsUI.textIsItalic(storage.attributes(at: 0, effectiveRange: nil)) && buttons[1].state == .on,
+                    "Redo did not restore text styles and toolbar state")
+        size.onBegin?()
+        for value in [30.0, 32.0, 36.0] { size.slider.doubleValue = value; size.slider.sendAction(size.slider.action, to: size.slider.target) }
+        size.onEnd?()
+        undo.undo()
+        try require(font().pointSize == 28 && size.valueLabel.stringValue == "28", "One size drag must undo as one action")
+        pin.verificationSelectText(NSRange(location: 0, length: storage.length))
+        try require(buttons[0].state == .mixed && buttons[1].state == .mixed && size.valueLabel.stringValue == "—",
+                    "Mixed selection does not show mixed font styles")
+        action { buttons[0].performClick(nil) }
+        try require(buttons[0].state == .on, "Mixed bold toggle did not make the selection bold")
+        undo.undo()
+        pin.verificationSelectText(selection)
+        let board = NSPasteboard(name: .init("dev.screenleaf.verify.pin-style.\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        pin.verificationCopy(to: board)
+        let pasted = ImageToolsUI.clipboardText(from: board)
+        let pastedFont = pasted?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        try require(pasted?.string == "Patch" && pastedFont?.pointSize == 28
+            && pastedFont.map { NSFontManager.shared.traits(of: $0).contains(.boldFontMask) } == true
+            && pasted.map { ImageToolsUI.textIsItalic($0.attributes(at: 0, effectiveRange: nil)) } == true,
+                    "Styles applied by the text pin toolbar were lost on clipboard round-trip")
+        if let hud = pin.verificationHUD?.contentView {
+            try cachePreview(hud, output: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("text-pin-style-controls.png"))
+        }
+        pin.verificationSelectText(NSRange(location: 0, length: 0))
+        try require(!size.isEnabled && buttons.allSatisfy { !$0.isEnabled }, "Clearing selection left style controls enabled")
+        pin.verificationEditing(false)
+        pin.verificationEditing(true)
+        pin.verificationSelectText(selection)
+        try require(pin.verificationTextStyles.allSatisfy { $0.state == .on }, "Reopening editing lost selected style state")
+        var recordedText: NSAttributedString?
+        ImageToolsUI.onCompletedRichText = { recordedText = $0 }
+        defer { ImageToolsUI.onCompletedRichText = nil }
+        pin.verificationUseClipboard(board)
+        guard let finish = pin.verificationHUDMainButtons.first(where: { $0.title == "完成编辑" }) else {
+            throw ImageToolsVerificationFailure(description: "Missing text completion button")
+        }
+        finish.performClick(nil)
+        try require(recordedText?.string == "Patch colors" && recordedText.map { ImageToolsUI.textIsItalic($0.attributes(at: 0, effectiveRange: nil)) } == true,
+                    "Completing text editing did not deliver full rich text to history")
+        let completed = ImageToolsUI.clipboardText(from: board)
+        let completedFont = completed?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        let completedColor = completed?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        try require(view.isMoving && !view.isEditable && board.string(forType: .string) == storage.string
+            && completed?.string == "Patch colors" && completedFont?.pointSize == 28
+            && completedFont.map { NSFontManager.shared.traits(of: $0).contains(.boldFontMask) } == true
+            && completed.map { ImageToolsUI.textIsItalic($0.attributes(at: 0, effectiveRange: nil)) } == true
+            && (completedColor?.usingColorSpace(.deviceRGB)?.blueComponent ?? 0) > 0.8,
+                    "Text completion must copy the entire styled card despite a remaining selection and return to moving mode")
+        pin.verificationEditing(true)
+        pin.verificationSelectText(NSRange(location: 6, length: 6))
+        pin.verificationCompleteTextFromMenu()
+        try require(view.isMoving && board.string(forType: .string) == "Patch colors", "Menu completion did not copy the whole card")
+        pin.verificationEditing(true)
+        try pin.verificationEditPinText("")
+        pin.verificationHUDMainButtons.first { $0.title == "完成编辑" }?.performClick(nil)
+        try require(view.isMoving && board.string(forType: .string) == "", "Empty text completion retained stale clipboard content or stayed in editing")
+        pin.verificationEditing(true)
+        try pin.verificationEditPinText("中文斜体测试")
+        pin.verificationSelectText(NSRange(location: 0, length: storage.length))
+        storage.setAttributes([.font: NSFont.systemFont(ofSize: 28), .foregroundColor: NSColor.black], range: NSRange(location: 0, length: storage.length))
+        func chinesePixels() throws -> Data {
+            let image = NSImage(size: CGSize(width: 260, height: 90))
+            image.lockFocus()
+            NSColor.white.setFill(); CGRect(x: 0, y: 0, width: 260, height: 90).fill()
+            view.attributedString().draw(at: CGPoint(x: 20, y: 25))
+            image.unlockFocus()
+            return image.tiffRepresentation!
+        }
+        let upright = try chinesePixels()
+        pin.verificationTextStyles[1].performClick(nil)
+        let slanted = try chinesePixels()
+        try require(slanted != upright, "Chinese italic toggle did not change rendered glyph pixels")
+        pin.verificationCopy(to: board)
+        try require(ImageToolsUI.clipboardText(from: board).map { ImageToolsUI.textIsItalic($0.attributes(at: 0, effectiveRange: nil)) } == true,
+                    "Chinese obliqueness was lost on RTF copy/import")
+        try NSBitmapImageRep(data: slanted)!.representation(using: .png, properties: [:])!.write(to:
+            URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("chinese-italic.png"))
+        pin.verificationTextStyles[1].performClick(nil)
+        try require(try chinesePixels() == upright, "Turning Chinese italic off did not restore glyphs")
+        print("PASS: text pin styles, Chinese italic pixels and RTF, undo/redo, full-card completion and empty text")
+    }
+
+    @MainActor private static func verifyDefaultTextColorCopy() throws {
+        let board = NSPasteboard.withUniqueName()
+        let originalAppearance = NSApp.appearance
+        defer { board.releaseGlobally(); NSApp.appearance = originalAppearance }
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            NSApp.appearance = NSAppearance(named: name)
+            let pin = ImageToolsPinController(text: "Default Red White", preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+            defer { pin.close() }
+            pin.window?.appearance = NSApp.appearance
+            pin.verificationSelectText(NSRange(location: 8, length: 3))
+            pin.verificationTextColor(.systemRed)
+            pin.verificationSelectText(NSRange(location: 12, length: 5))
+            pin.verificationTextColor(.white)
+            pin.verificationUseClipboard(board)
+            guard let finish = pin.verificationHUDMainButtons.first(where: { $0.title == "完成编辑" }) else {
+                throw ImageToolsVerificationFailure(description: "Missing text completion button")
+            }
+            func checkExport() throws {
+                guard let data = board.data(forType: .rtf) else { throw ImageToolsVerificationFailure(description: "Missing RTF") }
+                let raw = try NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil)
+                try require(raw.string == "Default Red White" && raw.attribute(.foregroundColor, at: 0, effectiveRange: nil) == nil,
+                            "Default text color was exported as a fixed color in \(name.rawValue)")
+                let red = raw.attribute(.foregroundColor, at: 8, effectiveRange: nil) as? NSColor
+                let white = raw.attribute(.foregroundColor, at: 12, effectiveRange: nil) as? NSColor
+                try require((red?.usingColorSpace(.deviceRGB)?.redComponent ?? 0) > 0.8
+                    && (white?.usingColorSpace(.deviceRGB)?.greenComponent ?? 0) > 0.95,
+                    "Export changed intentionally red or white text")
+                let imported = ImageToolsUI.clipboardText(from: board)!
+                try require((imported.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)?.isEqual(NSColor.labelColor) == true,
+                            "Repinning automatic text did not restore adaptive default color")
+            }
+            finish.performClick(nil)
+            try checkExport()
+            pin.verificationEditing(true)
+            pin.verificationSelectText(NSRange(location: 0, length: 0))
+            pin.verificationCopy(to: board)
+            try checkExport()
+        }
+        print("PASS: default text exports automatic color in light/dark mode; manual colors survive completion, copy and repinning")
+    }
+
+    @MainActor private static func verifyTextPinGeometry() throws {
+        let pin = ImageToolsPinController(text: "文本缩放测试\nPinch both directions", preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+        defer { pin.close() }
+        for editing in [false, true] {
+            pin.verificationEditing(editing)
+            let old = pin.verificationTextDisplayedSize
+            pin.verificationPinch(0.5)
+            let small = pin.verificationTextDisplayedSize
+            try require(abs(small.width - old.width * 0.5) < 1 && abs(small.height - old.height * 0.5) < 1,
+                        "Text pinch-out/in geometry did not shrink rendered text")
+            pin.verificationPinch(2)
+            try require(abs(pin.verificationTextDisplayedSize.width - old.width) < 1
+                        && abs(pin.verificationTextDisplayedSize.height - old.height) < 1,
+                        "Text pinch could not restore its previous size")
+        }
+        let long = ImageToolsPinController(text: String(repeating: "长文本需要完整展开并缩放。Long text should fit entirely.\n", count: 120), preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+        defer { long.close() }
+        let visible = long.window!.screen?.visibleFrame ?? NSScreen.main!.visibleFrame
+        try require(long.window!.frame.width <= visible.width / 2 + 1 && long.window!.frame.height <= visible.height / 2 + 1,
+                    "Initial text pin exceeds half the display")
+        try require(long.verificationTextDisplayedSize.height <= long.window!.frame.height,
+                    "Long text remains hidden in a fixed-height viewport")
+        try require(!long.verificationTextHasScrollbars, "Text pin still exposes internal scrollbars")
+        let fittedScale = long.verificationZoom
+        long.verificationPinch(0.5)
+        try require(abs(long.verificationZoom - fittedScale / 2) < 0.00001,
+                    "Long text cannot shrink below its initial fit scale")
+        long.verificationPinch(2)
+        let wide = ImageToolsPinController(text: String(repeating: "自动换行 very long text ", count: 100))
+        let short = ImageToolsPinController(text: "短文")
+        let explicitLines = ImageToolsPinController(text: "一行\n二行\n三行")
+        defer { wide.close(); short.close(); explicitLines.close() }
+        try require(short.verificationTextDocumentSize.width < pin.verificationTextDocumentSize.width
+                    && pin.verificationTextDocumentSize.width < wide.verificationTextDocumentSize.width,
+                    "Text pins still use one fixed width instead of content sizing")
+        try require(wide.verificationTextDocumentSize.width <= visible.width / 2
+                    && wide.window!.frame.width <= visible.width / 2 + 1
+                    && wide.window!.frame.height <= visible.height / 2 + 1,
+                    "Long unbroken text does not wrap and fit within half-screen dimensions")
+        try require(try explicitLines.verificationTextLayout().lineEnds.count == 3,
+                    "Explicit text line breaks changed")
+        for precise in [false, true] {
+            let old = pin.verificationZoom
+            try pin.verificationWheel(-5, precise: precise)
+            try require(pin.verificationZoom < old, "Text wheel cannot shrink")
+            try pin.verificationWheel(5, precise: precise)
+            try require(abs(pin.verificationZoom - old) < 0.00001, "Text wheel cannot restore scale")
+        }
+        print("PASS: text pinch shrink/grow and full long-text half-screen presentation")
+    }
+
+    @MainActor private static func verifyAnnotationStyleDefaults() throws {
+        let canvas = ImageToolsCanvas(image: try solidImage())
+        let window = canvasWindow(canvas)
+        defer { window.close() }
+        let controls = AnnotationControls(canvas: canvas, preferences: PreferencesStore(storage: MemoryPreferencesStorage()), scale: { 1 })
+        controls.choose(tool: .arrow)
+        gesture(canvas, points: [CGPoint(x: 20, y: 20), CGPoint(x: 100, y: 20)])
+        try require(canvas.selectedAnnotation == nil, "New arrow must not enter property editing")
+        let first = canvas.annotations[0]
+        controls.colorButtons[3].performClick(nil)
+        try require(canvas.annotations[0].color.isEqual(first.color), "Next-stroke color changed an existing arrow")
+        gesture(canvas, points: [CGPoint(x: 20, y: 60), CGPoint(x: 100, y: 60)])
+        try require(canvas.annotations[1].color.isEqual(NSColor.systemBlue), "New arrow ignored next-stroke color")
+        select(canvas, at: CGPoint(x: 60, y: 20))
+        controls.colorButtons[2].performClick(nil)
+        try require(canvas.annotations[0].color.isEqual(NSColor.systemGreen), "Explicit selection cannot edit an old arrow")
+        controls.choose(tool: .text)
+        controls.sizeControl.onChange?(24)
+        canvas.verificationWriteText("Text Size", at: CGPoint(x: 20, y: 100))
+        let annotation = canvas.annotations.last!
+        try require(annotation.fontSize == 24 && canvas.selectedAnnotation == nil,
+                    "New text ignored style defaults or remained selected")
+        let before = try ImageToolsUI.png(canvas.renderedImage())
+        controls.sizeControl.onChange?(32)
+        try require(canvas.annotations.last!.fontSize == 24, "Changing next text size changed existing text")
+        canvas.verificationSelectAnnotation(2)
+        controls.sizeControl.onChange?(32)
+        try require(canvas.annotations.last!.fontSize == 32 && (try ImageToolsUI.png(canvas.renderedImage())) != before, "Selected text size did not update rendered pixels")
+        canvas.undoAnnotation()
+        try require(try ImageToolsUI.png(canvas.renderedImage()) == before, "Undo did not restore styled text pixels")
+        print("PASS: new annotations use future defaults; explicit selections edit existing styles; text styles render and undo")
+    }
+
     @MainActor private static func verifyPinOutsideAnnotations() throws {
         let source = try solidImage(width: 260, height: 180)
         let pin = ImageToolsPinController(image: source, preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
@@ -587,7 +905,17 @@ private struct ImageToolsVerification {
         try require(undone.width == source.width && undone.height == source.height, "Undo must remove empty export margins")
         drawOutside()
         let appliedExport = try canvas.renderedImage()
+        let completion = editor.onComplete
+        var completionErrors = 0
+        editor.onError = { _ in completionErrors += 1 }
+        editor.onComplete = { _ in throw PatchError(message: "Synthetic clipboard failure") }
         editor.complete()
+        try require(completionErrors == 1 && pin.verificationHasEditor,
+                    "Failed completion discarded the annotation workspace")
+        editor.onComplete = completion
+        editor.complete()
+        try require(!pin.verificationHasEditor && pin.verificationClipboard.data(forType: .png) == (try ImageToolsUI.png(canvas.renderedImage(), pixelScale: nil)),
+                    "Completing pin annotations did not copy the full result before returning")
         try require(!pin.verificationHasEditor && pin.verificationImage?.width == appliedExport.width
                     && pin.verificationImage?.height == appliedExport.height, "Completing must apply the entire expanded image to the pin")
         guard let frame = pin.verificationImageContentFrame else {
@@ -653,8 +981,9 @@ private struct ImageToolsVerification {
     }
 
     @MainActor private static func verifyAnnotationToolbarConsistency() throws {
-        let imagePin = ImageToolsPinController(image: try solidImage())
-        let textPin = ImageToolsPinController(text: "颜色与标注测试")
+        let preferences = PreferencesStore(storage: MemoryPreferencesStorage())
+        let imagePin = ImageToolsPinController(image: try solidImage(), preferences: preferences)
+        let textPin = ImageToolsPinController(text: "颜色与标注测试", preferences: preferences)
         defer { imagePin.close(); textPin.close() }
         guard let imageEntry = imagePin.verificationHUDButtons.first(where: { $0.title == "标注" }),
               let textEntry = textPin.verificationHUDButtons.first(where: { $0.title == "编辑文字" }) else {
@@ -663,7 +992,7 @@ private struct ImageToolsVerification {
         try require(imageEntry.image?.tiffRepresentation == textEntry.image?.tiffRepresentation,
                     "Image and text pin annotation entries use different glyphs")
         textPin.verificationEditing(true)
-        let textActions = textPin.verificationHUDButtons
+        let textActions = textPin.verificationHUDMainButtons
         try require(Array(textActions.suffix(2)).map(\.title) == ["关闭贴图", "完成编辑"],
                     "Text pin completion must follow other actions at the right end")
         try require(textActions.last?.isPrimaryAction == true && textActions.last?.imagePosition == .imageOnly,
@@ -688,7 +1017,12 @@ private struct ImageToolsVerification {
                         && abs(finish.frame.maxY - (actions.first?.frame.maxY ?? 0)) < 0.5,
                         "Cancel and completion split or moved away from the right edge at width \(width)")
         }
-        print("PASS: image/text pin annotation entries share glyphs and keep emphasized completion together at the right end, including narrow toolbars")
+        editor.controls.choose(tool: .text)
+        let textButtons = editor.controls.rows.flatMap { $0 }.compactMap { $0 as? NSButton }
+        try require(!textButtons.contains { ["粗体", "斜体"].contains($0.title) }, "Image annotation must not expose bold or italic")
+        editor.canvas.verificationWriteText("Patch 文字标注", at: CGPoint(x: 20, y: 30))
+        try cachePreview(editor, output: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("annotation-text-styles.png"))
+        print("PASS: image/text pin annotation entries share glyphs and keep emphasized completion together at the right end, including narrow toolbars and text styles")
     }
 
     @MainActor private static func verifyCopyButtonStates() throws {
@@ -1186,6 +1520,7 @@ private struct ImageToolsVerification {
             } else {
                 gesture(objectCanvas, points: [CGPoint(x: 40, y: 40), CGPoint(x: 130, y: 120)])
             }
+            objectCanvas.verificationSelectAnnotation(0)
             let before = objectCanvas.selectedAnnotation!
             let beforeImage = try objectCanvas.renderedImage()
             controller.verificationChangeWidth(3)
@@ -1202,7 +1537,7 @@ private struct ImageToolsVerification {
             try require(controller.verificationWidthIndex == 3 && controller.verificationToolTitle == tool.rawValue,
                         "Legacy combination menu did not reflect \(tool.rawValue)'s selected size")
             controller.verificationUndo()
-            try require(controller.verificationWidthIndex == (tool == .mosaic ? 2 : 1)
+            try require(controller.verificationWidthIndex == 1
                 && (try ImageToolsUI.png(beforeImage) == ImageToolsUI.png(objectCanvas.renderedImage())),
                 "Legacy \(tool.rawValue) size undo did not restore pixels and controls")
             withExtendedLifetime(controller) {}
@@ -1401,7 +1736,7 @@ private struct ImageToolsVerification {
     }
 
     @MainActor private static func verifyTextPinContentBounds(outputDirectory: URL) throws {
-        let text = "固定宽度文字贴图，保留中文和 English mixed text。This line wraps at a fixed width and must keep the same layout while zooming.\n第二段仍可编辑、选中和复制。"
+        let text = "内容决定宽度的文字贴图，保留中文和 English mixed text。This line wraps at a bounded width and must keep the same layout while zooming.\n第二段仍可编辑、选中和复制。"
         let pin = ImageToolsPinController(text: text)
         defer { pin.close() }
         guard let window = pin.window, let content = window.contentView else {
@@ -1412,9 +1747,9 @@ private struct ImageToolsVerification {
         let originalSize = pin.verificationTextDocumentSize
         let selection = NSRange(location: 0, length: 8)
         pin.verificationSelectText(selection)
-        try require(original.containerWidth == 408 && original.lineEnds.count >= 3
+        try require(original.containerWidth == originalSize.width - 32 && original.lineEnds.count >= 2
                     && pin.verificationTextRemainsEditable,
-                    "Text fixture lost its editable fixed-width container or internal text padding")
+                    "Text fixture lost its editable content-sized container or internal text padding")
         for factor: CGFloat in [0.2, 1, 1.25, 2, 4] {
             pin.verificationScale(factor)
             for selected in [false, true] {
@@ -1456,18 +1791,18 @@ private struct ImageToolsVerification {
         try pin.verificationEditPinText(shorter)
         pin.verificationScale(1)
         let shortened = try pin.verificationTextLayout()
-        try require(shortened.text == shorter && shortened.containerWidth == original.containerWidth
+        try require(shortened.text == shorter && shortened.containerWidth < original.containerWidth
                     && pin.verificationTextDocumentSize.height < editedSize.height
-                    && pin.verificationTextDocumentSize.width == originalSize.width,
-                    "Shortening text did not shrink its document or changed the fixed text width")
+                    && pin.verificationTextDocumentSize.width < originalSize.width,
+                    "Shortening text did not shrink both document dimensions")
         pin.verificationSelectText(NSRange(location: 0, length: 4))
         try require(pin.verificationTextSelection == NSRange(location: 0, length: 4)
                     && pin.verificationTextRemainsEditable,
                     "Text editing or selection stopped working after resizing")
         try verifyTextPinViewport(pin, selected: true)
-        print("PASS: editing and shortening text resize the document while preserving fixed-width wrapping, internal padding and text selection")
+        print("PASS: editing and shortening text resize the document with adaptive width, internal padding and text selection")
 
-        let longText = String(repeating: "长文字贴图仍是可编辑文本。Scrollable text keeps its fixed-width wrapping.\n", count: 250)
+        let longText = String(repeating: "长文字贴图仍是可编辑文本。Long text expands fully and keeps its wrapping when zoomed.\n", count: 250)
         let longPin = ImageToolsPinController(text: longText)
         defer { longPin.close() }
         longPin.window?.appearance = NSAppearance(named: .aqua)
@@ -1475,20 +1810,24 @@ private struct ImageToolsVerification {
         longPin.verificationScale(2)
         longPin.verificationSelect()
         guard let longContent = longPin.window?.contentView else {
-            throw ImageToolsVerificationFailure(description: "Missing scrollable text-pin content")
+            throw ImageToolsVerificationFailure(description: "Missing long text-pin content")
         }
         try require(longPin.verificationTextDocumentSize.height * longPin.verificationZoom > longContent.bounds.height + 100,
-                    "Long text fixture does not exercise a clipped scrollable document")
-        longPin.verificationScrollImage()
+                    "Long text fixture does not exercise a clipped zoomed document")
+        let full = longPin.verificationWholeTextFrame!
+        let visible = longPin.window!.screen!.visibleFrame
+        try longPin.verificationDrag(dx: 0, dy: visible.minY + 12 - full.minY)
+        try require(abs(longPin.verificationWholeTextFrame!.minY - visible.minY - 12) < 1,
+                    "Dragging enlarged long text did not reach the final lines")
         try verifyTextPinViewport(longPin, selected: true)
         try require(try longPin.verificationTextLayout() == longLayout,
-                    "Scrolling long text changed its content or wrapping")
-        try cachePreview(longContent, output: outputDirectory.appendingPathComponent("text-pin-scrollable-selected.png"))
+                    "Moving long text changed its content or wrapping")
+        try cachePreview(longContent, output: outputDirectory.appendingPathComponent("text-pin-long-selected.png"))
         longPin.verificationDeselect()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
         try verifyTextPinViewport(longPin, selected: false)
-        try cachePreview(longContent, output: outputDirectory.appendingPathComponent("text-pin-scrollable-idle.png"))
-        print("PASS: long text keeps its outline on the visible scroll viewport, preserves wrapping and passes hit testing through to editable text")
+        try cachePreview(longContent, output: outputDirectory.appendingPathComponent("text-pin-long-idle.png"))
+        print("PASS: long text pans to its final lines, preserves wrapping and remains editable without internal scrolling")
     }
 
     @MainActor private static func verifyTextPinViewport(_ pin: ImageToolsPinController, selected: Bool) throws {
@@ -1496,17 +1835,19 @@ private struct ImageToolsVerification {
             throw ImageToolsVerificationFailure(description: "Missing text-pin viewport")
         }
         content.layoutSubtreeIfNeeded()
-        try require(window.hasShadow, "Text pin is missing its presentation shadow")
+        let full = pin.verificationWholeTextFrame!
+        let local = full.offsetBy(dx: -window.frame.minX, dy: -window.frame.minY)
+        let fullyVisible = window.frame.contains(full.insetBy(dx: -1, dy: -1))
+        try require(window.hasShadow == fullyVisible, "Text pin shadow does not match its full-content visibility")
         let viewport = pin.verificationPinViewportFrame
-        try require(abs(viewport.minX - content.bounds.minX - 1) < 0.5
-                    && abs(viewport.minY - content.bounds.minY - 1) < 0.5
-                    && abs(viewport.width - content.bounds.width + 2) < 0.5
-                    && abs(viewport.height - content.bounds.height + 2) < 0.5
-                    && abs(pin.verificationOutlineFrame.minX - viewport.minX) < 0.01
-                    && abs(pin.verificationOutlineFrame.minY - viewport.minY) < 0.01
-                    && abs(pin.verificationOutlineFrame.width - viewport.width) < 0.01
-                    && abs(pin.verificationOutlineFrame.height - viewport.height) < 0.01,
-                    "Text border changed the viewport or selection bounds: window=\(content.bounds), viewport=\(viewport), outline=\(pin.verificationOutlineFrame)")
+        func close(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+            abs(lhs.minX - rhs.minX) <= 0.51 && abs(lhs.minY - rhs.minY) <= 0.51
+                && abs(lhs.maxX - rhs.maxX) <= 0.51 && abs(lhs.maxY - rhs.maxY) <= 0.51
+        }
+        try require(close(viewport, local.intersection(content.bounds))
+                    && pin.verificationOutlineFrame == content.bounds
+                    && pin.verificationImageSelectionRect.map { close($0, local) } == true,
+                    "Text frame or selection no longer follows the whole text document")
         try require(pin.verificationTextReceivesHit(), "Text selection is blocked by the outline or an outer decoration")
         guard let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else {
             throw ImageToolsVerificationFailure(description: "Cannot allocate text-pin pixel fixture")
@@ -1514,7 +1855,7 @@ private struct ImageToolsVerification {
         content.cacheDisplay(in: content.bounds, to: bitmap)
         func pixel(_ point: CGPoint) throws -> NSColor {
             let x = min(bitmap.pixelsWide - 1, Int(point.x / content.bounds.width * CGFloat(bitmap.pixelsWide)))
-            let y = min(bitmap.pixelsHigh - 1, Int(point.y / content.bounds.height * CGFloat(bitmap.pixelsHigh)))
+            let y = min(bitmap.pixelsHigh - 1, Int((content.bounds.height - point.y) / content.bounds.height * CGFloat(bitmap.pixelsHigh)))
             guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
                 throw ImageToolsVerificationFailure(description: "Cannot read text-pin edge pixels")
             }
@@ -1532,10 +1873,12 @@ private struct ImageToolsVerification {
                       CGPoint(x: viewport.midX, y: viewport.maxY - 0.75)] {
             let color = try pixel(point)
             try require(color.alphaComponent > 0.99 && pin.verificationContentReceivesHit(at: point),
-                        "Text edge is translucent or intercepts its original mouse target")
-            if selected {
+                        "Text edge is translucent or intercepts its original mouse target: scale=\(pin.verificationZoom), selected=\(selected), point=\(point), color=\(color), hit=\(pin.verificationContentReceivesHit(at: point)), viewport=\(viewport)")
+            let onFullEdge = abs(point.x - local.minX) < 1 || abs(point.x - local.maxX) < 1
+                || abs(point.y - local.minY) < 1 || abs(point.y - local.maxY) < 1
+            if selected && onFullEdge {
                 try require(color.blueComponent - color.redComponent > 0.12 && color.redComponent < 0.7,
-                            "Selected text pin has no visible inset blue-gray outline")
+                            "Selected text pin has no visible inset blue-gray outline: scale=\(pin.verificationZoom), point=\(point), color=\(color), full=\(local), viewport=\(viewport)")
             } else {
                 try require(abs(color.blueComponent - color.redComponent) < 0.03,
                             "Inactive text pin retains an accent outline")

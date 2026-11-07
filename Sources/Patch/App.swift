@@ -92,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         ImageToolsUI.onCompletedImage = { [weak self] image, scale in self?.recentContent.addImage(image, pixelScale: scale) }
         ImageToolsUI.onCompletedText = { [weak self] text in self?.recentContent.addText(text) }
+        ImageToolsUI.onCompletedRichText = { [weak self] text in self?.recentContent.addText(text) }
         imageTools.onPinStateChange = { [weak self] in
             self?.refreshPinVisibilityAction()
             self?.recording.pinsDidChange()
@@ -267,7 +268,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         case .image(let data, _, let scale):
             guard let image = NSImage(data: data)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
             imageTools.pinImage(image, pixelScale: scale, recordsHistory: false, anchor: anchor, batchIndex: batchIndex)
-        case .text(let text): imageTools.pinText(text, recordsHistory: false, anchor: anchor, batchIndex: batchIndex)
+        case .text(let text):
+            if let rich = item.richText { imageTools.pinText(rich, recordsHistory: false, anchor: anchor, batchIndex: batchIndex) }
+            else { imageTools.pinText(text, recordsHistory: false, anchor: anchor, batchIndex: batchIndex) }
         case .video: break // Video playback is handled by the history window, never by batch pinning.
         }
     }
@@ -425,7 +428,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         statusControls?.remove()
         clipboardMonitor.setEnabled(false)
         recentContent.clear()
-        ImageToolsUI.onCompletedImage = nil; ImageToolsUI.onCompletedText = nil
+        ImageToolsUI.onCompletedImage = nil; ImageToolsUI.onCompletedText = nil; ImageToolsUI.onCompletedRichText = nil
         recentController?.close()
         imageTools.closeAll()
         if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }

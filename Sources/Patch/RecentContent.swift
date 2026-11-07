@@ -98,6 +98,7 @@ final class RecentContentStore {
         let memoryCost: Int
         let date: Date
         let thumbnail: NSImage?
+        var richText: NSAttributedString? = nil
         var isPinnable: Bool {
             switch content { case .image, .text: return true; case .video: return false }
         }
@@ -164,6 +165,20 @@ final class RecentContentStore {
         guard data.count <= textMemoryLimit else { oversized(); return }
         insert(.init(id: UUID(), fingerprint: "text:" + digest(data), content: .text(text),
                      memoryCost: data.count, date: now(), thumbnail: nil))
+    }
+    func addText(_ text: NSAttributedString) {
+        let normalized = ImageToolsUI.normalizedText(text)
+        guard !normalized.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let plain = ImageToolsUI.normalizedText(NSAttributedString(string: normalized.string,
+            attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: NSColor.labelColor]))
+        guard let data = try? ImageToolsUI.portableTextRTF(normalized),
+              let plainData = try? ImageToolsUI.portableTextRTF(plain) else { return }
+        if data == plainData { addText(normalized.string); return }
+        // Include formatted storage in the existing text quota; no persistent history is introduced.
+        let cost = Data(normalized.string.utf8).count + data.count * 2
+        guard cost <= textMemoryLimit else { oversized(); return }
+        insert(.init(id: UUID(), fingerprint: "rich-text:" + digest(data), content: .text(normalized.string),
+                     memoryCost: cost, date: now(), thumbnail: nil, richText: normalized))
     }
     func addImage(_ image: CGImage, pixelScale: CGFloat?) {
         // Budget decoded pixels as well as compressed data, before allocating the canonical bitmap.
@@ -343,8 +358,11 @@ final class RecentClipboardMonitor {
                   width.doubleValue * height.doubleValue * 4 < Double(store.imageMemoryLimit),
                   let image = ImageToolsUI.clipboardImage(from: pasteboard), pasteboard.changeCount == change else { return }
             store.addImage(image.image, pixelScale: image.pixelScale)
-        } else if filter != .text, let text = pasteboard.string(forType: .string), pasteboard.changeCount == change {
-            store.addText(text)
+        } else if filter != .text {
+            if let data = pasteboard.data(forType: .rtf), data.count > store.textMemoryLimit { return }
+            if let text = ImageToolsUI.clipboardText(from: pasteboard), pasteboard.changeCount == change {
+                store.addText(text)
+            }
         }
     }
 }

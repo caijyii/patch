@@ -15,7 +15,7 @@ extension ImageToolsPinController {
     }
     fileprivate var nativeViewportFrame: CGRect {
         if let imageView { return surface.convert(imageView.imageRect, from: imageView).intersection(surface.bounds) }
-        return scroll.frame
+        return textView.map { surface.convert($0.bounds, from: $0).intersection(surface.bounds) } ?? .zero
     }
     fileprivate var nativeSelectionRect: CGRect {
         surface.convert(selectionOutline.selectionRect ?? selectionOutline.bounds, from: selectionOutline)

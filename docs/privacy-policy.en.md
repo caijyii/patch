@@ -2,7 +2,7 @@
 
 [简体中文](privacy-policy.md) · [English](privacy-policy.en.md)
 
-Updated: November 7, 2026. This notice describes Patch 0.1.2. The maintainer is caijyii, reachable at [caijyii@163.com](mailto:caijyii@163.com).
+Updated: November 8, 2026. This notice describes Patch 0.1.3. The maintainer is caijyii, reachable at [caijyii@163.com](mailto:caijyii@163.com).
 
 ## Local processing
 
@@ -19,7 +19,7 @@ You can revoke permissions in macOS System Settings; the corresponding features 
 
 ## Clipboard, files, and preferences
 
-Patch reads the current clipboard at startup and checks for changes while running. It adds images, plain text, and video files copied in Finder to clipboard history, along with screenshots completed through Patch, copied recognized text, pins, and successfully saved recordings. Automatic collection is always on while Patch is running and has no toggle. It skips clipboard content marked by the source app as concealed, transient, or automatically generated, but cannot detect all sensitive content.
+Patch reads the current clipboard at startup and checks for changes while running. It adds images, plain and basic rich text, and video files copied in Finder to clipboard history, along with screenshots completed through Patch, copied recognized text, pins, and successfully saved recordings. Automatic collection is always on while Patch is running and has no toggle. It skips clipboard content marked by the source app as concealed, transient, or automatically generated, but cannot detect all sensitive content.
 
 Clipboard history is held only in the current process's memory. It is not written to disk or uploaded and is cleared when Patch quits. You can delete one record or clear the selected category; selecting All clears every category. Text is limited to 100 items / 8 MiB, images to 20 items / 128 MiB (including decoded image size, PNG data, and thumbnails), and video references and thumbnails to 5 items / 8 MiB. Each category independently evicts its oldest records. Oversized individual items are not collected.
 

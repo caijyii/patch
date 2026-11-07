@@ -1,6 +1,6 @@
 # Patch
 
-[![Version: 0.1.2](https://img.shields.io/badge/Version-0.1.2-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.2)
+[![Version: 0.1.3](https://img.shields.io/badge/Version-0.1.3-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.3)
 [![Platform: macOS 15+](https://img.shields.io/badge/Platform-macOS%2015%2B-607D8B?style=flat)](docs/install.md)
 [![Architecture: Apple Silicon](https://img.shields.io/badge/Architecture-Apple%20Silicon-607D8B?style=flat)](docs/install.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6B8E6E?style=flat)](LICENSE)
@@ -28,7 +28,7 @@
 
 需要 **macOS 15+、Apple Silicon（M 系列芯片）**。
 
-- **直接下载**：[最新正式版 v0.1.2](https://github.com/caijyii/patch/releases/tag/v0.1.2)，推荐下载 **DMG**；ZIP 是另一种安装方式，二选一即可。打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。`Source code` 是源码，不是普通用户的安装包；安装无需开发工具。
+- **直接下载**：[最新正式版 v0.1.3](https://github.com/caijyii/patch/releases/tag/v0.1.3)，推荐下载 **DMG**；ZIP 是另一种安装方式，二选一即可。打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。`Source code` 是源码，不是普通用户的安装包；安装无需开发工具。
 - **让 Agent 安装**：把下面这句话交给自己的 Agent。
 
 > 请从 https://github.com/caijyii/patch 的 GitHub Releases 下载适合我的 Mac 的 Patch 安装包并安装。
@@ -74,7 +74,7 @@ bash scripts/build-sandbox-app.sh
 
 ## 近期更新
 
-0.1.2 新增截图／录屏时隐藏桌面贴图的独立选项，默认开启；修复后台错误提示未获得焦点、导致操作看似卡住的问题。
+0.1.3 改善标注完成后自动复制、文字贴图编辑与富文本剪贴记录，修复默认文字颜色和缩小异常；长文完整展开，初始宽高不超过屏幕可用区域的一半。
 
 详见[更新说明](docs/release-notes.md)。
 

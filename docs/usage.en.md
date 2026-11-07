@@ -16,6 +16,9 @@ See the [installation guide](install.en.md) for setup and updates, and the [rele
 
 - Pin images or editable text to the desktop, including other apps' full-screen Spaces. New pins appear near the pointer.
 - Images keep their aspect ratio. Large images initially fit within half the available screen width and height. Zoom with two-finger scrolling, the mouse wheel, or pinch gestures, then drag the whole image to view it. Copy, save, and text recognition use the original pixels.
+- Text pins fit their content width. Long text wraps and expands fully without internal scrollbars, initially staying within half the available screen width and height. Zooming preserves styles and line breaks. Drag enlarged text to view it; while editing, use the toolbar's move handle or Option-drag.
+- Double-click a text pin or choose Edit Text, then select text to adjust color, font size, bold, or italic, with undo support. Finishing copies all text and styles; a separate Copy action prioritizes the selection.
+- Finishing image annotations automatically copies the result. New annotations are not automatically selected: style changes affect future annotations unless you explicitly select an existing one.
 - Click an image pin to activate Patch before pinching. After switching to another app, click the pin again. Scroll-wheel zoom works directly.
 - Pinning new content does not restore hidden pins. Show All Pins restores only the most recently hidden group at its previous positions.
 - Deleting or clearing history does not close existing pins. Quitting Patch closes all pins.
@@ -23,8 +26,9 @@ See the [installation guide](install.en.md) for setup and updates, and the [rele
 
 ## Clipboard history
 
-- Patch reads the current clipboard at startup and automatically collects images, plain text, video files copied in Finder, and recordings saved through Patch while running. Collection has no toggle and cannot detect all sensitive content.
+- Patch reads the current clipboard at startup and automatically collects images, plain and basic rich text, video files copied in Finder, and recordings saved through Patch while running. Collection has no toggle and cannot detect all sensitive content.
 - History stays only in process memory, is not written to disk, and is cleared on quit. Closing the home window leaves Patch running and collecting in the menu bar; choose Quit from the Patch menu to exit.
+- Text color, size, bold, and italic survive history previews, copying, and repinning. Changes to text or styles create a new entry; identical content and styles remain deduplicated.
 - Filter by images, text, or videos. Click an image or text card to pin it, or a video card to open it in the default app. Each record can be copied or deleted directly.
 - Clear removes only the selected category. Select All to clear every category.
 - Batch pinning uses recent images and text, regardless of the current filter. The default is 5 items, adjustable from 1 to 20 in More Settings.

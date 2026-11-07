@@ -78,11 +78,16 @@ final class ImageToolsCoordinator {
         addPin(ImageToolsPinController(text: text, anchor: point, batchIndex: batchIndex))
     }
 
+    func pinText(_ text: NSAttributedString, recordsHistory: Bool = true, anchor: NSPoint? = nil, batchIndex: Int = 0) {
+        if recordsHistory { ImageToolsUI.onCompletedRichText?(text) }
+        addPin(ImageToolsPinController(attributedText: text, anchor: anchor ?? NSEvent.mouseLocation, batchIndex: batchIndex))
+    }
+
     func pinClipboard(from pasteboard: NSPasteboard = .general, anchor: NSPoint? = nil) {
         let point = anchor ?? NSEvent.mouseLocation
         if let image = ImageToolsUI.clipboardImage(from: pasteboard) {
             pinImage(image.image, pixelScale: image.pixelScale, anchor: point)
-        } else if let text = pasteboard.string(forType: .string), !text.isEmpty {
+        } else if let text = ImageToolsUI.clipboardText(from: pasteboard), text.length > 0 {
             pinText(text, anchor: point)
         } else {
             showError(PatchError(message: L("剪贴板中没有可贴出的图片或文字。")), title: L("无法贴出剪贴板"))
@@ -475,14 +480,14 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
             let frame = annotationFrame(annotation)
             let delta = boundedDelta(.zero, for: frame)
             annotation.points = [CGPoint(x: point.x + delta.width, y: point.y + delta.height)]
-            attempt { try commitAnnotations(annotations + [annotation], selecting: annotations.count) }
+            attempt { try commitAnnotations(annotations + [annotation], selecting: nil) }
             return
         }
         if tool == .number {
             let number = (annotations.filter { $0.tool == .number }.map(\.number).max() ?? 0) + 1
             let annotation = ImageToolsAnnotation(tool: tool, points: [point],
                 color: annotationColor, width: annotationWidth, number: number, numberSize: annotationNumberSize)
-            attempt { try commitAnnotations(annotations + [annotation], selecting: annotations.count) }
+            attempt { try commitAnnotations(annotations + [annotation], selecting: nil) }
             return
         }
         draft = ImageToolsAnnotation(tool: tool, points: [point, point],
@@ -549,7 +554,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
         } else if annotation.tool != .pen && annotation.rect.width + annotation.rect.height < 2 {
             needsDisplay = true; return
         }
-        attempt { try commitAnnotations(annotations + [annotation], selecting: annotations.count) }
+        attempt { try commitAnnotations(annotations + [annotation], selecting: nil) }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -1062,7 +1067,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
             if let index {
                 if text.isEmpty { proposed.remove(at: index); selection = nil }
                 else { proposed[index] = annotation; selection = index }
-            } else { proposed.append(annotation); selection = proposed.count - 1 }
+            } else { proposed.append(annotation); selection = nil }
             attempt { try commitAnnotations(proposed, selecting: selection) }
         } else { needsDisplay = true }
     }
@@ -1598,6 +1603,12 @@ private final class ImageToolsPinTextView: NSTextView {
     var isMoving = true
     var onBeginEditing: (() -> Void)?
     private var movingGesture = false
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // NSTextView's native edge hit area can lag behind a scaled parent.
+        // Keep the whole visible card available for editing and dragging.
+        guard !isHidden, bounds.contains(convert(point, from: superview)) else { return nil }
+        return super.hitTest(point) ?? self
+    }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var needsPanelToBecomeKey: Bool { true }
     override func mouseDown(with event: NSEvent) {
@@ -1615,11 +1626,8 @@ private final class ImageToolsPinTextView: NSTextView {
     override func resetCursorRects() { addCursorRect(bounds, cursor: isMoving ? .openHand : .iBeam) }
     override func menu(for event: NSEvent) -> NSMenu? { onMenu?() }
     override func scrollWheel(with event: NSEvent) {
-        if event.hasPreciseScrollingDeltas && !event.modifierFlags.contains(.option) { super.scrollWheel(with: event) }
-        else {
-            let speed: CGFloat = event.hasPreciseScrollingDeltas ? 0.01 : 0.08
-            onZoom?(exp(max(-40, min(40, event.scrollingDeltaY)) * speed), convert(event.locationInWindow, from: nil))
-        }
+        let speed: CGFloat = event.hasPreciseScrollingDeltas ? 0.01 : 0.08
+        onZoom?(exp(max(-40, min(40, event.scrollingDeltaY)) * speed), convert(event.locationInWindow, from: nil))
     }
     override func magnify(with event: NSEvent) {
         onZoom?(max(0.1, 1 + event.magnification), convert(event.locationInWindow, from: nil))
@@ -1851,9 +1859,14 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     private var beforeEditingFrame: CGRect?
     private var inlineWindowFrame: CGRect?
     private var textColorButtons: [NSButton] = []
+    private var textStyleButtons: [NSButton] = []
+    private var textSizeControl: AnnotationSizeControl?
     private let preferences: PreferencesStore?
     private var baseSize = CGSize(width: 440, height: 240)
-    private var textViewportSize: CGSize?
+    private let textPresentation = NSView()
+    private var textFrame: CGRect?
+    private var textLayoutWidthLimit: CGFloat = 440
+    private var minimumTextScale: CGFloat = 0.05
     private var scale: CGFloat = 1
     private var imagePixelScale: CGFloat?
     private var imageFrame: CGRect?
@@ -1920,9 +1933,19 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         }
     }
 
+    convenience init(attributedText: NSAttributedString, preferences: PreferencesStore? = nil, anchor: NSPoint? = nil, batchIndex: Int = 0) {
+        self.init(text: attributedText.string, preferences: preferences, anchor: anchor, batchIndex: batchIndex)
+        textView?.textStorage?.setAttributedString(attributedText)
+        if let paragraph = textView?.defaultParagraphStyle {
+            textView?.textStorage?.addAttribute(.paragraphStyle, value: paragraph,
+                range: NSRange(location: 0, length: attributedText.length))
+        }
+        resizeText(); fitTextInitially(); updateScale()
+    }
+
     convenience init(text: String, preferences: PreferencesStore? = nil, anchor: NSPoint? = nil, batchIndex: Int = 0) {
         self.init(title: L("Patch · 文字贴图"), preferences: preferences, anchor: anchor ?? NSEvent.mouseLocation, batchIndex: batchIndex)
-        baseSize.width = min(baseSize.width, ImageToolsPinImageGeometry.initialAvailableSize(visible: visibleArea().size).width)
+        textLayoutWidthLimit = ImageToolsPinImageGeometry.initialAvailableSize(visible: visibleArea().size).width
         let view = ImageToolsPinTextView(frame: CGRect(origin: .zero, size: baseSize))
         view.isRichText = true
         view.importsGraphics = false; view.allowsUndo = true
@@ -1935,10 +1958,10 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         view.textContainer?.widthTracksTextView = false
         view.textContainer?.heightTracksTextView = false
         view.textContainer?.containerSize = CGSize(width: baseSize.width - 32, height: CGFloat.greatestFiniteMagnitude)
-        view.isHorizontallyResizable = false; view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false; view.isVerticallyResizable = false
         view.autoresizingMask = []
-        view.minSize = CGSize(width: baseSize.width, height: 100)
-        view.maxSize = CGSize(width: baseSize.width, height: CGFloat.greatestFiniteMagnitude)
+        view.minSize = .zero
+        view.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.string = text
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 3
@@ -1946,7 +1969,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         view.textStorage?.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: (text as NSString).length))
         view.typingAttributes[.paragraphStyle] = paragraph
         view.delegate = self
-        view.toolTip = L("拖动移动 · 双击编辑文字 · 双指滚动 · 捏合缩放")
+        view.toolTip = L("拖动移动 · 双击编辑文字 · 滚轮或捏合缩放")
         view.onBeginEditing = { [weak self] in self?.setTextEditing(true) }
         view.onMenu = { [weak self] in self?.contextMenu() ?? NSMenu() }
         view.onZoom = { [weak self] factor, point in self?.changeScale(by: factor, anchoredAt: point) }
@@ -1959,13 +1982,14 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         surface.layer?.cornerRadius = 6
         surface.layer?.masksToBounds = true
         selectionOutline.cornerRadius = 6
-        scroll.documentView = view
-        scroll.allowsMagnification = true
-        scroll.minMagnification = 0.2; scroll.maxMagnification = 4
-        configureHUD()
+        window?.minSize = CGSize(width: 1, height: 1)
+        scroll.isHidden = true
+        scroll.hasHorizontalScroller = false; scroll.hasVerticalScroller = false
+        textPresentation.addSubview(view)
+        surface.addSubview(textPresentation, positioned: .below, relativeTo: selectionOutline)
         resizeText()
-        textViewportSize = CGSize(width: baseSize.width,
-            height: ImageToolsPinImageGeometry.initialAvailableSize(visible: visibleArea().size).height)
+        fitTextInitially()
+        configureHUD()
         updateScale()
         placeInitially()
     }
@@ -2033,7 +2057,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
 
     private func placeInitially() {
         guard let window else { return }
-        if imageView != nil { initialVisibleArea = nil; layoutHUD(); return }
+        if imageFrame != nil || textFrame != nil { initialVisibleArea = nil; layoutHUD(); return }
         let visible = visibleArea()
         // Layout first: text wrapping and image scale determine the actual viewport size.
         window.setFrame(ImageToolsPinPlacement.frame(size: window.frame.size, anchor: initialAnchor,
@@ -2049,6 +2073,10 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             self.imageFrame = imageFrame.offsetBy(dx: frame.minX - window.frame.minX, dy: frame.minY - window.frame.minY)
             updateScale()
             return
+        }
+        if let textFrame {
+            self.textFrame = textFrame.offsetBy(dx: frame.minX - window.frame.minX, dy: frame.minY - window.frame.minY)
+            updateScale(); return
         }
         window.setFrameOrigin(frame.origin)
         layoutHUD()
@@ -2071,14 +2099,15 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             return button
         }
         var row: [NSView] = [handle]
+        var textFormattingRow: [NSView] = []
         var textCompletion: SelectionButton?
-        textColorButtons = []
+        textColorButtons = []; textStyleButtons = []; textSizeControl = nil
         if let textView {
             if textView.isMoving {
                 row.append(button(L("编辑文字"), SelectionButton.annotationSymbol) { [weak self] in self?.setTextEditing(true) })
             } else {
-                textCompletion = SelectionButton.confirmation(L("完成编辑"), toolTip: L("完成文字编辑，返回贴图")) {
-                    [weak self] in self?.setTextEditing(false)
+                textCompletion = SelectionButton.confirmation(L("完成编辑"), toolTip: L("完成文字编辑，复制并返回贴图")) {
+                    [weak self] in self?.completeTextEditing()
                 }
             }
             if !textView.isMoving {
@@ -2087,6 +2116,22 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
                     let item = SelectionOptionButton(sample: .color(color), label: title) { [weak self] in self?.colorSelectedText(color) }
                     item.isEnabled = textView.selectedRange().length > 0
                     textColorButtons.append(item); row.append(item)
+                }
+                let size = AnnotationSizeControl(frame: .zero)
+                size.onChange = { [weak self] in self?.resizeSelectedText(CGFloat($0)) }
+                size.onBegin = { [weak self] in self?.textView?.undoManager?.beginUndoGrouping() }
+                size.onEnd = { [weak self] in self?.textView?.undoManager?.endUndoGrouping() }
+                textSizeControl = size
+                let sizeLabel = NSTextField(labelWithString: L("字号"))
+                sizeLabel.font = .systemFont(ofSize: 11, weight: .medium)
+                sizeLabel.textColor = ToolbarPalette.secondaryInk
+                textFormattingRow += [sizeLabel, size]
+                for (title, symbol, trait) in [("粗体", "bold", NSFontTraitMask.boldFontMask),
+                                                ("斜体", "italic", NSFontTraitMask.italicFontMask)] {
+                    let item = button(L(title), symbol) { [weak self] in self?.toggleSelectedTextTrait(trait) }
+                    item.setButtonType(.pushOnPushOff)
+                    item.allowsMixedState = true
+                    textStyleButtons.append(item); textFormattingRow.append(item)
                 }
                 row.append(button(L("撤销"), "arrow.uturn.backward") { [weak self] in self?.textView?.undoManager?.undo() })
             }
@@ -2104,7 +2149,8 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         row.append(button(L("关闭贴图"), "xmark") { [weak self] in self?.closePin() })
         if let textCompletion { row.append(textCompletion) }
         toolbar.trailingActions = textCompletion == nil ? [] : Array(row.suffix(2))
-        toolbar.rows = [row]
+        toolbar.rows = [row] + (textFormattingRow.isEmpty ? [] : [textFormattingRow])
+        refreshTextStyleControls()
         if hud != nil { layoutHUD(); return }
         let panel = ImageToolsPinHUDPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
@@ -2146,7 +2192,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     }
     @objc private func applicationActivated(_ notification: Notification) { if selected { layoutHUD() } }
     @objc private func displayConfigurationChanged(_ notification: Notification) {
-        guard imageView != nil, inlineEditor == nil else { return }
+        guard imageView != nil || textView != nil, inlineEditor == nil else { return }
         if let point = hudScreenPoint, !NSScreen.screens.contains(where: { $0.frame.contains(point) }) { hudScreenPoint = nil }
         updateScale()
     }
@@ -2165,16 +2211,17 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         }
         selectPin()
         guard let window else { return }
-        dragOrigin = (point, inlineEditor == nil ? (imageFrame ?? window.frame) : window.frame)
+        dragOrigin = (point, inlineEditor == nil ? (imageFrame ?? textFrame ?? window.frame) : window.frame)
     }
     private func continueMoving(with event: NSEvent) {
         guard let dragOrigin, let point = screenPoint(for: event), let window else { return }
         let requested = dragOrigin.frame.offsetBy(dx: point.x - dragOrigin.point.x, dy: point.y - dragOrigin.point.y)
         // Choose the destination display by the pointer, including displays with negative origins.
         let visible = NSScreen.screens.first { $0.frame.contains(point) }?.visibleFrame ?? visibleArea()
-        if imageView != nil, inlineEditor == nil {
+        if inlineEditor == nil, imageFrame != nil || textFrame != nil {
             hudScreenPoint = point
-            imageFrame = ImageToolsPinImageGeometry.keepingReachable(requested, within: visible)
+            let reachable = ImageToolsPinImageGeometry.keepingReachable(requested, within: visible)
+            if imageView != nil { imageFrame = reachable } else { textFrame = reachable }
             updateScale()
             return
         }
@@ -2184,7 +2231,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     private func endMoving(with event: NSEvent) { continueMoving(with: event); dragOrigin = nil }
     private func visibleArea() -> CGRect {
         if let initialVisibleArea { return initialVisibleArea }
-        if imageView != nil, let point = hudScreenPoint,
+        if imageFrame != nil || textFrame != nil, let point = hudScreenPoint,
            let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) { return screen.visibleFrame }
         return window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1400, height: 900)
     }
@@ -2249,7 +2296,19 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         else { scale = 1; updateScale() }
     }
     @objc private func closePin() { close() }
-    @objc private func toggleMoveMode() { if let textView { setTextEditing(textView.isMoving) } }
+    @objc private func toggleMoveMode() {
+        guard let textView else { return }
+        if textView.isMoving { setTextEditing(true) } else { completeTextEditing() }
+    }
+    private func completeTextEditing() {
+        guard let textView, !textView.isMoving else { return }
+        // Completion copies the whole card, even when a style-editing range remains selected.
+        if textView.hasMarkedText() { textView.unmarkText() }
+        do {
+            try copyTextContent(selectedOnly: false)
+            setTextEditing(false)
+        } catch { showError(error) }
+    }
     private func setTextEditing(_ editing: Bool) {
         guard let textView else { return }
         textView.isMoving = !editing
@@ -2260,23 +2319,90 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         if editing { window?.makeFirstResponder(textView) }
     }
     private func colorSelectedText(_ color: NSColor) {
+        changeSelectedTextStyle { text in
+            text.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: text.length))
+        }
+    }
+    private func resizeSelectedText(_ size: CGFloat) {
+        guard size.isFinite, size > 0 else { return }
+        changeSelectedTextStyle { text in
+            let original = NSAttributedString(attributedString: text)
+            original.enumerateAttribute(.font, in: NSRange(location: 0, length: original.length)) { value, range, _ in
+                let font = value as? NSFont ?? .systemFont(ofSize: 16)
+                text.addAttribute(.font, value: NSFontManager.shared.convert(font, toSize: size), range: range)
+            }
+        }
+    }
+    private func toggleSelectedTextTrait(_ trait: NSFontTraitMask) {
+        changeSelectedTextStyle { text in
+            let original = NSAttributedString(attributedString: text)
+            let range = NSRange(location: 0, length: original.length)
+            var allHaveTrait = true
+            original.enumerateAttributes(in: range) { attributes, _, _ in
+                let font = attributes[.font] as? NSFont ?? .systemFont(ofSize: 16)
+                let selected = trait == .italicFontMask ? ImageToolsUI.textIsItalic(attributes)
+                    : NSFontManager.shared.traits(of: font).contains(trait)
+                allHaveTrait = allHaveTrait && selected
+            }
+            original.enumerateAttributes(in: range) { attributes, range, _ in
+                let font = attributes[.font] as? NSFont ?? .systemFont(ofSize: 16)
+                if trait == .italicFontMask {
+                    // Native italic Latin faces do not slant fallback CJK glyphs.
+                    // Obliqueness applies to every glyph and survives RTF round-trips.
+                    text.addAttribute(.font, value: NSFontManager.shared.convert(font, toNotHaveTrait: .italicFontMask), range: range)
+                    if allHaveTrait { text.removeAttribute(.obliqueness, range: range) }
+                    else { text.addAttribute(.obliqueness, value: 0.2, range: range) }
+                } else {
+                    let converted = allHaveTrait ? NSFontManager.shared.convert(font, toNotHaveTrait: trait)
+                        : NSFontManager.shared.convert(font, toHaveTrait: trait)
+                    text.addAttribute(.font, value: converted, range: range)
+                }
+            }
+        }
+    }
+    private func changeSelectedTextStyle(_ change: (NSMutableAttributedString) -> Void) {
         guard let textView, !textView.isMoving, let storage = textView.textStorage else { return }
         let range = textView.selectedRange()
         guard range.length > 0, NSMaxRange(range) <= storage.length else { return }
-        restoreTextStyle(storage.attributedSubstring(from: range), range: range, applying: color)
+        let replacement = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: range))
+        change(replacement)
+        guard !replacement.isEqual(to: storage.attributedSubstring(from: range)) else { return }
+        restoreTextStyle(replacement, range: range)
     }
-    private func restoreTextStyle(_ previous: NSAttributedString, range: NSRange, applying color: NSColor? = nil) {
+    private func restoreTextStyle(_ replacement: NSAttributedString, range: NSRange) {
         guard let textView, let storage = textView.textStorage, NSMaxRange(range) <= storage.length else { return }
         let inverse = storage.attributedSubstring(from: range)
         textView.undoManager?.registerUndo(withTarget: self) { target in target.restoreTextStyle(inverse, range: range) }
-        textView.undoManager?.setActionName(L("文字颜色"))
-        if let color { storage.addAttribute(.foregroundColor, value: color, range: range) }
-        else { storage.replaceCharacters(in: range, with: previous) }
+        textView.undoManager?.setActionName(L("文字样式"))
+        storage.replaceCharacters(in: range, with: replacement)
         textView.setSelectedRange(range)
+        resizeText(); updateScale(); refreshTextStyleControls()
     }
-    func textViewDidChangeSelection(_ notification: Notification) {
-        textColorButtons.forEach { $0.isEnabled = (textView?.selectedRange().length ?? 0) > 0 }
+    private func refreshTextStyleControls() {
+        guard let textView, let storage = textView.textStorage else { return }
+        let range = textView.selectedRange()
+        let enabled = !textView.isMoving && range.length > 0 && NSMaxRange(range) <= storage.length
+        textColorButtons.forEach { $0.isEnabled = enabled }
+        textStyleButtons.forEach { $0.isEnabled = enabled; $0.state = .off }
+        textSizeControl?.isEnabled = enabled
+        var fonts: [NSFont] = []
+        var italicStates: [Bool] = []
+        if enabled {
+            storage.enumerateAttributes(in: range) { attributes, _, _ in
+                fonts.append(attributes[.font] as? NSFont ?? .systemFont(ofSize: 16))
+                italicStates.append(ImageToolsUI.textIsItalic(attributes))
+            }
+        }
+        textSizeControl?.configure(category: L("字号"), value: Double(fonts.first?.pointSize ?? 16), range: 8...72, step: 1)
+        if let first = fonts.first, fonts.contains(where: { $0.pointSize != first.pointSize }) {
+            textSizeControl?.valueLabel.stringValue = "—"
+        }
+        for (button, trait) in zip(textStyleButtons, [NSFontTraitMask.boldFontMask, .italicFontMask]) {
+            let states = trait == .italicFontMask ? italicStates : fonts.map { NSFontManager.shared.traits(of: $0).contains(trait) }
+            button.state = states.isEmpty || states.allSatisfy({ !$0 }) ? .off : (states.allSatisfy({ $0 }) ? .on : .mixed)
+        }
     }
+    func textViewDidChangeSelection(_ notification: Notification) { refreshTextStyleControls() }
     private func changeScale(by factor: CGFloat, anchoredAt point: CGPoint? = nil) {
         let previousScale = scale
         defer {
@@ -2296,54 +2422,49 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             updateScale()
             return
         }
-        let document: NSView? = imageView ?? textView
-        let oldSize = document?.frame.size ?? .zero
-        let anchor = point ?? CGPoint(x: oldSize.width / 2, y: oldSize.height / 2)
-        let fraction = CGPoint(x: oldSize.width > 0 ? anchor.x / oldSize.width : 0.5,
-                               y: oldSize.height > 0 ? anchor.y / oldSize.height : 0.5)
-        let before = document.flatMap { view in window?.convertPoint(toScreen: view.convert(anchor, to: nil)) }
-        let maximum: CGFloat
-        if let imageView {
-            maximum = max(4, 2 * max(CGFloat(imageView.image.width) / max(1, baseSize.width),
-                                     CGFloat(imageView.image.height) / max(1, baseSize.height)))
-        } else { maximum = 4 }
-        scale = min(maximum, max(0.2, scale * factor))
-        updateScale()
-        if let document, let before, let window {
-            let newPoint = CGPoint(x: document.frame.width * fraction.x, y: document.frame.height * fraction.y)
-            let after = window.convertPoint(toScreen: document.convert(newPoint, to: nil))
-            let requested = window.frame.offsetBy(dx: before.x - after.x, dy: before.y - after.y)
-            let visible = visibleArea()
-            window.setFrame(Self.frameFittingVisibleArea(requested, in: visible), display: true)
-            layoutHUD()
+        if let textView, let textFrame, let window {
+            let next = min(4, max(minimumTextScale, scale * factor))
+            let anchor = point.map { window.convertPoint(toScreen: textView.convert($0, to: nil)) }
+                ?? CGPoint(x: window.frame.midX, y: window.frame.midY)
+            hudScreenPoint = anchor
+            self.textFrame = ImageToolsPinImageGeometry.zoomed(textFrame, factor: next / scale, anchor: anchor)
+            scale = next
+            updateScale()
         }
     }
     private func updateScale() {
         guard inlineEditor == nil else { return }
-        if imageView != nil { updateImagePresentation(); return }
-        let viewport = textViewportSize.map { CGSize(width: baseSize.width, height: min(baseSize.height, $0.height)) } ?? baseSize
-        let scaledSize = CGSize(width: viewport.width * scale, height: viewport.height * scale)
-        // Native borderless windows round up to whole points; align the image
-        // with that geometry so small zoom levels do not leave an empty strip.
-        let size = imageView == nil ? scaledSize
-            : CGSize(width: ceil(scaledSize.width), height: ceil(scaledSize.height))
-        if let imageView { imageView.setFrameSize(size); imageView.needsDisplay = true }
-        if let window {
-            let visible = visibleArea()
-            let minimum = imageView == nil ? CGSize(width: 32, height: 24) : CGSize(width: 1, height: 1)
-            // Leave space for the detached action row on very large pins; the document scrolls inside.
-            let hudSpace: CGFloat = selected ? (hud?.frame.height ?? 40) + 6 : 0
-            let origin = window.frame.origin
-            let top = window.frame.maxY
-            let frameWidth = presentationInset * 2
-            window.setContentSize(CGSize(width: max(minimum.width, min(size.width, visible.width - 40 - frameWidth)) + frameWidth,
-                                         height: max(minimum.height, min(size.height, visible.height - 40 - hudSpace - frameWidth)) + frameWidth))
-            let requested = CGRect(x: origin.x, y: top - window.frame.height,
-                                   width: window.frame.width, height: window.frame.height)
-            window.setFrame(Self.frameFittingVisibleArea(requested, in: visible), display: true)
-            window.contentView?.layoutSubtreeIfNeeded()
+        if imageView != nil { updateImagePresentation() }
+        else { updateTextPresentation() }
+    }
+    private func fitTextInitially() {
+        let visible = visibleArea()
+        let available = ImageToolsPinImageGeometry.initialAvailableSize(visible: visible.size)
+        scale = ImageToolsPinImageGeometry.fitScale(size: baseSize, available: available)
+        minimumTextScale = min(0.2, scale / 4)
+        let inset = presentationInset
+        let size = CGSize(width: baseSize.width * scale + inset * 2, height: baseSize.height * scale + inset * 2)
+        textFrame = ImageToolsPinPlacement.frame(size: size, anchor: initialAnchor,
+            visible: visible, batchIndex: initialBatchIndex).insetBy(dx: inset, dy: inset)
+        hudScreenPoint = initialAnchor
+    }
+    private func updateTextPresentation() {
+        guard let window, textView != nil, var rect = textFrame else { return }
+        let size = CGSize(width: baseSize.width * scale, height: baseSize.height * scale)
+        if rect.size != size { rect = CGRect(x: rect.minX, y: rect.maxY - size.height, width: size.width, height: size.height) }
+        let screens = NSScreen.screens.map(\.visibleFrame)
+        let desktop = ImageToolsPinImageGeometry.desktopBounds(screens.isEmpty ? [visibleArea()] : screens)
+        if !screens.contains(where: { !$0.intersection(rect).isEmpty && !$0.intersection(rect).isNull }) {
+            rect = ImageToolsPinImageGeometry.keepingReachable(rect, within: visibleArea())
         }
-        if textView != nil { scroll.magnification = scale }
+        textFrame = rect
+        let host = ImageToolsPinImageGeometry.hostFrame(image: rect, inset: presentationInset, desktop: desktop)
+        guard !host.isNull, !host.isEmpty else { return }
+        isUpdatingImageHost = true
+        window.setFrame(host, display: false)
+        lastPresentedHostFrame = window.frame
+        isUpdatingImageHost = false
+        scroll.isHidden = true
         refreshPinPresentation()
         layoutHUD()
     }
@@ -2384,6 +2505,18 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             surface.imageBorderRect = local.insetBy(dx: -presentationInset / 2, dy: -presentationInset / 2)
             return
         }
+        if let textView, let textFrame, let window {
+            let local = textFrame.offsetBy(dx: -window.frame.minX, dy: -window.frame.minY)
+            // NSTextView rounds its own transformed geometry and hit regions.
+            // Scale a plain parent instead, keeping editable text in logical points.
+            textView.frame = CGRect(origin: .zero, size: baseSize)
+            textPresentation.frame = local
+            textPresentation.setBoundsSize(baseSize)
+            selectionOutline.frame = surface.bounds
+            selectionOutline.selectionRect = local
+            surface.imageBorderRect = local.insetBy(dx: -presentationInset / 2, dy: -presentationInset / 2)
+            return
+        }
         selectionOutline.selectionRect = nil
         surface.imageBorderRect = nil
         scroll.frame = surface.bounds.insetBy(dx: presentationInset, dy: presentationInset)
@@ -2393,7 +2526,7 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         surface.showsBorder = inlineEditor == nil && hasFramedContent
         imageView?.cornerRadius = imageHasTransparency ? 0 : 5
         selectionOutline.cornerRadius = textView != nil ? 6 : (imageHasTransparency ? 0 : 5)
-        let fullyVisible = imageFrame.map { window?.frame.contains($0.insetBy(dx: -presentationInset, dy: -presentationInset)) == true } ?? true
+        let fullyVisible = (imageFrame ?? textFrame).map { window?.frame.contains($0.insetBy(dx: -presentationInset, dy: -presentationInset)) == true } ?? true
         window?.hasShadow = inlineEditor != nil || (hasFramedContent && fullyVisible)
         layoutPinSurface()
     }
@@ -2413,10 +2546,14 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         handle.onMouseDragged = { [weak self] in self?.continueMoving(with: $0) }
         handle.onMouseUp = { [weak self] in self?.endMoving(with: $0) }
         let editor = InlineAnnotationView(image: imageView.image, pixelScale: imagePixelScale, preferences: preferences, moveHandle: handle,
-                                          completionHint: L("完成标注，返回贴图"), allowsOutsideAnnotations: true)
+                                          completionHint: L("完成标注，复制并返回贴图"), allowsOutsideAnnotations: true)
         inlineEditor = editor
         refreshPinPresentation()
-        editor.onComplete = { [weak self] image in self?.endInlineEditing(image: image) }
+        editor.onComplete = { [weak self] image in
+            guard let self else { return }
+            try ImageToolsUI.copyPNG(image, pixelScale: self.imagePixelScale, to: self.clipboard)
+            self.endInlineEditing(image: image)
+        }
         editor.onCancel = { [weak self] in self?.endInlineEditing(image: nil) }
         hud?.orderOut(nil); scroll.isHidden = true; imageView.isHidden = true; selectionOutline.isHidden = true
         let screenArea = visibleArea()
@@ -2447,7 +2584,6 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             imageView.image = image
             imageHasTransparency = ImageToolsUI.hasTransparentPixels(image)
             imageView.needsDisplay = true
-            ImageToolsUI.onCompletedImage?(image, imagePixelScale)
         }
         if let frame = beforeEditingFrame, let start = inlineWindowFrame, let window {
             let restored = frame.offsetBy(dx: window.frame.minX - start.minX, dy: window.frame.minY - start.minY)
@@ -2468,20 +2604,30 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
         if window?.isVisible == true { window?.orderFrontRegardless() }
     }
     @objc private func ocrImage() { if let imageView { onOCR?(imageView.image) } }
+    private var clipboard: NSPasteboard = .general
+
     @objc private func copyContent() {
         do {
-            if let imageView { try ImageToolsUI.copyPNG(imageView.image, pixelScale: imagePixelScale) }
-            else if let textView {
-                let range = textView.selectedRange()
-                let text = range.length > 0 ? (textView.string as NSString).substring(with: range) : textView.string
-                NSPasteboard.general.clearContents()
-                if NSPasteboard.general.setString(text, forType: .string) { ImageToolsUI.onCompletedText?(text) }
-                let all = NSRange(location: 0, length: (textView.string as NSString).length)
-                if let data = textView.rtf(from: range.length > 0 ? range : all) {
-                    NSPasteboard.general.setData(data, forType: .rtf)
-                }
-            }
+            if let imageView { try ImageToolsUI.copyPNG(imageView.image, pixelScale: imagePixelScale, to: clipboard) }
+            else { try copyTextContent(selectedOnly: true) }
         } catch { showError(error) }
+    }
+    private func copyTextContent(selectedOnly: Bool) throws {
+        guard let textView else { return }
+        let selected = textView.selectedRange()
+        let all = NSRange(location: 0, length: (textView.string as NSString).length)
+        let range = selectedOnly && selected.length > 0 ? selected : all
+        let text = (textView.string as NSString).substring(with: range)
+        let item = NSPasteboardItem()
+        let data = try ImageToolsUI.portableTextRTF(textView.attributedString().attributedSubstring(from: range))
+        guard item.setString(text, forType: .string), item.setData(data, forType: .rtf) else {
+            throw PatchError(message: L("无法复制文字及样式，请重试。"))
+        }
+        clipboard.clearContents()
+        guard clipboard.writeObjects([item]) else {
+            throw PatchError(message: L("无法复制文字及样式，请重试。"))
+        }
+        ImageToolsUI.onCompletedRichText?(textView.attributedString().attributedSubstring(from: range))
     }
     @objc private func saveImage() {
         guard let imageView else { return }
@@ -2496,23 +2642,31 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
     }
     private func resizeText() {
         guard let textView, let container = textView.textContainer, let layout = textView.layoutManager else { return }
+        let padding = textView.textContainerInset
+        let naturalWidth = ceil(textView.attributedString().size().width) + padding.width * 2
+        baseSize.width = min(textLayoutWidthLimit, max(min(48, textLayoutWidthLimit), naturalWidth))
+        container.containerSize = CGSize(width: max(1, baseSize.width - padding.width * 2), height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
-        baseSize.height = max(120, layout.usedRect(for: container).height + 36)
-        textView.setFrameSize(baseSize)
+        let contentHeight = max(layout.usedRect(for: container).maxY, layout.extraLineFragmentRect.maxY)
+        baseSize.height = max(ceil((textView.font?.pointSize ?? 16) * 1.3), ceil(contentHeight)) + padding.height * 2
+        let fit = ImageToolsPinImageGeometry.fitScale(size: baseSize,
+            available: ImageToolsPinImageGeometry.initialAvailableSize(visible: visibleArea().size))
+        minimumTextScale = min(minimumTextScale, fit / 4)
     }
-    func textDidChange(_ notification: Notification) { resizeText(); updateScale() }
+    func textDidChange(_ notification: Notification) { resizeText(); updateScale(); refreshTextStyleControls() }
     func windowDidBecomeKey(_ notification: Notification) { setSelected(true) }
     func windowDidResignKey(_ notification: Notification) { setSelected(false) }
     func windowDidMove(_ notification: Notification) {
         // Window managers and macOS may move the bounded host without invoking
         // our drag gesture. Keep the whole image at that new screen position.
-        if !isUpdatingImageHost, inlineEditor == nil, let imageFrame, let window,
+        if !isUpdatingImageHost, inlineEditor == nil, let frame = imageFrame ?? textFrame, let window,
            let previous = lastPresentedHostFrame {
             let dx = window.frame.minX - previous.minX, dy = window.frame.minY - previous.minY
             if dx != 0 || dy != 0 {
-                self.imageFrame = imageFrame.offsetBy(dx: dx, dy: dy)
+                if imageView != nil { imageFrame = frame.offsetBy(dx: dx, dy: dy) }
+                else { textFrame = frame.offsetBy(dx: dx, dy: dy) }
                 hudScreenPoint = nil
-                updateImagePresentation()
+                updateScale()
             }
         }
         layoutHUD()
@@ -2854,6 +3008,7 @@ enum ImageToolsUI {
     }
     static var onCompletedImage: ((CGImage, CGFloat?) -> Void)?
     static var onCompletedText: ((String) -> Void)?
+    static var onCompletedRichText: ((NSAttributedString) -> Void)?
 
     static func clipboardImage(from pasteboard: NSPasteboard) -> (image: CGImage, pixelScale: CGFloat?)? {
         guard let image = NSImage(pasteboard: pasteboard),
@@ -2875,6 +3030,55 @@ enum ImageToolsUI {
         }
         return data
     }
+    static func textIsItalic(_ attributes: [NSAttributedString.Key: Any]) -> Bool {
+        let font = attributes[.font] as? NSFont ?? .systemFont(ofSize: 16)
+        return NSFontManager.shared.traits(of: font).contains(.italicFontMask)
+            || abs((attributes[.obliqueness] as? NSNumber)?.doubleValue ?? 0) > 0.001
+    }
+
+    /// Default text is automatic in the destination, not a resolved dark/light RGB color.
+    /// Explicit colors, including white, remain intentional formatting.
+    static func portableTextRTF(_ rich: NSAttributedString) throws -> Data {
+        let value = NSMutableAttributedString(attributedString: rich)
+        rich.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: rich.length)) { color, range, _ in
+            if (color as? NSColor)?.isEqual(NSColor.labelColor) == true {
+                value.removeAttribute(.foregroundColor, range: range)
+            }
+        }
+        return try value.data(from: NSRange(location: 0, length: value.length),
+                              documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+    }
+
+    static func normalizedText(_ rich: NSAttributedString) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: rich.string, attributes: [
+            .font: NSFont.systemFont(ofSize: 16), .foregroundColor: NSColor.labelColor])
+        rich.enumerateAttributes(in: NSRange(location: 0, length: rich.length)) { attributes, range, _ in
+            if let font = attributes[.font] as? NSFont { result.addAttribute(.font, value: font, range: range) }
+            if let color = attributes[.foregroundColor] as? NSColor {
+                result.addAttribute(.foregroundColor,
+                    value: color.isEqual(NSColor.labelColor) ? NSColor.labelColor : (color.usingColorSpace(.deviceRGB) ?? color), range: range)
+            }
+            if let value = attributes[.obliqueness] { result.addAttribute(.obliqueness, value: value, range: range) }
+        }
+        let characters = result.string as NSString
+        for index in (0..<result.length).reversed() where characters.character(at: index) == 0xFFFC {
+            result.deleteCharacters(in: NSRange(location: index, length: 1))
+        }
+        return result
+    }
+
+    /// Import text styles only; attachments and document layout are not pin content.
+    static func clipboardText(from pasteboard: NSPasteboard) -> NSAttributedString? {
+        if let data = pasteboard.data(forType: .rtf),
+           let rich = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil),
+           rich.length > 0 {
+            let result = normalizedText(rich)
+            if result.length > 0 { return result }
+        }
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return nil }
+        return NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: NSColor.labelColor])
+    }
+
     static func copyPNG(_ image: CGImage, pixelScale: CGFloat? = nil, to pasteboard: NSPasteboard = .general) throws {
         let data = try png(image, pixelScale: pixelScale)
         pasteboard.clearContents()

@@ -1,6 +1,19 @@
-# Patch 0.1.2
+# Patch 0.1.3
 
 [简体中文](release-notes.md) · [English](release-notes.en.md)
+
+This update improves annotation, text pin editing, and clipboard history:
+
+- Finishing image annotations or text pin editing automatically copies the complete result before returning to the normal pin state.
+- After placing a new annotation, changing its sticker, color, or other style sets the next annotation's defaults. Explicitly select an existing annotation to edit it.
+- Edit Text supports color, font size, bold, italic, and undo for selected text. Chinese italic text now visibly slants. Text annotations on images retain color and font size controls.
+- Copying, repinning, and clipboard history preserve basic text styles. Valid RTF from other apps can also become editable text pins. Style changes create a new history entry; identical content and styles remain deduplicated.
+- Default text colors no longer become fixed white when copied. Explicit colors remain unchanged.
+- Fixed zooming out on text pins. Short text fits its content; long text wraps and expands fully without internal scrollbars. Initial width and height each stay within half the available screen area; zoom and drag the whole pin to inspect it.
+
+Requires Apple Silicon and macOS 15+. Save any pins you want to keep before quitting the old version, then replace Patch.app in its existing installation location. The app remains ad-hoc signed and is not notarized by Apple. Permissions may need to be granted again. See the [installation guide](install.en.md).
+
+## Patch 0.1.2
 
 This update adds pin capture preferences and fixes a background alert that could make the app appear unresponsive:
 

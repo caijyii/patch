@@ -35,6 +35,13 @@ enum AppLocalization {
     static func text(_ source: String) -> String { isEnglish ? english[source] ?? source : source }
     // CATALOG_START
     static let english: [String: String] = [
+        "拖动移动 · 双击编辑文字 · 滚轮或捏合缩放": "Drag to move · Double-click to edit · Scroll or pinch to zoom",
+        "完成文字编辑，复制并返回贴图": "Finish editing text, copy and return to the pin",
+        "无法复制文字及样式，请重试。": "Could not copy the text and formatting. Please try again.",
+        "文字样式": "Text Style",
+        "粗体": "Bold",
+        "斜体": "Italic",
+        "完成标注，复制并返回贴图": "Finish annotations, copy and return to pin",
         "内存预算已满 · 请分段保存": "Memory budget reached · Save this segment",
         "高度已达上限 · 请分段保存": "Height limit reached · Save this segment",
         "本段长截图已停止拼接，继续滚动不会追加内容。请先保存或完成，再从页面剩余位置开始新的长截图。": "Stitching has stopped for this segment. Further scrolling will not add content. Save or finish it, then start a new scrolling capture from the remaining page content.",

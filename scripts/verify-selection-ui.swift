@@ -955,6 +955,8 @@ private struct SelectionUIVerification {
         let f = try preparedAnnotationFixture(image, tool: "方框")
         try f.routedGesture(from: CGPoint(x: 220, y: 400), to: CGPoint(x: 340, y: 300))
         try require(f.root.verificationCanvas.annotations.count == 1, "Cannot prepare editable rectangle")
+        try require(f.root.verificationCanvas.selectedAnnotation == nil, "New rectangle must not be selected automatically")
+        try f.routedGesture(from: CGPoint(x: 220, y: 350), to: CGPoint(x: 220, y: 350))
         return f
     }
 
@@ -1027,7 +1029,7 @@ private struct SelectionUIVerification {
         let f = try rectangleFixture(image)
         let canvas = f.root.verificationCanvas
         let selected = f.root.verificationSelection
-        try require(canvas.selectedAnnotation != nil, "New annotation was not selected for editing")
+        try require(canvas.selectedAnnotation != nil, "Explicitly picked annotation was not selected for editing")
         try require(f.root.handleShortcut(f.key(53, characters: "\u{1b}")), "Esc editing cancellation was not handled")
         try require(canvas.selectedAnnotation == nil && canvas.annotations.count == 1 && f.cancelCount == 0
                     && f.root.verificationSelection == selected,
@@ -1653,6 +1655,7 @@ private struct SelectionUIVerification {
         object.root.verificationSelect(selected)
         try object.button("方框").performClick(nil)
         try object.routedGesture(from: CGPoint(x: 74, y: 455), to: CGPoint(x: 245, y: 515))
+        try object.routedGesture(from: CGPoint(x: 74, y: 485), to: CGPoint(x: 74, y: 485))
         try require(object.root.verificationCanvas.selectedAnnotation != nil, "Selected-object preview has no selected annotation")
         try savePreview(object, output: output, name: "selection-object-preview.png")
         let recording = SelectionUIFixture(source: image, size: CGSize(width: 960, height: 600), purpose: .record,

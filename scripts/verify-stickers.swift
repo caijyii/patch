@@ -73,8 +73,8 @@ extension ImageToolsCanvas {
             canvas.tool = .sticker; canvas.annotationSticker = "🐥"; canvas.annotationFontSize = 96
             canvas.mouseDown(with: event(.leftMouseDown, canvas: canvas, point: CGPoint(x: 170, y: 170)))
             canvas.mouseUp(with: event(.leftMouseUp, canvas: canvas, point: CGPoint(x: 170, y: 170)))
-            try require(canvas.annotations.count == 1 && canvas.selectedAnnotation?.tool == .sticker
-                && canvas.selectedAnnotation?.text == "🐥" && canvas.selectedAnnotation?.fontSize == 96,
+            try require(canvas.annotations.count == 1 && canvas.selectedAnnotation == nil && canvas.annotations[0].tool == .sticker
+                && canvas.annotations[0].text == "🐥" && canvas.annotations[0].fontSize == 96,
                 "One click must place exactly the chosen emoji at the current size")
             let original = try canvas.renderedImage()
             let originalPNG = try ImageToolsUI.png(original)
@@ -127,8 +127,12 @@ extension ImageToolsCanvas {
             controls.choose(tool: .sticker)
             controls.stickerButtons.first { $0.identifier?.rawValue == "patch-cat" }!.performClick(nil)
             controlled.mouseDown(with: event(.leftMouseDown, canvas: controlled, point: CGPoint(x: 160, y: 160)))
-            try require(controlled.annotations.first?.text == StickerCatalog.canonicalIdentifier("🐈") && controlled.annotations.first?.fontSize == 32,
-                        "Palette choice and point-size scaling must reach the actual placed object")
+            try require(controlled.annotations.first?.text == StickerCatalog.canonicalIdentifier("🐈") && controlled.annotations.first?.fontSize == 72,
+                        "Palette choice and point-size scaling must reach the actual placed object: \(controlled.annotations.map { ($0.text, $0.fontSize) })")
+            controls.stickerButtons.first { $0.identifier?.rawValue == "patch-blossom" }!.performClick(nil)
+            try require(controlled.selectedAnnotation == nil && controlled.annotations[0].text == StickerCatalog.canonicalIdentifier("🐈"),
+                        "Choosing the next sticker must not replace the just-placed sticker")
+            controlled.stickerVerificationSelect(0)
             controls.sizeControl.slider.doubleValue = 64
             controls.sizeControl.slider.sendAction(controls.sizeControl.slider.action, to: controls.sizeControl.slider.target)
             try require(controlled.selectedAnnotation?.fontSize == 128, "Palette size must edit the selected sticker in pixels")
@@ -151,7 +155,7 @@ extension ImageToolsCanvas {
                 var visibleScale = scale
                 let sizing = AnnotationControls(canvas: sizingCanvas, preferences: store, scale: { visibleScale })
                 sizing.choose(tool: .sticker)
-                try require(sizingCanvas.annotationFontSize == 16 * scale, "Default is not 16 visible points at this image scale")
+                try require(sizingCanvas.annotationFontSize == 36 * scale, "Default is not 36 visible points at this image scale")
                 for points in [16, 24] {
                     sizing.sizeControl.slider.doubleValue = Double(points)
                     sizing.sizeControl.slider.sendAction(sizing.sizeControl.slider.action, to: sizing.sizeControl.slider.target)
@@ -184,7 +188,7 @@ extension ImageToolsCanvas {
             let zoomedStore = PreferencesStore(storage: MemoryPreferencesStorage())
             let zoomedControls = AnnotationControls(canvas: zoomed, preferences: zoomedStore, scale: { 1 / 8 })
             zoomedControls.choose(tool: .mosaic)
-            try require(zoomed.mosaicBlockSize == 2 && zoomedStore.annotation(for: "马赛克").mosaicBlockSize == 12,
+            try require(zoomed.mosaicBlockSize == 2 && zoomedStore.annotation(for: "马赛克").mosaicBlockSize == 8,
                         "8x editor zoom makes the default mosaic invalid or rewrites its screen-point preference")
             zoomedControls.sizeControl.slider.doubleValue = 4
             zoomedControls.sizeControl.slider.sendAction(zoomedControls.sizeControl.slider.action, to: zoomedControls.sizeControl.slider.target)
@@ -195,6 +199,7 @@ extension ImageToolsCanvas {
             zoomed.mouseUp(with: event(.leftMouseUp, canvas: zoomed, point: CGPoint(x: 90, y: 90)))
             try require(zoomed.annotations.count == 1 && zoomed.annotations[0].mosaic != nil,
                         "Minimum mosaic blocks cannot be drawn at 8x editor zoom")
+            zoomed.stickerVerificationSelect(0)
             zoomedControls.sizeControl.slider.doubleValue = 8
             zoomedControls.sizeControl.slider.sendAction(zoomedControls.sizeControl.slider.action, to: zoomedControls.sizeControl.slider.target)
             try require(mosaicError == nil && zoomed.selectedAnnotation?.mosaicBlockSize == 2 &&

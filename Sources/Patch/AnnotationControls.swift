@@ -418,6 +418,11 @@ class SelectionButton: NSButton {
         fill.setFill()
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
         path.fill()
+        if state == .mixed {
+            (usesDarkAppearance ? NSColor.labelColor : ToolbarPalette.ink).withAlphaComponent(opacity).setFill()
+            NSBezierPath(roundedRect: CGRect(x: bounds.midX - 4, y: bounds.minY + 3, width: 8, height: 2),
+                         xRadius: 1, yRadius: 1).fill()
+        }
     }
 
     private func updateContent() {

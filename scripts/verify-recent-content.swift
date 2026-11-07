@@ -14,7 +14,7 @@ private struct Failure: Error { let message: String }
     @MainActor static func main() {
         // macOS's crash dialog can relaunch this command-line probe without its output
         // argument. Exit before creating any windows instead of crashing a second time.
-        guard CommandLine.arguments.count == 2 else {
+        guard CommandLine.arguments.count == 2 || (CommandLine.arguments.count == 3 && CommandLine.arguments[2] == "--rich-text") else {
             fputs("This is a command-line test. Run scripts/verify-recent-content.sh from Terminal.\n", stderr)
             return
         }
@@ -24,8 +24,16 @@ private struct Failure: Error { let message: String }
     @MainActor private static func run() throws {
         _ = NSApplication.shared
         AppLocalization.language = .simplifiedChinese
+        if CommandLine.arguments.contains("--rich-text") {
+            try richTextHistory()
+            try retention()
+            try clipboard()
+            print("PASS: rich history, retention and clipboard regression suite")
+            return
+        }
         try preferences()
         try retention()
+        try richTextHistory()
         try dates()
         try clipboard()
         try themesAndWindows()
@@ -286,6 +294,94 @@ private struct Failure: Error { let message: String }
         print("PASS: startup/current clipboard, running/off transitions, concealed filtering, own-copy dedup, full pixels and original-size pinning")
         print("PASS: scoped clear preserves other types and pending copies, including full 20-item histories")
     }
+    @MainActor private static func richTextHistory() throws {
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        let store = RecentContentStore()
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let monitor = RecentClipboardMonitor(store: store, pasteboard: board)
+        defer { monitor.setEnabled(false) }
+        let rich = NSMutableAttributedString(string: "中文斜体 Patch", attributes: [
+            .font: NSFont.boldSystemFont(ofSize: 28), .foregroundColor: NSColor.systemRed, .obliqueness: 0.2])
+        store.addText(rich.string)
+        ImageToolsUI.onCompletedRichText = { store.addText($0) }
+        defer { ImageToolsUI.onCompletedRichText = nil }
+        let coordinator = ImageToolsCoordinator()
+        defer { coordinator.closeAll() }
+        coordinator.pinText(rich)
+        try require(store.items.count == 2 && store.items[0].richText != nil,
+                    "Formatting-only edit did not create a distinct rich history entry")
+        let richID = store.items[0].id
+        store.addText(rich)
+        try require(store.items.count == 2 && store.items[0].id == richID, "Identical rich content duplicated history")
+        var pinnedRich: NSAttributedString?
+        let history = RecentContentWindowController(store: store, pasteboard: board) { item in
+            if let styled = item.richText { pinnedRich = styled; coordinator.pinText(styled, recordsHistory: false) }
+        }
+        defer { history.close() }
+        history.showWindow(nil)
+        history.window?.contentView?.layoutSubtreeIfNeeded()
+        guard let button = descendants(history.window!.contentView!).compactMap({ $0 as? NSButton }).first(where: {
+            $0.identifier?.rawValue == richID.uuidString && $0.toolTip == "复制这条记录"
+        }) else { throw Failure(message: "Rich history copy button missing") }
+        button.performClick(nil)
+        let pinButton = descendants(history.window!.contentView!).compactMap { $0 as? NSButton }.first {
+            $0.identifier?.rawValue == richID.uuidString && $0.action == NSSelectorFromString("pinItem:")
+        }
+        pinButton?.performClick(nil)
+        try require(pinnedRich.map { ImageToolsUI.textIsItalic($0.attributes(at: 0, effectiveRange: nil)) } == true,
+                    "History pin action discarded rich text")
+        guard let pasted = ImageToolsUI.clipboardText(from: board),
+              let font = pasted.attribute(.font, at: 0, effectiveRange: nil) as? NSFont else {
+            throw Failure(message: "History copy did not include rich text")
+        }
+        try require(pasted.string == rich.string && font.pointSize == 28 && NSFontManager.shared.traits(of: font).contains(.boldFontMask)
+            && ImageToolsUI.textIsItalic(pasted.attributes(at: 0, effectiveRange: nil)), "History copy lost font size, bold or Chinese italic")
+        monitor.setEnabled(true)
+        try require(store.items.count == 2, "Importing our own rich clipboard duplicated history")
+        rich.addAttribute(.foregroundColor, value: NSColor.systemBlue, range: NSRange(location: 0, length: rich.length))
+        store.addText(rich)
+        try require(store.items.count == 3, "Color-only edit did not create a new history record")
+        let immutableColor = store.items.first { $0.id == richID }!.richText!.attribute(.foregroundColor, at: 0, effectiveRange: nil) as! NSColor
+        try require(immutableColor.usingColorSpace(.deviceRGB)!.redComponent > 0.8, "Editing new text mutated an older record")
+        let limited = RecentContentStore(textMemoryLimit: 32)
+        limited.addText("keep"); limited.addText(rich)
+        try require(limited.items.count == 1 && limited.items[0].title == "keep" && limited.notice != nil,
+                    "Rich text bypassed the existing memory quota")
+        let appearance = NSApp.appearance
+        defer { NSApp.appearance = appearance }
+        let adaptive = NSAttributedString(string: "Default styled text", attributes: [
+            .font: NSFont.boldSystemFont(ofSize: 24), .foregroundColor: NSColor.labelColor])
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+        store.addText(adaptive)
+        let adaptiveID = store.items[0].id
+        let total = store.items.count
+        try require((store.items[0].richText?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)?.isEqual(NSColor.labelColor) == true,
+                    "History resolved default text into a fixed dark-mode color")
+        NSApp.appearance = NSAppearance(named: .aqua)
+        store.addText(adaptive)
+        try require(store.items.count == total, "Appearance change duplicated default-color rich history")
+        history.reload()
+        let adaptiveCopy = descendants(history.window!.contentView!).compactMap { $0 as? NSButton }.first {
+            $0.identifier?.rawValue == adaptiveID.uuidString && $0.action == NSSelectorFromString("copyItem:")
+        }!
+        adaptiveCopy.performClick(nil)
+        let exported = try NSAttributedString(data: board.data(forType: .rtf)!,
+            options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil)
+        try require(exported.attribute(.foregroundColor, at: 0, effectiveRange: nil) == nil,
+                    "History copy exported default text as a fixed color")
+        monitor.poll()
+        try require(store.items.count == total, "Reimporting automatic-color rich text duplicated history")
+        history.reload()
+        let content = history.window!.contentView!
+        content.layoutSubtreeIfNeeded()
+        let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
+        content.cacheDisplay(in: content.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])!.write(to:
+            URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("history-rich-text.png"))
+        print("PASS: rich history preserves styles and adaptive default color, exports automatic color, deduplicates across themes and obeys quotas")
+    }
+
     @MainActor private static func themesAndWindows() throws {
         var fixtureDate = Date().addingTimeInterval(-172800)
         let store = RecentContentStore(now: { fixtureDate })
