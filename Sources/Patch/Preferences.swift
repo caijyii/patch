@@ -204,6 +204,8 @@ final class PreferencesStore {
         var appearance: AppAppearancePreference?
         var language: AppLanguagePreference?
         var pinRecentCount: Int?
+        var hidePinsWhenCapturing: Bool?
+        var hidePinsWhenRecording: Bool?
         var shortcutLayoutVersion: Int?
         var stickerOrder: [String]?
         var annotations: [String: AnnotationPreference] = [:]
@@ -224,6 +226,16 @@ final class PreferencesStore {
     var appearancePreference: AppAppearancePreference { snapshot.appearance ?? .system }
     var languagePreference: AppLanguagePreference { snapshot.language ?? .system }
     var pinRecentCount: Int { min(20, max(1, snapshot.pinRecentCount ?? 5)) }
+    var hidePinsWhenRecording: Bool { snapshot.hidePinsWhenRecording ?? true }
+    func setHidePinsWhenRecording(_ value: Bool) {
+        guard value != hidePinsWhenRecording else { return }
+        snapshot.hidePinsWhenRecording = value; persist()
+    }
+    var hidePinsWhenCapturing: Bool { snapshot.hidePinsWhenCapturing ?? true }
+    func setHidePinsWhenCapturing(_ value: Bool) {
+        guard value != hidePinsWhenCapturing else { return }
+        snapshot.hidePinsWhenCapturing = value; persist()
+    }
     var pinRecentTitle: String {
         pinRecentCount == 1 ? L("贴出最近 1 条") : LF("贴出最近 %d 条", pinRecentCount)
     }

@@ -19,6 +19,8 @@ Swift 模块与源码目录统一为 `Patch`（`Sources/Patch`），测试模块
 - `bash scripts/verify-stickers.sh` 检查图案顺序、拖排、持久化与工具栏同步；`bash scripts/verify-stickers-drag.sh` 在合成截图选区的真实贴纸弹窗中验证应用内按下、拖动、释放及取消事件链，不注入系统鼠标事件。`bash scripts/verify-recording-segments.sh` 使用合成音视频检查暂停后的片段衔接，`bash scripts/verify-recording-lifecycle.sh` 检查倒计时取消、暂停和控制窗状态，不采集桌面。
 - `bash scripts/verify-status-recording.sh` 检查真实录制前后 Patch 只保留主菜单图标，不重复显示系统停止控件，只采集自建纯色测试窗口并丢弃帧，不录音或保存视频。需要已有截屏授权；未授权时明确显示 `SKIP`，不会申请权限。
 - `bash scripts/verify-menu-activation.sh` 检查功能窗口的 Dock 生命周期，包括多窗口、关闭重开、隐藏、最小化和窗口交接。`bash scripts/verify-status-window-order.sh` 用两个测试进程连续检查菜单打开期间的窗口顺序及切换到其他应用的行为。后者使用程序触发菜单，还需用真实菜单栏点击验证。锁屏时以 `SKIP` 和退出码 77 结束，不能视为通过。
+- `bash scripts/verify-recording-pins.sh` 用自建纯色背景和贴图验证录屏过滤器的开关及浮层排除，不录音、不保存视频；无既有截屏权限时跳过。
+- `bash scripts/verify-error-alert.sh` 用自动关闭的合成错误提示检查后台触发时的前台激活与焦点，不读取剪贴板。
 - `bash scripts/verify-pin-visibility.sh` 使用合成图文窗口检查最近隐藏组的恢复、窗口位置和关闭后的状态，不读取系统剪贴板。
 - `bash scripts/verify-pin-ui.sh` 检查贴图选中、工具栏、拖动及隐藏恢复，并用自动退出的普通辅助窗口验证其他应用保持前台时的文字编辑和内嵌标注，以及仅显示图片不激活、单击图片后激活 Patch 的捏合前提。不会切换全屏桌面；跨原生全屏 Space 的实际显示仍需手动验收。可用 `--build-only` 只编译。
 - `bash scripts/verify-pin-image-geometry.sh` 用合成图检查整图等比适屏、触点缩放、超屏拖动与裁切绘制的像素一致性，不创建窗口。`bash scripts/verify-toolbar-metrics.sh` 检查 1×／2× 操作栏排布、像素对齐和不缩放图标的交互反馈，真实显示器检查只创建隐藏窗口。`verify-images.sh` 和 `verify-toolbar-motion.sh` 也支持 `--build-only`，用于先编译、再单独运行有参数保护的验证程序。

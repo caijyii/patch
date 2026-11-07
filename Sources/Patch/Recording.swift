@@ -43,6 +43,10 @@ final class RecordingCoordinator: NSObject {
     private var frozenSegmentDuration: TimeInterval?
     private var revealURL: URL?
     private var recoverableSession: (files: [URL], directory: URL)?
+    var hidePinsPreference: () -> Bool = { PreferencesStore.shared.hidePinsWhenRecording }
+    private var hidesPinsForSession = true
+    private var pinFilterTask: Task<Void, Never>?
+    private var pinFilterDirty = false
     private var recordsSystemAudio = true
     private var recordsMicrophone = false
     private var countdownSleep: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
@@ -330,6 +334,7 @@ final class RecordingCoordinator: NSObject {
     @objc private func startPressed() {
         guard phase == .idle, region != nil, let panel else { return }
         sessionID = UUID(); let id = sessionID
+        hidesPinsForSession = hidePinsPreference()
         closeRequested = false
         recordsSystemAudio = systemAudioToggle.state == .on; recordsMicrophone = microphoneToggle.state == .on
         failure = nil; revealURL = nil; recoverableSession = nil; destinationURL = nil; workingURL = nil; workingDirectory = nil
@@ -380,6 +385,46 @@ final class RecordingCoordinator: NSObject {
            let target = NSRunningApplication(processIdentifier: pid), !target.isTerminated { target.activate(options: []) }
     }
 
+    static func captureFilter(content: SCShareableContent, display: SCDisplay, hidePins: Bool) -> SCContentFilter {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let apps = content.applications.filter { $0.processID == ownPID }
+        let windows = content.windows.filter { $0.owningApplication?.processID == ownPID }
+        let pinIDs = hidePins ? Set<CGWindowID>() : Set(NSApp.windows.filter { $0 is CapturePinWindow }
+            .compactMap { CGWindowID(exactly: $0.windowNumber) })
+        let pins = windows.filter { pinIDs.contains($0.windowID) }
+        return apps.isEmpty
+            ? SCContentFilter(display: display, excludingWindows: windows.filter { !pinIDs.contains($0.windowID) })
+            : SCContentFilter(display: display, excludingApplications: apps, exceptingWindows: pins)
+    }
+
+    /// Refresh the pin allowlist when pins are added or closed, without changing the session preference.
+    func pinsDidChange() {
+        guard !hidesPinsForSession, let currentStream = stream, let region else { return }
+        pinFilterDirty = true
+        guard pinFilterTask == nil else { return }
+        let id = sessionID
+        pinFilterTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.pinFilterTask = nil
+                if self.pinFilterDirty { self.pinsDidChange() }
+            }
+            do {
+                while self.pinFilterDirty {
+                    guard self.sessionID == id, self.stream === currentStream else { return }
+                    self.pinFilterDirty = false
+                    let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                    guard self.sessionID == id, self.stream === currentStream,
+                          let display = content.displays.first(where: { $0.displayID == region.displayID }) else { return }
+                    try await currentStream.updateContentFilter(Self.captureFilter(content: content, display: display, hidePins: false))
+                }
+            } catch {
+                guard self.sessionID == id, self.stream === currentStream, !self.stopRequested else { return }
+                self.setStatus(L("贴图显示更新失败，请暂停后继续录制。"))
+            }
+        }
+    }
+
     private func startSegment(id: UUID, preparedContent: SCShareableContent? = nil) async throws {
         try checkPreparation(id: id)
         guard !stopRequested else { finishRecording(id: id); return }
@@ -410,9 +455,7 @@ final class RecordingCoordinator: NSObject {
                 throw PatchError(message: L("无法从录屏中排除控制窗和范围提示。请重新打开录屏后再试。"))
             }
         }
-        let filter = ownApps.isEmpty
-            ? SCContentFilter(display: display, excludingWindows: ownWindows)
-            : SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
+        let filter = Self.captureFilter(content: content, display: display, hidePins: hidesPinsForSession)
         let config = SCStreamConfiguration()
         config.sourceRect = region.sourceRect
         config.width = evenPixelDimension(region.rect.width * region.scale); config.height = evenPixelDimension(region.rect.height * region.scale)
@@ -548,7 +591,7 @@ final class RecordingCoordinator: NSObject {
             phase = stopRequested ? .stopping : .pausing
             if streamHasStarted { requestStreamStop() }
         } else {
-            phase = .recording; setStatus(L("录制中"))
+            phase = .recording; setStatus(L("录制中")); pinsDidChange()
             timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.updateDuration() }
             }
@@ -678,6 +721,7 @@ final class RecordingCoordinator: NSObject {
     private func retrySave() {
         guard phase == .idle, let recovery = recoverableSession, let panel else { return }
         sessionID = UUID(); let id = sessionID
+        hidesPinsForSession = hidePinsPreference()
         failure = nil; stopRequested = false; closeRequested = false; phase = .preparing
         setStatus(L("选择 MP4 保存位置")); updateControls()
         preparationTask = Task { [weak self] in

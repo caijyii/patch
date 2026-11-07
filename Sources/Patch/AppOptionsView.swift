@@ -14,10 +14,14 @@ enum HomeFooterLayout {
 @MainActor
 final class AppOptionsView: NSView {
     /// Excludes the Home window's titlebar/top inset; the parent sizes this page on entry.
-    static let preferredContentHeight: CGFloat = 328
+    static let preferredContentHeight: CGFloat = 416
     let appearanceControl = SettingsSelector(frame: .zero, pullsDown: true)
     let languageControl = SettingsSelector(frame: .zero, pullsDown: true)
     let countControl = SettingsSelector(frame: .zero, pullsDown: true)
+    let hideRecordingPinsControl = NSSwitch(frame: .zero)
+    private let hideRecordingPinsLabel = NSTextField(labelWithString: L("录屏时隐藏桌面贴图"))
+    let hidePinsControl = NSSwitch(frame: .zero)
+    private let hidePinsLabel = NSTextField(labelWithString: L("截图时隐藏桌面贴图"))
     private let preferences: PreferencesStore
     private let onBack: () -> Void
     private let onChange: () -> Void
@@ -67,6 +71,14 @@ final class AppOptionsView: NSView {
         countControl.addItems(withTitles: (1...20).map { $0 == 1 ? L("1 条") : LF("%d 条", $0) })
         countControl.target = self; countControl.action = #selector(countChanged)
         countControl.identifier = NSUserInterfaceItemIdentifier("options.pin-recent-count")
+        hideRecordingPinsControl.target = self; hideRecordingPinsControl.action = #selector(hideRecordingPinsChanged)
+        hideRecordingPinsControl.identifier = NSUserInterfaceItemIdentifier("options.hide-recording-pins")
+        hideRecordingPinsLabel.identifier = NSUserInterfaceItemIdentifier("options.hide-recording-pins-label")
+        hideRecordingPinsControl.setAccessibilityLabel(hideRecordingPinsLabel.stringValue)
+        hidePinsControl.target = self; hidePinsControl.action = #selector(hidePinsChanged)
+        hidePinsControl.identifier = NSUserInterfaceItemIdentifier("options.hide-pins")
+        hidePinsLabel.identifier = NSUserInterfaceItemIdentifier("options.hide-pins-label")
+        hidePinsControl.setAccessibilityLabel(hidePinsLabel.stringValue)
         appearanceControl.setAccessibilityLabel(appearanceLabel.stringValue)
         languageControl.setAccessibilityLabel(languageLabel.stringValue)
         countControl.setAccessibilityLabel(countLabel.stringValue)
@@ -76,7 +88,7 @@ final class AppOptionsView: NSView {
         for label in [general, permissions] {
             label.font = .systemFont(ofSize: 12, weight: .semibold); label.textColor = HomeWindowPalette.muted
         }
-        for label in [appearanceLabel, languageLabel, countLabel, permissionLabel, permissionState] { label.font = .systemFont(ofSize: 13) }
+        for label in [appearanceLabel, languageLabel, countLabel, hidePinsLabel, hideRecordingPinsLabel, permissionLabel, permissionState] { label.font = .systemFont(ofSize: 13) }
         permissionState.textColor = HomeWindowPalette.muted
         permissionState.alignment = .left
         permissionLabel.identifier = NSUserInterfaceItemIdentifier("options.permission-label")
@@ -87,7 +99,7 @@ final class AppOptionsView: NSView {
         }
         languageHint.identifier = NSUserInterfaceItemIdentifier("options.language-restart-hint")
         languageHint.textColor = .systemOrange
-        for view in [back, close, general, appearanceLabel, appearanceControl, languageLabel, languageControl, languageHint, countLabel, countControl, permissions,
+        for view in [back, close, general, appearanceLabel, appearanceControl, languageLabel, languageControl, languageHint, countLabel, countControl, hidePinsLabel, hidePinsControl, hideRecordingPinsLabel, hideRecordingPinsControl, permissions,
                      permissionLabel, permissionState, authorize, permissionHint] { addSubview(view) }
         refreshAppearanceSelection()
     }
@@ -96,6 +108,8 @@ final class AppOptionsView: NSView {
         appearanceControl.selectItem(at: AppAppearancePreference.allCases.firstIndex(of: preferences.appearancePreference) ?? 0)
         languageControl.selectItem(at: AppLanguagePreference.allCases.firstIndex(of: preferences.languagePreference) ?? 0)
         countControl.selectItem(at: preferences.pinRecentCount - 1)
+        hideRecordingPinsControl.state = preferences.hidePinsWhenRecording ? .on : .off
+        hidePinsControl.state = preferences.hidePinsWhenCapturing ? .on : .off
         languageHint.isHidden = AppLocalization.resolvesToEnglish(preferences.languagePreference) == AppLocalization.isEnglish
         for control in [appearanceControl, languageControl, countControl] {
             // AppKit hides the first item when adding pull-down entries even with
@@ -127,12 +141,18 @@ final class AppOptionsView: NSView {
         layoutStatus(languageHint, beside: languageLabel, trailingEdge: languageControl.frame.minX - 20)
         countLabel.frame = CGRect(x: formInset, y: 134, width: 230, height: 22)
         countControl.frame = CGRect(x: right - controlWidth, y: 129, width: controlWidth, height: 30)
-        permissions.frame = CGRect(x: formInset, y: 188, width: right - formInset, height: 18)
-        permissionLabel.frame = CGRect(x: formInset, y: 220, width: ceil(permissionLabel.fittingSize.width), height: 22)
+        hidePinsLabel.frame = CGRect(x: formInset, y: 178, width: right - controlWidth - formInset - 20, height: 22)
+        hidePinsControl.sizeToFit()
+        hidePinsControl.setFrameOrigin(CGPoint(x: right - hidePinsControl.frame.width, y: 188 - hidePinsControl.frame.height / 2))
+        hideRecordingPinsLabel.frame = CGRect(x: formInset, y: 222, width: right - controlWidth - formInset - 20, height: 22)
+        hideRecordingPinsControl.sizeToFit()
+        hideRecordingPinsControl.setFrameOrigin(CGPoint(x: right - hideRecordingPinsControl.frame.width, y: 232 - hideRecordingPinsControl.frame.height / 2))
+        permissions.frame = CGRect(x: formInset, y: 276, width: right - formInset, height: 18)
+        permissionLabel.frame = CGRect(x: formInset, y: 308, width: ceil(permissionLabel.fittingSize.width), height: 22)
         let authorizeWidth = max(84, ceil(authorize.fittingSize.width))
-        authorize.frame = CGRect(x: right - authorizeWidth, y: 215, width: authorizeWidth, height: 30)
+        authorize.frame = CGRect(x: right - authorizeWidth, y: 303, width: authorizeWidth, height: 30)
         layoutStatus(permissionState, beside: permissionLabel, trailingEdge: authorize.frame.minX - 20)
-        permissionHint.frame = CGRect(x: formInset, y: 246, width: right - formInset, height: 18)
+        permissionHint.frame = CGRect(x: formInset, y: 334, width: right - formInset, height: 18)
     }
     private func layoutStatus(_ status: NSTextField, beside label: NSTextField, trailingEdge: CGFloat) {
         status.frame = CGRect(x: label.frame.maxX + 12, y: label.frame.minY,
@@ -141,7 +161,7 @@ final class AppOptionsView: NSView {
     }
     override func draw(_ dirtyRect: NSRect) {
         HomeWindowPalette.edge.withAlphaComponent(0.22).setFill()
-        CGRect(x: 24, y: 174, width: bounds.width - 48, height: 1).fill()
+        CGRect(x: 24, y: 262, width: bounds.width - 48, height: 1).fill()
     }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
     @objc private func goBack() { onBack() }
@@ -161,6 +181,14 @@ final class AppOptionsView: NSView {
         guard (0..<20).contains(countControl.indexOfSelectedItem) else { return }
         guard preferences.pinRecentCount != countControl.indexOfSelectedItem + 1 else { return }
         preferences.setPinRecentCount(countControl.indexOfSelectedItem + 1); refreshAppearanceSelection(); onChange()
+    }
+    @objc private func hideRecordingPinsChanged() {
+        preferences.setHidePinsWhenRecording(hideRecordingPinsControl.state == .on)
+        refreshAppearanceSelection(); onChange()
+    }
+    @objc private func hidePinsChanged() {
+        preferences.setHidePinsWhenCapturing(hidePinsControl.state == .on)
+        refreshAppearanceSelection(); onChange()
     }
     @objc private func requestPermission() { onRequestPermission() }
 }

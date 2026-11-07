@@ -33,6 +33,11 @@ func showError(_ error: Error, title: String = "操作未完成") {
     alert.addButton(withTitle: L("知道了"))
     WindowActivationCoordinator.shared.register(alert.window)
     defer { WindowActivationCoordinator.shared.unregister(alert.window) }
+    // Menu-bar actions can originate while another application is active.
+    // Bring the blocking alert forward before entering its modal event loop.
+    NSApp.activate(ignoringOtherApps: true)
+    alert.window.center()
+    alert.window.makeKeyAndOrderFront(nil)
     alert.runModal()
 }
 
@@ -41,14 +46,21 @@ struct PatchError: LocalizedError {
     var errorDescription: String? { L(message) }
 }
 
+/// Identifies pin content without including its separate operation toolbar.
+@MainActor protocol CapturePinWindow: AnyObject {}
+
 /// Ordinary Patch documents/settings are valid screenshot subjects. Transient
-/// panels, pins and capture controls keep their existing exclusion behavior.
+/// panels and capture controls stay excluded; pin content follows the capture option.
 @MainActor
 enum CaptureWindowPolicy {
-    static func includes(_ window: NSWindow) -> Bool {
-        window.styleMask.contains(.titled) && window.level == .normal && !(window is NSPanel)
+    static func includes(_ window: NSWindow, hidePins: Bool = true) -> Bool {
+        if window is CapturePinWindow { return !hidePins }
+        return window.styleMask.contains(.titled) && window.level == .normal && !(window is NSPanel)
     }
     static var includedWindowIDs: Set<CGWindowID> {
-        Set(NSApp.windows.filter { includes($0) }.compactMap { CGWindowID(exactly: $0.windowNumber) })
+        includedWindowIDs(hidePins: true)
+    }
+    static func includedWindowIDs(hidePins: Bool) -> Set<CGWindowID> {
+        Set(NSApp.windows.filter { includes($0, hidePins: hidePins) }.compactMap { CGWindowID(exactly: $0.windowNumber) })
     }
 }

@@ -58,14 +58,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var quitTimer: Timer?
     private lazy var scrollCapture: ScrollCaptureCoordinator = ScrollCaptureCoordinator(capture: { [weak self] region in
         guard let self else { throw PatchError(message: "截图任务已关闭。") }
-        return try await self.captureService.capture(region)
+        return try await self.captureService.capture(region, hidePins: self.preferences.hidePinsWhenCapturing)
     }, onReselect: { [weak self] region, onCancel in
         guard let self else { onCancel(); return }
         let target = region.targetPID.flatMap { NSRunningApplication(processIdentifier: $0) }
         self.selector.select(purpose: .scroll, initialMode: .rectangle, targetApplication: target,
             capture: { [weak self] region in
                 guard let self else { throw PatchError(message: "截图任务已关闭。") }
-                return try await self.captureService.capture(region)
+                return try await self.captureService.capture(region, hidePins: self.preferences.hidePinsWhenCapturing)
             }, onCancel: onCancel) { [weak self] action, region, image in
                 self?.performSelectionAction(action, region: region, image: image)
             }
@@ -92,7 +92,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         ImageToolsUI.onCompletedImage = { [weak self] image, scale in self?.recentContent.addImage(image, pixelScale: scale) }
         ImageToolsUI.onCompletedText = { [weak self] text in self?.recentContent.addText(text) }
-        imageTools.onPinStateChange = { [weak self] in self?.refreshPinVisibilityAction() }
+        imageTools.onPinStateChange = { [weak self] in
+            self?.refreshPinVisibilityAction()
+            self?.recording.pinsDidChange()
+        }
+        recording.hidePinsPreference = { [weak self] in self?.preferences.hidePinsWhenRecording ?? true }
         recording.onStateChange = { [weak self] in self?.refreshRecordingActions() }
         recording.onCompletedVideo = { [weak self] in self?.recentContent.addVideo($0) }
         recentContent.onChange = { [weak self] in
@@ -346,7 +350,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         selector.authorizeScroll = { ScrollCapturePermission.ensurePermission() }
         selector.select(purpose: purpose, initialMode: initialMode, targetApplication: target, capture: { [weak self] region in
             guard let self else { throw PatchError(message: "截图任务已关闭。") }
-            return try await self.captureService.capture(region)
+            return try await self.captureService.capture(region, hidePins: purpose == .record ? self.preferences.hidePinsWhenRecording : self.preferences.hidePinsWhenCapturing)
         }) { [weak self] action, region, image in
             self?.performSelectionAction(action, region: region, image: image)
         }

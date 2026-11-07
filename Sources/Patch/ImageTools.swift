@@ -1518,7 +1518,7 @@ private enum ImageToolsPinGestureDiagnostics {
     }
 }
 
-private final class ImageToolsPinPanel: NSPanel {
+private final class ImageToolsPinPanel: NSPanel, CapturePinWindow {
     var onKeyEquivalent: ((NSEvent) -> Bool)?
     var diagnosesImageGestures = false
     override var canBecomeKey: Bool { true }

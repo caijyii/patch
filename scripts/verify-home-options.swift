@@ -71,6 +71,17 @@ import Darwin
         for view in page.subviews where !view.isHidden {
             require(page.bounds.contains(view.frame), "Compact settings clips a visible control: \(view.identifier?.rawValue ?? "label")")
         }
+        require(page.hidePinsControl.frame.maxX == rows[0].frame.maxX
+                && abs(page.hidePinsControl.frame.midY - 188) < 0.5,
+                "Capture switch must align with the settings right edge and its row")
+        let captureLabel = views.first { $0.identifier?.rawValue == "options.hide-pins-label" } as! NSTextField
+        require(captureLabel.fittingSize.width <= captureLabel.frame.width && !captureLabel.frame.intersects(page.hidePinsControl.frame),
+                "Localized capture label is clipped or overlaps its selector")
+        let recordingLabel = views.first { $0.identifier?.rawValue == "options.hide-recording-pins-label" } as! NSTextField
+        require(page.hideRecordingPinsControl.frame.maxX == page.hidePinsControl.frame.maxX
+                && page.hideRecordingPinsControl.frame.midY - page.hidePinsControl.frame.midY == 44
+                && recordingLabel.fittingSize.width <= recordingLabel.frame.width,
+                "Recording switch must align with capture switch without clipping its localized label")
         let close = views.first { $0.identifier?.rawValue == "options.close" }!
         let permissionHint = views.first { $0.identifier?.rawValue == "options.permission-hint" }!
         require(close.frame.minY - permissionHint.frame.maxY >= 12,
@@ -258,6 +269,27 @@ import Darwin
         print("PASS: native status menu shows first/last items and stays at \(initialFrame!) after top-edge hover")
     }
     @MainActor static func main() {
+        let captureStorage = MemoryPreferencesStorage()
+        let capturePreferences = PreferencesStore(storage: captureStorage)
+        require(capturePreferences.hidePinsWhenCapturing && capturePreferences.hidePinsWhenRecording, "New preference must default to hiding pins")
+        let capturePage = AppOptionsView(preferences: capturePreferences, onBack: {}, onChange: {}, onRequestPermission: {})
+        for index in [1, 0] {
+            capturePage.hidePinsControl.state = index == 0 ? .on : .off
+            capturePage.hidePinsControl.sendAction(capturePage.hidePinsControl.action, to: capturePage.hidePinsControl.target)
+            require(PreferencesStore(storage: captureStorage).hidePinsWhenCapturing == (index == 0),
+                    "Capture switch change must persist both values")
+        }
+        capturePage.hideRecordingPinsControl.state = .off
+        capturePage.hideRecordingPinsControl.sendAction(capturePage.hideRecordingPinsControl.action, to: capturePage.hideRecordingPinsControl.target)
+        require(!PreferencesStore(storage: captureStorage).hidePinsWhenRecording && capturePreferences.hidePinsWhenCapturing,
+                "Recording switch must persist independently of screenshot preference")
+        capturePage.hideRecordingPinsControl.state = .on
+        capturePage.hideRecordingPinsControl.sendAction(capturePage.hideRecordingPinsControl.action, to: capturePage.hideRecordingPinsControl.target)
+        require(PreferencesStore(storage: captureStorage).hidePinsWhenRecording, "Recording switch must persist On")
+        let legacyStorage = MemoryPreferencesStorage(data: Data(#"{"version":1,"annotations":{},"shortcuts":{},"pinRecentCount":7}"#.utf8))
+        let legacy = PreferencesStore(storage: legacyStorage)
+        require(legacy.hidePinsWhenCapturing && legacy.hidePinsWhenRecording && legacy.pinRecentCount == 7, "Existing preferences must migrate without losing values")
+
         let previewBundle = Bundle.main.bundleIdentifier?.hasPrefix("dev.screenleaf.options-menu-preview") == true
         let preview = previewBundle || CommandLine.arguments.contains("--preview")
         if !preview {
@@ -318,7 +350,7 @@ import Darwin
         require(originalWindow.title == L("Patch · 更多设置"), "Removing the body heading removed the native settings title")
         let popups = all(page).compactMap { $0 as? NSPopUpButton }
         require(popups.count == 3 && popups.allSatisfy { $0 is SettingsSelector },
-                "Settings must expose appearance, language and bounded batch pin count")
+                "Settings must expose appearance, language, bounded batch pin count and capture visibility")
         dropdownConfiguration(page); footerAlignment(home); compactOptionsLayout(page)
         nativeDropdown(page.appearanceControl)
         nativeDropdown(page.languageControl)
