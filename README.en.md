@@ -51,8 +51,6 @@ Output: `.build/distribution-check/Patch.app` (Patch Development). This is an ad
 - While running, Patch automatically collects clipboard images, text, and video file references. Clipboard history and desktop pins are cleared when you quit. Closing the home window leaves the app running in the menu bar.
 - Scrolling captures may not stitch reliably with dynamic layouts or multiple scrollable areas. Fixed headers and overlays may remain visible or appear more than once.
 
-Scrolling captures retain the original pixels and use lossless PNG export. The stitching budget is estimated at 1/32 of physical memory, with a 128 MiB minimum and 512 MiB maximum (256 MiB on an 8 GiB Mac; 512 MiB on Macs with 16 GiB or more). The height limit is 60,000 pixels; wider regions may reach the memory budget sooner. This budget is not a hard cap on total app memory. At either limit, the current result is preserved and the app prompts you to save it before starting another segment.
-
 See the [usage guide](docs/usage.en.md) and [privacy notice](docs/privacy-policy.en.md).
 
 ## Default shortcuts
