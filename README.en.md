@@ -1,6 +1,6 @@
 # Patch
 
-[![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.1)
+[![Version: 0.1.2](https://img.shields.io/badge/Version-0.1.2-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.2)
 [![Platform: macOS 15+](https://img.shields.io/badge/Platform-macOS%2015%2B-607D8B?style=flat)](docs/install.en.md)
 [![Architecture: Apple Silicon](https://img.shields.io/badge/Architecture-Apple%20Silicon-607D8B?style=flat)](docs/install.en.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6B8E6E?style=flat)](LICENSE)
@@ -28,7 +28,7 @@ Content is processed locally, with no accounts, ads, or cloud uploads. The inter
 
 Requires **macOS 15+ and Apple Silicon (M-series chips)**.
 
-- **Download**: Get the **DMG or ZIP** from the [GitHub release](https://github.com/caijyii/patch/releases/tag/v0.1.1). Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. No developer tools are required.
+- **Download**: Get the **DMG or ZIP** from the [GitHub release](https://github.com/caijyii/patch/releases/tag/v0.1.2). Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. No developer tools are required.
 - **Ask an agent to install**: Give your agent this instruction:
 
 > Download the Patch installer compatible with my Mac from the GitHub Releases at https://github.com/caijyii/patch and install it.

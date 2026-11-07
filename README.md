@@ -1,6 +1,6 @@
 # Patch
 
-[![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.1)
+[![Version: 0.1.2](https://img.shields.io/badge/Version-0.1.2-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.2)
 [![Platform: macOS 15+](https://img.shields.io/badge/Platform-macOS%2015%2B-607D8B?style=flat)](docs/install.md)
 [![Architecture: Apple Silicon](https://img.shields.io/badge/Architecture-Apple%20Silicon-607D8B?style=flat)](docs/install.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6B8E6E?style=flat)](LICENSE)
@@ -28,7 +28,7 @@
 
 需要 **macOS 15+、Apple Silicon（M 系列芯片）**。
 
-- **直接下载**：[GitHub 下载](https://github.com/caijyii/patch/releases/tag/v0.1.1)，提供 **DMG / ZIP**，打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。无需开发工具。
+- **直接下载**：[GitHub 下载](https://github.com/caijyii/patch/releases/tag/v0.1.2)，提供 **DMG / ZIP**，打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。无需开发工具。
 - **让 Agent 安装**：把下面这句话交给自己的 Agent。
 
 > 请从 https://github.com/caijyii/patch 的 GitHub Releases 下载适合我的 Mac 的 Patch 安装包并安装。

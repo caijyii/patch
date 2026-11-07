@@ -1,6 +1,17 @@
-# Patch 0.1.1
+# Patch 0.1.2
 
 [简体中文](release-notes.md) · [English](release-notes.en.md)
+
+This update adds pin capture preferences and fixes a background alert that could make the app appear unresponsive:
+
+- General settings now has separate “Hide desktop pins in screenshots” and “Hide desktop pins in recordings” switches. Both default to on and are saved automatically.
+- Turn off screenshot hiding to include visible image and text pins in regular and scrolling captures. Manually hidden pins stay hidden, and operation overlays remain excluded.
+- Turn off recording hiding to include desktop pins, including pins added during recording. Recording controls, the region guide, and other app windows remain excluded. The preference applies to the next recording and stays fixed across pause and resume.
+- Error alerts triggered while the app is in the background now activate and receive focus before blocking further actions. Dismiss the alert to continue.
+
+Requires Apple Silicon and macOS 15+. Save any pins you want to keep before quitting the old version, then replace Patch.app in its existing installation location. The app remains ad-hoc signed and is not notarized by Apple. Permissions may need to be granted again. See the [installation guide](install.en.md).
+
+## Patch 0.1.1
 
 This update improves scrolling capture capacity and explains what to do when a limit is reached:
 
