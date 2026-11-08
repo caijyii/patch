@@ -1,6 +1,6 @@
 # Patch
 
-[![Version: 0.1.3](https://img.shields.io/badge/Version-0.1.3-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.3)
+[![Version: 0.1.4](https://img.shields.io/badge/Version-0.1.4-6B8E6E?style=flat)](https://github.com/caijyii/patch/releases/tag/v0.1.4)
 [![Platform: macOS 15+](https://img.shields.io/badge/Platform-macOS%2015%2B-607D8B?style=flat)](docs/install.en.md)
 [![Architecture: Apple Silicon](https://img.shields.io/badge/Architecture-Apple%20Silicon-607D8B?style=flat)](docs/install.en.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6B8E6E?style=flat)](LICENSE)
@@ -28,7 +28,7 @@ Content is processed locally, with no accounts, ads, or cloud uploads. The inter
 
 Requires **macOS 15+ and Apple Silicon (M-series chips)**.
 
-- **Download**: Get the [latest stable release, v0.1.3](https://github.com/caijyii/patch/releases/tag/v0.1.3). **DMG is recommended**; ZIP is an alternative, so choose just one. Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. `Source code` contains source files, not an installer for ordinary users. No developer tools are required.
+- **Download**: Get the [latest stable release, v0.1.4](https://github.com/caijyii/patch/releases/tag/v0.1.4). **DMG is recommended**; ZIP is an alternative, so choose just one. Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. `Source code` contains source files, not an installer for ordinary users. No developer tools are required.
 - **Ask an agent to install**: Give your agent this instruction:
 
 > Download the Patch installer compatible with my Mac from the GitHub Releases at https://github.com/caijyii/patch and install it.
@@ -74,7 +74,7 @@ See the [usage guide](docs/usage.en.md) and [privacy notice](docs/privacy-policy
 
 ## Recent updates
 
-Version 0.1.3 improves automatic copying after annotation, text pin editing, and rich-text history. It fixes default text colors and zooming out; long text expands fully and initially fits within half the available screen width and height.
+Version 0.1.4 improves desktop selection: screenshots, text extraction, and recording preview the current screen when no window is under the pointer. Drag within a full-screen selection to select a new area. Subject capture has a simpler toolbar, and scrolling capture gives clearer guidance when no window is detected.
 
 See the [release notes](docs/release-notes.en.md).
 

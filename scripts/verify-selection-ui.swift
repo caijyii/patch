@@ -82,9 +82,10 @@ private final class SelectionUIFixture {
 
     init(source: CGImage, size: CGSize = CGSize(width: 800, height: 600),
          candidates: [CGRect] = [], purpose: CaptureSelectionPurpose = .screenshot,
-         preferences: PreferencesStore? = nil, toolbarArea: CGRect? = nil) {
+         preferences: PreferencesStore? = nil, toolbarArea: CGRect? = nil,
+         initialMode: ScreenshotSelectionMode = .window) {
         self.source = source
-        root = SelectionView(image: source, size: size, candidates: candidates, purpose: purpose, preferences: preferences ?? PreferencesStore(storage: MemoryPreferencesStorage()), toolbarArea: toolbarArea)
+        root = SelectionView(image: source, size: size, candidates: candidates, purpose: purpose, initialMode: initialMode, preferences: preferences ?? PreferencesStore(storage: MemoryPreferencesStorage()), toolbarArea: toolbarArea)
         window = SelectionWindow(contentRect: CGRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -199,8 +200,10 @@ private struct SelectionUIVerification {
         _ = NSApplication.shared
         let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/private/tmp")
         var failures = 0
+        var skips = 0
         func run(_ title: String, _ check: () throws -> Void) {
             do { try check(); print("PASS: \(title)") }
+            catch let skip as SelectionUISkip { skips += 1; print("SKIP: \(title): \(skip)") }
             catch { failures += 1; print("FAIL: \(title): \(error)") }
             fflush(stdout)
         }
@@ -210,8 +213,8 @@ private struct SelectionUIVerification {
                 run("nonactivating overlays retain current application and route input on every display") { try verifyOverlayInputOwnership(image) }
                 run("cross-screen completion and undo target the selected display") { try verifyCrossScreenShortcuts(image) }
                 run("cross-screen Delete and Esc prioritize the selected annotation") { try verifyCrossScreenEditingKeys(image) }
-                print(failures == 0 ? "PASS: overlay checks completed; native fullscreen Spaces require manual verification" : "FAIL: overlay checks")
-                exit(failures == 0 ? 0 : 1)
+                print(failures == 0 ? (skips > 0 ? "SKIP: desktop checks incomplete; run in a GUI session" : "PASS: overlay checks completed; native fullscreen Spaces require manual verification") : "FAIL: overlay checks")
+                exit(failures == 0 ? (skips > 0 ? 77 : 0) : 1)
             }
             if CommandLine.arguments.contains("--scroll-only") {
                 run("scroll selection supports automatic windows and body dragging") { try verifyScrollBodySelection(image) }
@@ -219,6 +222,7 @@ private struct SelectionUIVerification {
                 print(failures == 0 ? "PASS: scrolling selection checks completed" : "FAIL: scrolling selection checks")
                 exit(failures == 0 ? 0 : 1)
             }
+            run("desktop fallback and full-screen reselection across screenshot, OCR and recording") { try verifyDesktopFallback(image) }
             run("preview feedback: subject exit, labeled actions and persistent recording modes") { try verifyPreviewFeedback(image) }
             run("production selection callbacks release views after repeated cancellation") { try verifySelectionLifetime(image) }
             run("production selection callbacks survive deactivation and release after completion") { try verifySelectionCallbackReuse(image) }
@@ -258,8 +262,9 @@ private struct SelectionUIVerification {
             print("SKIP: save-panel cancellation requires manual modal interaction")
             run("generated arrow, text, mosaic and selected-object previews") { try previews(output: output) }
         } catch { failures += 1; print("FAIL: fixture setup: \(error)") }
-        print(failures == 0 ? "PASS: all selection UI checks completed" : "FAIL: \(failures) selection UI check(s)")
-        exit(failures == 0 ? 0 : 1)
+        print(failures == 0 ? (skips > 0 ? "SKIP: available checks passed; desktop checks remain incomplete" : "PASS: all selection UI checks completed") : "FAIL: \(failures) selection UI check(s)")
+        print("INFO: \(skips) checks skipped; skipped checks are not passes")
+        exit(failures == 0 ? (skips > 0 ? 77 : 0) : 1)
     }
 
     fileprivate static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
@@ -361,8 +366,64 @@ private struct SelectionUIVerification {
                     "Reused selection callback changed screen coordinate conversion")
     }
 
+    @MainActor private static func verifyDesktopFallback(_ image: CGImage) throws {
+        let candidate = CGRect(x: 200, y: 220, width: 300, height: 180)
+        let desktop = CGPoint(x: 80, y: 180)
+        let start = CGPoint(x: 150, y: 220), end = CGPoint(x: 400, y: 370)
+        let expected = CGRect(x: start.x, y: start.y, width: 250, height: 150)
+        for purpose in [CaptureSelectionPurpose.screenshot, .text, .record] {
+            let f = SelectionUIFixture(source: image, candidates: [candidate], purpose: purpose)
+            f.root.mouseMoved(with: f.mouse(.mouseMoved, at: desktop))
+            try require(f.root.verificationHover == f.root.bounds && f.root.verificationSelection == nil,
+                        "Desktop must preview the screen without committing")
+            try require(f.root.verificationEmptyHint == "单击选择当前屏幕 · 拖动框选 · Esc 取消", "Desktop guidance missing")
+            f.root.mouseMoved(with: f.mouse(.mouseMoved, at: CGPoint(x: 300, y: 300)))
+            try require(f.root.verificationHover == candidate, "Window must take priority over screen fallback")
+            try f.routedGesture(from: desktop, to: desktop)
+            try require(f.root.verificationSelection == f.root.bounds && f.root.verificationCommittedMode == .screen
+                        && f.actions.isEmpty, "Desktop click must lock screen without starting the action")
+            f.root.cursorUpdate(with: f.mouse(.mouseMoved, at: start))
+            try require(NSCursor.current == NSCursor.crosshair, "Full-screen interior must use the selection cursor")
+            try f.routedGesture(from: start, to: start)
+            try require(f.root.verificationSelection == f.root.bounds, "Single click must retain the screen")
+            try f.routedGesture(from: start, to: CGPoint(x: start.x + 5, y: start.y + 5))
+            try require(f.root.verificationSelection == f.root.bounds, "Invalid small drag must retain the screen")
+            try f.routedGesture(from: start, to: end)
+            try require(f.root.verificationSelection == expected && f.actions.isEmpty,
+                        "Dragging inside a full-screen selection must select a new rectangle")
+            try f.button(purpose == .screenshot ? "完成" : "确认").performClick(nil)
+            try require(f.actions.count == 1 && f.actions[0].0 == purpose.primaryAction && f.actions[0].1 == expected,
+                        "Completion must use the new region and entry action")
+            let empty = SelectionUIFixture(source: image, purpose: purpose)
+            try empty.button("整屏").performClick(nil)
+            try empty.routedGesture(from: start, to: end)
+            try require(empty.root.verificationSelection == expected, "Explicit full-screen selection must allow reselecting")
+            let free = SelectionUIFixture(source: image, purpose: purpose)
+            _ = free.root.handleShortcut(free.key(15, characters: "r"))
+            free.root.mouseMoved(with: free.mouse(.mouseMoved, at: desktop))
+            try free.routedGesture(from: desktop, to: desktop)
+            try require(free.root.verificationHover == nil && free.root.verificationSelection == nil,
+                        "Explicit free selection must not fall back to the screen")
+        }
+        let scroll = SelectionUIFixture(source: image, purpose: .scroll)
+        scroll.root.mouseMoved(with: scroll.mouse(.mouseMoved, at: desktop))
+        try scroll.routedGesture(from: desktop, to: desktop)
+        try require(scroll.root.verificationSelection == nil && scroll.root.verificationHover == nil
+                    && scroll.root.verificationEmptyHint == "未识别到窗口 · 请拖动框选可滚动内容 · Esc 取消",
+                    "Scrolling must explain missing windows without selecting the desktop")
+    }
+
     @MainActor private static func verifyPreviewFeedback(_ image: CGImage) throws {
-        let subject = SelectionUIFixture(source: image)
+        let subject = SelectionUIFixture(source: image, initialMode: .subject)
+        try require(subject.actionButtons.filter { ["框选", "主体", "窗口", "整屏"].contains($0.title) }.map(\.title) == ["主体"],
+                    "Dedicated subject capture must expose only the unchanged subject button")
+        for (code, key): (UInt16, String) in [(3, "f"), (13, "w"), (15, "r"), (49, " ")] {
+            _ = subject.root.handleShortcut(subject.key(code, characters: key))
+            try require(subject.root.verificationMode == .subject && subject.root.verificationSelection == nil,
+                        "Mode shortcut escaped dedicated subject capture")
+        }
+        subject.root.setScreenshotMode(.window, startAnalysis: false)
+        try require(subject.root.verificationMode == .subject, "Mode broadcast escaped dedicated subject capture")
         // No Vision request: simulate an active subject mode with no detected result.
         subject.root.setScreenshotMode(.subject, startAnalysis: false)
         let point = CGPoint(x: 100, y: 100)
@@ -387,8 +448,8 @@ private struct SelectionUIVerification {
         }
         let text = SelectionUIFixture(source: image, purpose: .text)
         text.gesture(from: CGPoint(x: 100, y: 120), to: CGPoint(x: 500, y: 400))
-        try require(text.actionButtons.map(\.title) == ["取消", "确认"]
-                    && text.actionButtons.allSatisfy { $0.imagePosition == .imageLeading }, "OCR actions must be labeled cancel then confirm")
+        try require(text.actionButtons.map(\.title) == ["框选", "窗口", "整屏", "取消", "确认"]
+                    && text.actionButtons.filter { ["取消", "确认"].contains($0.title) }.allSatisfy { $0.imagePosition == .imageLeading }, "OCR actions must be labeled cancel then confirm")
         let record = SelectionUIFixture(source: image, purpose: .record)
         try require(record.actionButtons.map(\.title) == ["框选", "窗口", "整屏", "取消"], "Recording modes must remain explicit before selection")
         try record.button("整屏").performClick(nil)
@@ -401,7 +462,7 @@ private struct SelectionUIVerification {
             let f = SelectionUIFixture(source: image, purpose: purpose)
             let initial = purpose == .screenshot
                 ? ["框选", "主体", "窗口", "整屏"] + AnnotationControls.displayOrder.map(\.rawValue) + ["撤销", "保存", "贴图", "文字", "长截图", "取消", "完成"]
-                : (purpose == .record ? ["框选", "窗口", "整屏", "取消"] : [])
+                : ((purpose == .record || purpose == .text) ? ["框选", "窗口", "整屏", "取消"] : [])
             try require(f.actionButtons.map(\.title) == initial && f.configurations.isEmpty && f.menus.isEmpty,
                         "\(purpose) has incorrect initial toolbar actions")
             if purpose == .screenshot {
@@ -414,7 +475,7 @@ private struct SelectionUIVerification {
             f.root.verificationSelect(selected)
             let expected = purpose == .screenshot
                 ? AnnotationControls.displayOrder.map(\.rawValue) + ["撤销", "框选", "主体", "窗口", "整屏", "保存", "贴图", "文字", "长截图", "取消", "完成"]
-                : (purpose == .record ? ["框选", "窗口", "整屏", "取消", "确认"] : ["取消", "确认"])
+                : ((purpose == .record || purpose == .text) ? ["框选", "窗口", "整屏", "取消", "确认"] : ["取消", "确认"])
             try require(f.actionButtons.map(\.title).sorted() == expected.sorted(),
                         "\(purpose) has incorrect buttons: \(f.actionButtons.map(\.title))")
             try require(f.configurations.isEmpty && f.menus.isEmpty, "\(purpose) exposes configuration without an active annotation tool")
@@ -446,7 +507,9 @@ private struct SelectionUIVerification {
                     && modes.allSatisfy { $0.imagePosition == .noImage }, "Screenshot modes lost their first compact group")
         try require(tools.map(\.title) == AnnotationControls.displayOrder.map(\.rawValue) + ["撤销"]
                     && tools.allSatisfy { $0.imagePosition == .imageOnly }, "Screenshot tools lost their independent group")
-        try require(actions.map(\.title) == ["保存", "贴图", "文字", "长截图", "取消", "完成"]
+        let expectedActions = ["保存", "贴图"]
+            + (fixture.root.verificationMode == .subject ? [] : ["文字", "长截图"]) + ["取消", "完成"]
+        try require(actions.map(\.title) == expectedActions
                     && actions.allSatisfy { $0.imagePosition == .imageOnly },
                     "Screenshot completion actions lost their icon presentation or accessible titles")
         for button in actions {
@@ -506,7 +569,7 @@ private struct SelectionUIVerification {
             f.root.verificationSelect(CGRect(x: 140, y: 200, width: 440, height: 280))
             for button in f.actionButtons {
                 let annotation = ImageToolsTool.allCases.contains(where: { $0.rawValue == button.title }) && button.imagePosition == .imageOnly
-                let mode = (purpose == .screenshot || purpose == .record) && ["框选", "主体", "窗口", "整屏"].contains(button.title)
+                let mode = (purpose == .screenshot || purpose == .record || purpose == .text) && ["框选", "主体", "窗口", "整屏"].contains(button.title)
                 let compactAction = (purpose == .screenshot && ["取消", "确认", "完成"].contains(button.title))
                     || (purpose == .screenshot && ["保存", "贴图", "文字", "长截图"].contains(button.title))
                 if annotation || button.title == "撤销" { try require(button.imagePosition == .imageOnly, "Annotation operations mix text and icon styles") }
@@ -551,10 +614,10 @@ private struct SelectionUIVerification {
     @MainActor private static func verifyFullScreenCompletion(_ image: CGImage) throws {
         for size in [CGSize(width: 1280, height: 832), CGSize(width: 320, height: 280)] {
             let safe = CGRect(x: 0, y: 60, width: size.width, height: size.height - 89)
-            for purpose in [CaptureSelectionPurpose.screenshot, .record] {
+            for purpose in [CaptureSelectionPurpose.screenshot, .text, .record] {
                 let f = SelectionUIFixture(source: image, size: size, purpose: purpose, toolbarArea: safe)
                 try f.button("整屏").performClick(nil)
-                let title = purpose == .record ? "确认" : "完成"
+                let title = (purpose == .record || purpose == .text) ? "确认" : "完成"
                 let actions = purpose == .screenshot
                     ? ["框选", "主体", "窗口", "整屏", title, "取消"]
                     : ["框选", "窗口", "整屏", "取消", title]
@@ -592,7 +655,7 @@ private struct SelectionUIVerification {
 
     @MainActor private static func verifyFullScreenModes(_ image: CGImage) throws {
         let candidate = CGRect(x: 140, y: 200, width: 440, height: 280)
-        for purpose in [CaptureSelectionPurpose.screenshot, .record] {
+        for purpose in [CaptureSelectionPurpose.screenshot, .text, .record] {
             let choices = ["框选", "窗口"]
             for mode in choices {
                 let f = SelectionUIFixture(source: image, candidates: [candidate], purpose: purpose)
@@ -659,7 +722,9 @@ private struct SelectionUIVerification {
     }
 
     @MainActor private static func verifyOverlayInputOwnership(_ image: CGImage) throws {
-        try require(!NSScreen.screens.isEmpty, "No native displays available for overlay coverage check")
+        guard !NSScreen.screens.isEmpty else {
+            throw SelectionUISkip(description: "No native displays available for overlay coverage check")
+        }
         NSApp.setActivationPolicy(.accessory)
         let initialApplication = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let initiallyActive = NSApp.isActive
@@ -902,7 +967,8 @@ private struct SelectionUIVerification {
                     try require(patterns.map { $0.identifier!.rawValue } == Array(StickerCatalog.items.prefix(patterns.count).map(\.id)),
                                 "Floating picker changed the default prefix order")
                     try require(row.allSatisfy { abs($0.frame.midY - f.sizeControl!.frame.midY) < 0.5 }
-                                && f.root.verificationToolbar.bounds.width - 8 - (row.map(\.frame.maxX).max() ?? 0) < 32,
+                                && (patterns.count == StickerCatalog.items.count
+                                    || SelectionToolbar.singleLineWidth(row + [f.root.verificationAnnotationControls.stickerButtons[patterns.count]]) > f.root.verificationToolbar.bounds.width),
                                 "Floating sticker row wraps or leaves room for another sticker")
                 }
                 let selected = try f.selectedSample(category)
@@ -1266,9 +1332,9 @@ private struct SelectionUIVerification {
         let explicit = SelectionUIFixture(source: image, candidates: [candidate], purpose: .scroll)
         try require(explicit.root.handleShortcut(explicit.key(13, characters: "w")),
                     "Explicit scroll window shortcut was removed")
+        explicit.root.mouseMoved(with: explicit.mouse(.mouseMoved, at: point))
         try require(explicit.root.verificationEmptyHint == "悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消",
                     "Explicit window guidance omits the route back to free selection")
-        explicit.root.mouseMoved(with: explicit.mouse(.mouseMoved, at: point))
         try require(explicit.root.verificationHover == candidate,
                     "Explicit scroll window selection no longer highlights its candidate")
         try explicit.routedGesture(from: point, to: point)

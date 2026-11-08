@@ -8,7 +8,7 @@ enum CaptureSelectionPurpose {
     case screenshot, text, scroll, record
 
     var supportsAnnotations: Bool { self == .screenshot }
-    var supportsFullScreen: Bool { self == .screenshot || self == .record }
+    var supportsFullScreen: Bool { self == .screenshot || self == .record || self == .text }
 
     var primaryAction: CaptureSelectionAction {
         switch self {
@@ -384,6 +384,7 @@ private final class SelectionChrome: NSView {
     var scrollHint = false
     var fullScreenAvailable = true
     var annotationSelected = false
+    var canReselectFullScreen = false
     var emptyHint: String?
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -416,6 +417,7 @@ private final class SelectionChrome: NSView {
         let hint: String
         if selection == nil { hint = emptyHint ?? (L("单击选窗口 · 拖动框选") + (fullScreenAvailable ? L(" · F 整屏") : "") + L(" · Esc 取消")) }
         else if annotationSelected { hint = L("拖动移动 · 设置区修改 · Delete 删除 · Esc 取消选中") }
+        else if canReselectFullScreen { hint = LF("拖动重新框选 · 双击空白或 Enter %@ · Esc 取消", primaryTitle) }
         else { hint = LF("双击空白或 Enter %@ · Esc 取消", primaryTitle) }
         let text = scrollHint ? hint + L("\n框选需要的范围，滚动后自动拼接") : hint
         let size = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium)])
@@ -453,6 +455,7 @@ private final class SelectionView: NSView {
     private let modeSeparator = ToolbarSeparator()
     private let candidates: [CGRect]
     private let purpose: CaptureSelectionPurpose
+    private let isSubjectOnly: Bool
     private let toolbarArea: CGRect
     private enum SelectionMode { case automatic, free, window }
     private var selectionMode: SelectionMode = .free
@@ -512,10 +515,12 @@ private final class SelectionView: NSView {
         subjects = InlineSubjectSelection(image: image, size: size)
         self.candidates = candidates
         self.purpose = purpose
+        isSubjectOnly = purpose == .screenshot && initialMode == .subject
+        subjects.allowsRectangleMode = !isSubjectOnly
         self.toolbarArea = toolbarArea ?? CGRect(origin: .zero, size: size)
         super.init(frame: CGRect(origin: .zero, size: size))
         if purpose == .text || purpose == .record || (purpose == .scroll && initialMode == .window) { selectionMode = .automatic }
-        if purpose == .record { screenshotMode = .window }
+        if purpose == .record || purpose == .text { screenshotMode = .window }
         for drawingCanvas in [rectangleCanvas, subjectCanvas] {
             drawingCanvas.frame = bounds
             drawingCanvas.bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
@@ -597,10 +602,10 @@ private final class SelectionView: NSView {
             cancelButton.imagePosition = .imageLeading
             confirmButton.imagePosition = .imageLeading
         }
-        if purpose == .record {
+        if purpose == .record || purpose == .text {
             freeButton.title = L("框选")
             freeButton.setAccessibilityLabel(L("框选"))
-            freeButton.toolTip = L("拖动框选录制区域（R）")
+            freeButton.toolTip = purpose == .record ? L("拖动框选录制区域（R）") : L("拖动框选截图范围（R）")
             windowButton.title = L("窗口")
             windowButton.setAccessibilityLabel(L("窗口"))
             windowButton.toolTip = L("悬停高亮窗口，单击选择或直接拖动框选（W）")
@@ -641,13 +646,13 @@ private final class SelectionView: NSView {
     }
 
     private func requestMode(_ mode: ScreenshotSelectionMode) {
-        guard purpose == .screenshot else { return }
+        guard purpose == .screenshot, !isSubjectOnly || mode == .subject else { return }
         if let onModeChange { onModeChange(mode) }
         else { setScreenshotMode(mode, startAnalysis: true) }
     }
 
     func setScreenshotMode(_ mode: ScreenshotSelectionMode, startAnalysis: Bool) {
-        guard purpose == .screenshot else { return }
+        guard purpose == .screenshot, !isSubjectOnly || mode == .subject else { return }
         [rectangleButton, subjectButton, windowButton, screenButton].forEach {
             ($0 as? SelectionButton)?.resetPointerFeedback()
         }
@@ -682,16 +687,20 @@ private final class SelectionView: NSView {
         let selectionActions: [NSView] = purpose.supportsFullScreen
             ? (selection == bounds ? [freeButton, windowButton] : [screenButton]) : []
         if purpose == .screenshot {
-            let modes: [NSView] = [rectangleButton, subjectButton, windowButton, screenButton]
+            let modes: [NSView] = isSubjectOnly
+                ? [subjectButton] : [rectangleButton, subjectButton, windowButton, screenButton]
             let visibleControls = screenshotMode == .subject ? subjectControls! : rectangleControls!
-            let actions = Array(imageActions.dropFirst()) + [cancelButton!, imageActions[0]]
+            let exportActions: [NSView] = imageActionButtons.dropFirst()
+                .filter { screenshotMode != .subject || ($0.0 != .scroll && $0.0 != .ocr) }
+                .map { $0.1 }
+            let actions = exportActions + [cancelButton!, imageActions[0]]
             let main = modes + [modeSeparator] + (visibleControls.rows(appendingActions: actions, maxWidth: usableWidth).first ?? [])
             // The floating toolbar keeps the width established by its actions;
             // extra stickers must not stretch it across the available screen.
             let parameterWidth = min(usableWidth, SelectionToolbar.singleLineWidth(main, metrics: toolbar.metrics))
             let controlRows = visibleControls.rows(appendingActions: actions, maxWidth: parameterWidth)
             toolbar.rows = [main] + Array(controlRows.dropFirst())
-        } else if purpose == .record {
+        } else if purpose == .record || purpose == .text {
             toolbar.rows = [[freeButton, windowButton, screenButton, cancelButton] + (selection == nil ? [] : [confirmButton!])]
         } else if selection == nil {
             toolbar.rows = purpose.supportsFullScreen ? [[screenButton, cancelButton]] : []
@@ -719,6 +728,27 @@ private final class SelectionView: NSView {
         refreshHover(at: point)
     }
 
+    private func automaticCandidate(at point: CGPoint) -> CGRect? {
+        guard selectionMode != .free, bounds.contains(point) else { return nil }
+        return candidates.first(where: { $0.contains(point) }) ?? (purpose.supportsFullScreen ? bounds : nil)
+    }
+
+    private func refreshSelectionHint() {
+        if selectionMode != .free && !choosingSubjects {
+            if selection == nil && hover == bounds && purpose.supportsFullScreen {
+                chrome.emptyHint = L("单击选择当前屏幕 · 拖动框选 · Esc 取消")
+            } else if selection == nil && hover == nil && purpose == .scroll {
+                chrome.emptyHint = L("未识别到窗口 · 请拖动框选可滚动内容 · Esc 取消")
+            } else {
+                chrome.emptyHint = L("悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消")
+            }
+        } else {
+            chrome.emptyHint = purpose.supportsFullScreen
+                ? L("拖动框选范围 · R 框选 · W 窗口 · F 整屏 · Esc 取消")
+                : L("拖动框选范围 · W 选择窗口 · Esc 取消")
+        }
+    }
+
     private func refreshHover(at point: CGPoint) {
         guard drag == nil else { return }
         if choosingSubjects {
@@ -728,7 +758,8 @@ private final class SelectionView: NSView {
             return
         }
         guard selection == nil || pendingModeChange else { return }
-        hover = selectionMode != .free && bounds.contains(point) ? candidates.first(where: { $0.contains(point) }) : nil
+        hover = automaticCandidate(at: point)
+        refreshSelectionHint()
         chrome.hover = hover
         chrome.needsDisplay = true
     }
@@ -761,7 +792,7 @@ private final class SelectionView: NSView {
         }
         if case .move = drag { NSCursor.closedHand.set(); return }
         if let handle = handle(at: point) { cursor(for: handle).set(); return }
-        if let selection, selection.contains(point), activeTool == nil { NSCursor.openHand.set(); return }
+        if let selection, selection != bounds, selection.contains(point), activeTool == nil { NSCursor.openHand.set(); return }
         NSCursor.crosshair.set()
     }
 
@@ -804,7 +835,7 @@ private final class SelectionView: NSView {
             return
         }
         addCursorRect(bounds, cursor: .crosshair)
-        if let selection, activeTool == nil { addCursorRect(selection, cursor: .openHand) }
+        if let selection, selection != bounds, activeTool == nil { addCursorRect(selection, cursor: .openHand) }
         if let selection {
             for handle in SelectionHandle.allCases {
                 let point = handle.point(in: selection)
@@ -862,7 +893,7 @@ private final class SelectionView: NSView {
         }
         if purpose == .screenshot, screenshotMode == .window, pendingModeChange || selection == nil {
             let preserve = !pendingModeChange && (onHasSelection?() ?? hasSelection)
-            drag = .create(anchor: point, clickedWindow: candidates.first(where: { $0.contains(point) }), preserveSelection: preserve)
+            drag = .create(anchor: point, clickedWindow: automaticCandidate(at: point), preserveSelection: preserve)
             creatingSelection = false
             return
         }
@@ -876,13 +907,16 @@ private final class SelectionView: NSView {
             onActivate?()
             drag = .resize(rect: rect, handle: handle)
         }
+        else if selection == bounds, activeTool == nil {
+            drag = .create(anchor: point, clickedWindow: nil, preserveSelection: true)
+        }
         else if let rect = selection, rect.insetBy(dx: -5, dy: -5).contains(point) {
             onActivate?()
             drag = .move(rect: rect, anchor: point)
             NSCursor.closedHand.set()
         } else {
             // A first outside click must preserve the image for a possible second click.
-            let clicked = selectionMode != .free ? candidates.first(where: { $0.contains(point) }) : nil
+            let clicked = automaticCandidate(at: point)
             drag = .create(anchor: point, clickedWindow: clicked,
                            preserveSelection: onHasSelection?() ?? hasSelection)
         }
@@ -920,10 +954,10 @@ private final class SelectionView: NSView {
                                      width: abs(point.x - anchor.x), height: abs(point.y - anchor.y)).intersection(bounds)
         case .move(let rect, let anchor):
             selection = SelectionGeometry.move(rect, by: CGSize(width: point.x - anchor.x, height: point.y - anchor.y), within: bounds)
-            if purpose == .screenshot || purpose == .record, selection != rect { screenshotMode = .rectangle; committedMode = .rectangle; selectionMode = .free }
+            if purpose == .screenshot || purpose == .record || purpose == .text, selection != rect { screenshotMode = .rectangle; committedMode = .rectangle; selectionMode = .free }
         case .resize(let rect, let handle):
             selection = SelectionGeometry.resize(rect, handle: handle, to: point, within: bounds)
-            if purpose == .screenshot || purpose == .record, selection != rect { screenshotMode = .rectangle; committedMode = .rectangle; selectionMode = .free }
+            if purpose == .screenshot || purpose == .record || purpose == .text, selection != rect { screenshotMode = .rectangle; committedMode = .rectangle; selectionMode = .free }
         }
         updateSelection()
     }
@@ -946,7 +980,7 @@ private final class SelectionView: NSView {
             return
         }
         if case .create(_, let clicked, let preserveSelection) = operation, !creatingSelection, !preserveSelection, let clicked {
-            commitRectangle(clicked, mode: purpose == .screenshot || purpose == .record ? .window : .rectangle)
+            commitRectangle(clicked, mode: purpose.supportsFullScreen ? (clicked == bounds ? .screen : .window) : .rectangle)
         } else if case .create = operation, creatingSelection {
             if let rect = creationPreview, rect.width >= 16, rect.height >= 16 {
                 commitRectangle(rect, mode: .rectangle)
@@ -980,7 +1014,7 @@ private final class SelectionView: NSView {
         }
         canvas.clearAnnotations()
         selectionMode = mode
-        if purpose == .record { screenshotMode = mode == .window ? .window : .rectangle }
+        if purpose == .record || purpose == .text { screenshotMode = mode == .window ? .window : .rectangle }
         selection = nil
         activeTool = nil
         canvas.isDrawingEnabled = false
@@ -994,7 +1028,7 @@ private final class SelectionView: NSView {
 
     private func selectScreen() {
         guard purpose.supportsFullScreen else { return }
-        if purpose == .screenshot || purpose == .record { screenshotMode = .screen }
+        if purpose == .screenshot || purpose == .record || purpose == .text { screenshotMode = .screen }
         commitRectangle(bounds, mode: .screen)
         drag = nil; creatingSelection = false; creationPreview = nil
         updateSelection()
@@ -1005,7 +1039,7 @@ private final class SelectionView: NSView {
         guard rect.width >= 16, rect.height >= 16 else { return }
         onActivate?()
         committedMode = mode
-        if purpose == .screenshot || purpose == .record {
+        if purpose == .screenshot || purpose == .record || purpose == .text {
             screenshotMode = mode
             selectionMode = mode == .window ? .automatic : .free
         }
@@ -1071,13 +1105,7 @@ private final class SelectionView: NSView {
         rectangleCanvas.isDrawingEnabled = !pendingModeChange && rectangleControls.activeTool != nil
         chrome.selection = creationPreview ?? (pendingModeChange && screenshotMode == .window ? nil : selection)
         chrome.hover = selection == nil || pendingModeChange ? hover : nil
-        if purpose == .screenshot {
-            chrome.emptyHint = screenshotMode == .window ? L("悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消") : L("拖动框选范围 · R 框选 · W 窗口 · F 整屏 · Esc 取消")
-        } else if purpose == .scroll {
-            chrome.emptyHint = selectionMode != .free
-                ? L("悬停识别窗口 · 单击选择 · 拖动框选 · Esc 取消")
-                : L("拖动框选范围 · W 选择窗口 · Esc 取消")
-        }
+        refreshSelectionHint()
         chrome.needsDisplay = true
         rectangleCanvas.interactionBounds = selection.map { SelectionGeometry.pixelRect($0, in: bounds, imageSize: chrome.imageSize) }
         subjectCanvas.interactionBounds = subjectCanvas.bounds
@@ -1099,7 +1127,9 @@ private final class SelectionView: NSView {
             imageActionButtons.forEach { action, button in
                 button.isEnabled = ready && !(subject && (action == .ocr || action == .scroll))
                 if action == .ocr {
-                    button.toolTip = subject ? L("主体模式暂不支持提取文字，可切换到框选、窗口或整屏。") : L("提取当前选区中的文字")
+                    button.toolTip = subject
+                        ? (isSubjectOnly ? L("主体截图暂不支持提取文字。") : L("主体模式暂不支持提取文字，可切换到框选、窗口或整屏。"))
+                        : L("提取当前选区中的文字")
                 }
             }
             let visibleControls = subject ? subjectControls! : rectangleControls!
@@ -1117,13 +1147,14 @@ private final class SelectionView: NSView {
             let position: NSControl.ImagePosition = .imageOnly
             cancelButton.imagePosition = position
             imageActionButtons.first(where: { $0.0 == .copy })?.1.imagePosition = position
-        } else if purpose == .record {
+        } else if purpose == .record || purpose == .text {
             for (button, selected) in [(freeButton!, screenshotMode == .rectangle),
                                        (windowButton!, screenshotMode == .window),
                                        (screenButton!, screenshotMode == .screen)] {
                 button.state = selected ? .on : .off
             }
         }
+        chrome.canReselectFullScreen = selection == bounds && activeTool == nil
         chrome.annotationSelected = canvas.selectedAnnotation != nil
         chrome.needsDisplay = true
     }
@@ -1191,6 +1222,8 @@ private final class SelectionView: NSView {
             return true
         }
         if event.modifierFlags.intersection([.control, .option]).isEmpty {
+            // Dedicated subject capture keeps its scope even when mode keys are pressed.
+            if isSubjectOnly && [3, 13, 15, 49].contains(event.keyCode) { return true }
             switch event.keyCode {
             case 53:
                 if !canvas.cancelAnnotationEditing() { onCancel?() }

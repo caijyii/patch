@@ -2,7 +2,7 @@
 
 [简体中文](privacy-policy.md) · [English](privacy-policy.en.md)
 
-更新日期：2026-11-08。本文描述 Patch 0.1.3 的行为；维护者为 caijyii，联系邮箱为 [caijyii@163.com](mailto:caijyii@163.com)。
+更新日期：2026-11-08。本文描述 Patch 0.1.4 的行为；维护者为 caijyii，联系邮箱为 [caijyii@163.com](mailto:caijyii@163.com)。
 
 ## 本地处理
 

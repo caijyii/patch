@@ -1,6 +1,18 @@
-# Patch 0.1.3
+# Patch 0.1.4
 
 [简体中文](release-notes.md) · [English](release-notes.en.md)
+
+This update improves capture area selection and simplifies subject capture:
+
+- Screenshots, text extraction, and recording preview the current screen when no window is under the pointer. Click to select it or drag to choose an area. Windows take priority when the pointer moves over them.
+- Text extraction now offers area, window, and full-screen selection controls.
+- Drag inside a full-screen selection to choose a new area when no annotation tool is active. The interior uses a crosshair cursor; single clicks and very small drags preserve the selection.
+- The dedicated subject capture entry hides other capture modes and their shortcuts. Subject mode hides text extraction and scrolling capture while retaining subject selection, annotations, save, pin, and finish actions.
+- Scrolling capture explicitly asks you to select scrollable content when no window is detected.
+
+Requires Apple Silicon and macOS 15+. Save any pins you want to keep before quitting the old version, then replace Patch.app in its existing installation location. The app remains ad-hoc signed and is not notarized by Apple. Permissions may need to be granted again. See the [installation guide](install.en.md).
+
+## Patch 0.1.3
 
 This update improves annotation, text pin editing, and clipboard history:
 

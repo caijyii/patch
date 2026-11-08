@@ -8,6 +8,7 @@ import AppKit
 @MainActor
 final class InlineSubjectSelection: NSView {
     var onChange: (() -> Void)?
+    var allowsRectangleMode = true
     private(set) var analysisRect: CGRect?
     private(set) var selected = IndexSet()
     private(set) var hovered: Int?
@@ -102,7 +103,8 @@ final class InlineSubjectSelection: NSView {
                     self.hover(at: self.lastHover)
                 case .failure(let error):
                     self.restorePreservedResult()
-                    self.status = error.localizedDescription + L(" · 可重新框选或切回矩形")
+                    self.status = error.localizedDescription + (self.allowsRectangleMode
+                        ? L(" · 可重新框选或切回矩形") : L(" · 可拖动重新限定识别范围"))
                     self.changed()
                 }
             }

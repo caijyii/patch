@@ -14,7 +14,7 @@
 
 首次打包先运行 `bash scripts/setup-dmg-tools.sh`，在项目 `.build/dmg-tools` 内安装固定版本的构建依赖（dmgbuild、ds-store、mac-alias）；这些依赖不会进入应用包或全局 Python。
 
-运行 `bash scripts/package-release.sh v0.1.3`，从干净 Git 工作区构建 Apple Silicon 沙盒安装包，输出至 `dist/v0.1.3/`。已有输出目录时拒绝覆盖。
+运行 `bash scripts/package-release.sh v0.1.4`，从干净 Git 工作区构建 Apple Silicon 沙盒安装包，输出至 `dist/v0.1.4/`。已有输出目录时拒绝覆盖。
 
 发布附件包括 `Patch-…-macOS-arm64.dmg`、`Patch-…-macOS-arm64.zip`、`INSTALL.md`、`INSTALL.en.md`、`release-manifest.json` 和 `SHA256SUMS.txt`。清单记录源码提交、架构、版本和签名状态；不包含本地日志或验收素材。应用使用源码既有标识 `dev.screenleaf.app`，与本机 Sandbox / Development 包分开，但不应同时运行。
 
