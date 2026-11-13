@@ -66,6 +66,63 @@ private final class RecentInfoButton: NSButton {
     override func mouseExited(with event: NSEvent) { onHover?(false) }
 }
 
+/// Explicit hover feedback also works when native help rectangles overlap the
+/// full-card target. Keep toolTip as the semantic description for every action.
+@MainActor
+private class RecentActionButton: NSButton {
+    private var hint: String?
+    private var tracking: NSTrackingArea?
+    private var pendingHint: DispatchWorkItem?
+    private var hintPopover: NSPopover?
+    override var toolTip: String? {
+        get { hint }
+        set { hint = newValue; super.toolTip = nil; dismissHint() }
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let tracking = NSTrackingArea(rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(tracking); self.tracking = tracking
+    }
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        dismissHint()
+        let work = DispatchWorkItem { [weak self] in self?.showHint() }
+        pendingHint = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    }
+    override func mouseExited(with event: NSEvent) { dismissHint(); super.mouseExited(with: event) }
+    override func mouseDown(with event: NSEvent) { dismissHint(); super.mouseDown(with: event) }
+    override func performClick(_ sender: Any?) { dismissHint(); super.performClick(sender) }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { dismissHint() }
+    }
+    private func dismissHint() {
+        pendingHint?.cancel(); pendingHint = nil
+        hintPopover?.close(); hintPopover = nil
+    }
+    private func showHint() {
+        guard let hint, !hint.isEmpty, isEnabled, !isHiddenOrHasHiddenAncestor,
+              window?.isVisible == true else { return }
+        let label = NSTextField(wrappingLabelWithString: hint)
+        label.identifier = NSUserInterfaceItemIdentifier("history.action-hint-text")
+        label.font = .systemFont(ofSize: 12)
+        let width = min(280, ceil((hint as NSString).size(withAttributes: [.font: label.font!]).width) + 4)
+        let height = ceil(label.cell?.cellSize(forBounds: CGRect(x: 0, y: 0, width: width, height: 1000)).height ?? 18)
+        let controller = NSViewController()
+        controller.view = NSView(frame: CGRect(x: 0, y: 0, width: width + 20, height: height + 14))
+        controller.view.identifier = NSUserInterfaceItemIdentifier("history.action-hint")
+        label.frame = CGRect(x: 10, y: 7, width: width, height: height)
+        controller.view.addSubview(label)
+        let popover = NSPopover(); popover.behavior = .transient; popover.animates = false
+        popover.contentViewController = controller; popover.contentSize = controller.view.bounds.size
+        hintPopover = popover
+        popover.show(relativeTo: bounds, of: self, preferredEdge: .minY)
+    }
+}
+
 @MainActor
 final class RecentContentWindowController: NSWindowController, NSWindowDelegate {
     private let store: RecentContentStore
@@ -79,7 +136,7 @@ final class RecentContentWindowController: NSWindowController, NSWindowDelegate 
     private let scroll = NSScrollView()
     private let status = NSTextField(labelWithString: "")
     private let notice = NSTextField(wrappingLabelWithString: "")
-    private let clear = NSButton(title: L("清空"), target: nil, action: nil)
+    private let clear = RecentActionButton(title: L("清空"), target: nil, action: nil)
     private let typeFilter = NSSegmentedControl(labels: [], trackingMode: .selectOne, target: nil, action: nil)
     private let info = RecentInfoButton(image: NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)!, target: nil, action: nil)
     private var infoPopover: NSPopover?
@@ -135,7 +192,10 @@ final class RecentContentWindowController: NSWindowController, NSWindowDelegate 
         window.center(); reload()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-    deinit { refreshTimer?.invalidate(); NotificationCenter.default.removeObserver(self) }
+    deinit {
+        refreshTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
+    }
     private var selectedFilter: RecentContentStore.Filter {
         RecentContentStore.Filter(rawValue: typeFilter.selectedSegment) ?? .all
     }
@@ -158,9 +218,11 @@ final class RecentContentWindowController: NSWindowController, NSWindowDelegate 
             ? L("共 1 条") : LF("共 %d 条", filtered.count)
         for (index, title) in [L("全部"), L("图片"), L("文本"), L("视频")].enumerated() {
             typeFilter.setLabel(title, forSegment: index)
+            typeFilter.setToolTip(LF("筛选%@记录", title), forSegment: index)
             typeFilter.setWidth(max(52, ceil((title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]).width) + 28), forSegment: index)
         }
         typeFilter.setAccessibilityLabel(L("内容类型"))
+        typeFilter.toolTip = L("筛选剪贴记录")
         let explanation = RecentContentPresentation.historyExplanation
         info.toolTip = nil
         info.setAccessibilityLabel(explanation); info.setAccessibilityHelp(explanation)
@@ -215,8 +277,12 @@ final class RecentContentWindowController: NSWindowController, NSWindowDelegate 
             info.frame.origin = CGPoint(x: status.frame.maxX + 10, y: topInset + 46)
         }
         let headerHeight: CGFloat = compactHeader ? 84 : 56
-        let top = topInset + headerHeight + (notice.isHidden ? 0 : 28)
-        notice.frame = CGRect(x: 18, y: topInset + headerHeight - 7, width: width - 36, height: 28)
+        let rowTop = topInset + headerHeight
+        let noticeWidth = max(80, width - 36)
+        let noticeHeight = notice.isHidden ? 0 : max(28, ceil(notice.attributedStringValue.boundingRect(
+            with: CGSize(width: noticeWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading]).height) + 12)
+        notice.frame = CGRect(x: 18, y: rowTop, width: noticeWidth, height: noticeHeight)
+        let top = rowTop + noticeHeight
         scroll.frame = CGRect(x: 0, y: top, width: width, height: max(80, layoutBounds.maxY - top - 16))
         scroll.tile()
         let gridWidth = scroll.contentView.bounds.width
@@ -283,6 +349,18 @@ final class RecentContentWindowController: NSWindowController, NSWindowDelegate 
     @objc private func removeItem(_ sender: NSButton) {
         if let value = sender.identifier?.rawValue, let id = UUID(uuidString: value) { store.remove(id) }
     }
+    private func copyText(_ item: RecentContentStore.Item) throws {
+        guard case .text(let text) = item.content else { return }
+        let value = NSPasteboardItem()
+        guard value.setString(text, forType: .string) else { throw PatchError(message: L("复制失败 · 可重试")) }
+        if let rich = item.richText {
+            guard value.setData(try ImageToolsUI.portableTextRTF(rich), forType: .rtf) else {
+                throw PatchError(message: L("复制失败 · 可重试"))
+            }
+        }
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([value]) else { throw PatchError(message: L("复制失败 · 可重试")) }
+    }
     @objc private func pinItem(_ sender: NSButton) {
         guard let value = sender.identifier?.rawValue,
               let item = store.items.first(where: { $0.id.uuidString == value }) else { return }
@@ -310,16 +388,8 @@ final class RecentContentWindowController: NSWindowController, NSWindowDelegate 
                     sender.showResult(success: false); return
                 }
                 try ImageToolsUI.copyPNG(image, pixelScale: scale, to: pasteboard)
-            case .text(let text):
-                let value = NSPasteboardItem()
-                value.setString(text, forType: .string)
-                if let rich = item.richText {
-                    value.setData(try ImageToolsUI.portableTextRTF(rich), forType: .rtf)
-                }
-                pasteboard.clearContents()
-                guard pasteboard.writeObjects([value]) else {
-                    sender.showResult(success: false); return
-                }
+            case .text:
+                try copyText(item)
             case .video(let video):
                 guard video.isAvailable else { showUnavailableVideo(); sender.showResult(success: false); return }
                 pasteboard.clearContents()
@@ -352,6 +422,7 @@ final class RecentContentWindowController: NSWindowController, NSWindowDelegate 
         // Closed cards must release their copies of records evicted by the store.
         grid.subviews.forEach { $0.removeFromSuperview() }; groups.removeAll(); empty = nil
     }
+
 }
 
 private final class RecentMetadataLabel: NSTextField {
@@ -369,7 +440,7 @@ private final class RecentCardView: NSView {
         pin = RecentItemButton(item: item, now: now)
         metadata = RecentMetadataLabel(labelWithString: pin.caption)
         copy = RecentCopyButton(item: item)
-        remove = NSButton(image: NSImage(systemSymbolName: "trash", accessibilityDescription: L("删除这条记录"))!, target: nil, action: nil)
+        remove = RecentActionButton(image: NSImage(systemSymbolName: "trash", accessibilityDescription: L("删除这条记录"))!, target: nil, action: nil)
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier("history.card.\(item.id.uuidString)")
         pin.identifier = NSUserInterfaceItemIdentifier(item.id.uuidString)
@@ -396,7 +467,7 @@ private final class RecentCardView: NSView {
     }
 }
 
-private final class RecentCopyButton: NSButton {
+private final class RecentCopyButton: RecentActionButton {
     private var reset: DispatchWorkItem?
     init(item: RecentContentStore.Item) {
         super.init(frame: .zero)
@@ -422,10 +493,9 @@ private final class RecentCopyButton: NSButton {
     }
 }
 
-private final class RecentItemButton: NSButton {
+private final class RecentItemButton: RecentActionButton {
     private let item: RecentContentStore.Item
     private var time: String
-    private var tracking: NSTrackingArea?
     private var hovered = false
     var caption: String { "\(item.kindTitle) · \(time)" }
     override var isFlipped: Bool { true }
@@ -445,14 +515,8 @@ private final class RecentItemButton: NSButton {
         setAccessibilityLabel(LF(item.isPinnable ? "贴出%@，%@：%@" : "打开%@，%@：%@", item.kindTitle, time, item.title))
         toolTip = L(item.isPinnable ? "贴出这条记录" : "打开视频")
     }
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
-        addTrackingArea(area); tracking = area
-    }
-    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
-    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); hovered = false; needsDisplay = true }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
     override var focusRingMaskBounds: NSRect { bounds.insetBy(dx: 2, dy: 2) }
     override func drawFocusRingMask() { NSBezierPath(roundedRect: focusRingMaskBounds, xRadius: 10, yRadius: 10).fill() }

@@ -768,7 +768,7 @@ private struct PreferencesVerification {
         let commandQ = try event(12, [.command])
         try require(controller.window?.performKeyEquivalent(with: commandQ) == true
                     && controller.verificationDraft[.record] == KeyboardShortcut(keyCode: 12, modifiers: [.command])
-                    && controller.verificationStatus.contains("小贴的编辑或窗口操作保留"),
+                    && controller.verificationStatus.contains("patch 的编辑或窗口操作保留"),
                     "Command-Q escaped recorder/menu interception or was not flagged as application reserved")
         let afterDefaults = store.shortcuts
         controller.verificationSave()

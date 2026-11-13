@@ -1,6 +1,19 @@
-# Patch 0.1.4
+# Patch 0.1.5
 
 [简体中文](release-notes.md) · [English](release-notes.en.md)
+
+This update improves capture selection, annotation workspaces, and settings:
+
+- Added “Hide Patch pages during capture” with Automatically hide, Keep visible, and Ask every time. Pages hide automatically by default and return when capture finishes or is cancelled.
+- Resize capture selections anywhere along their four edges, with directional resize cursors on hover.
+- Resize scrolling-capture and image-pin annotation windows from any edge or corner. The toolbar reflows while the image keeps its current zoom.
+- Text annotations avoid early wrapping when space is available and support Enter for a new line. Cancel in text-pin editing returns to the pin while retaining the pin and its current text.
+- Added hover descriptions for clipboard history actions, including Copy, Delete, Pin, and Clear.
+- Unified annotation workspace backgrounds and borders, refined settings switches and permission alert layout, and simplified the capture-page hiding prompt.
+
+Requires Apple Silicon and macOS 15+. Save any pins you want to keep before quitting the old version, then replace Patch.app in its existing installation location. The app remains ad-hoc signed and is not notarized by Apple. Permissions may need to be granted again. See the [installation guide](install.en.md).
+
+## Patch 0.1.4
 
 This update improves capture area selection and simplifies subject capture:
 

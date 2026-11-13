@@ -35,6 +35,7 @@ extension SelectionView {
 }
 
 extension RegionSelector {
+    fileprivate func verificationCandidates(from info: [[String: Any]]) -> [CGRect] { visibleWindows(from: info).map(\.quartzRect) }
     fileprivate func verificationSetCancellation(_ handler: @escaping () -> Void) { cancellation = handler }
     fileprivate func verificationUserCancel() { cancelAndRestoreTarget() }
     fileprivate var verificationWindows: [NSWindow] { windows }
@@ -237,9 +238,11 @@ private struct SelectionUIVerification {
             run("mode changes preserve the old result until a valid new result commits") { try verifyModePreservation(image) }
             run("window and full-screen resize become free rectangle selections") { try verifyModeResize(image) }
             run("default window hover and clicks coexist with direct rectangle dragging") { try verifyCandidate(image) }
+            run("hidden Patch pages are rejected even in a stale WindowServer list") { try verifyHiddenPageCandidates() }
             run("scroll defaults to automatic windows and retains body dragging") { try verifyScrollBodySelection(image) }
             run("invalid automatic drags restore mode and retain the last annotated result") { try verifyAutomaticDragPreservation(image) }
             run("drag selection persists and supports movement and all eight handles") { try verifyGestures(image) }
+            run("entire selection edges resize across screenshot, OCR, scrolling and recording") { try verifyWholeEdges(image) }
             run("active annotation tool routes hit testing to the canvas") { try verifyCanvasHit(image) }
             run("annotation buttons toggle off and restore movement without a move button") { try verifyToolToggle(image) }
             run("tool-specific configuration is shown only while its tool is active") { try verifyToolConfiguration(image) }
@@ -1459,6 +1462,79 @@ private struct SelectionUIVerification {
         try require(f.actions.isEmpty && f.errors.isEmpty, "Selection editing completed an action or raised an error")
     }
 
+    @MainActor private static func verifyHiddenPageCandidates() throws {
+        let page = NSWindow(contentRect: CGRect(x: 100, y: 100, width: 300, height: 200),
+                            styleMask: [.titled], backing: .buffered, defer: false)
+        page.isReleasedWhenClosed = false
+        defer { page.close() }
+        let ownRect = CGRect(x: 100, y: 100, width: 300, height: 200)
+        let underneath = CGRect(x: 80, y: 80, width: 500, height: 400)
+        func item(pid: pid_t, id: Int, rect: CGRect) -> [String: Any] {
+            [kCGWindowOwnerPID as String: pid, kCGWindowNumber as String: NSNumber(value: id),
+             kCGWindowLayer as String: 0, kCGWindowAlpha as String: 1.0,
+             kCGWindowBounds as String: rect.dictionaryRepresentation]
+        }
+        let staleList = [item(pid: ProcessInfo.processInfo.processIdentifier, id: page.windowNumber, rect: ownRect),
+                         item(pid: pid_t.max, id: 42, rect: underneath)]
+        let selector = RegionSelector()
+        page.orderFrontRegardless()
+        try require(selector.verificationCandidates(from: staleList) == [ownRect, underneath],
+                    "Visible Patch pages stopped participating in window selection")
+        page.orderOut(nil)
+        try require(selector.verificationCandidates(from: staleList) == [underneath],
+                    "A hidden Patch page still overrides the visible window underneath")
+        page.orderFrontRegardless()
+        try require(selector.verificationCandidates(from: staleList).first == ownRect,
+                    "Restoring the page did not restore normal window selection")
+    }
+
+    @MainActor private static func verifyWholeEdges(_ image: CGImage) throws {
+        let selected = CGRect(x: 140, y: 200, width: 440, height: 280)
+        for purpose in [CaptureSelectionPurpose.screenshot, .text, .scroll, .record] {
+            for edge in [SelectionHandle.top, .right, .bottom, .left] {
+                for fraction in [0.23, 0.77] {
+                    let f = SelectionUIFixture(source: image, purpose: purpose)
+                    f.root.verificationSelect(selected)
+                    let start: CGPoint
+                    switch edge {
+                    case .top, .bottom:
+                        start = CGPoint(x: selected.minX + selected.width * fraction, y: edge.point(in: selected).y)
+                    default:
+                        start = CGPoint(x: edge.point(in: selected).x, y: selected.minY + selected.height * fraction)
+                    }
+                    try require(f.hit(at: start) === f.root, "\(purpose) \(edge): edge routed away from the selection frame")
+                    f.root.cursorUpdate(with: f.mouse(.mouseMoved, at: start))
+                    let expectedCursor: NSCursor = edge == .top || edge == .bottom ? .resizeUpDown : .resizeLeftRight
+                    try require(NSCursor.current == expectedCursor, "\(purpose) \(edge): incorrect edge resize cursor")
+                    try f.doubleClick(at: start)
+                    try require(f.actions.isEmpty && f.root.verificationSelection == selected,
+                                "Double clicking an edge completed or changed \(purpose)")
+                    let end = CGPoint(x: start.x + 17, y: start.y + 13)
+                    try f.routedGesture(from: start, to: end)
+                    let expected = SelectionGeometry.resize(selected, handle: edge, to: end, within: f.root.bounds).integral
+                    try require(f.root.verificationSelection == expected && f.actions.isEmpty && f.errors.isEmpty,
+                                "\(purpose) \(edge): full-edge drag did not resize only the intended side")
+                }
+            }
+        }
+        let drawing = try preparedAnnotationFixture(image, tool: "方框")
+        let edge = CGPoint(x: selected.maxX, y: selected.minY + 70)
+        try drawing.routedGesture(from: edge, to: CGPoint(x: edge.x + 20, y: edge.y))
+        try require(drawing.root.verificationSelection == CGRect(x: 140, y: 200, width: 460, height: 280)
+                    && drawing.root.verificationCanvas.annotations.isEmpty,
+                    "Dragging a blank edge with a drawing tool created an annotation")
+
+        // On a full-screen range, feedback badges can lie over its edges. They
+        // remain visually present but must not consume a frame-resize gesture.
+        let full = SelectionUIFixture(source: image)
+        full.root.verificationFullScreen()
+        let start = CGPoint(x: 30, y: full.root.bounds.maxY - 1)
+        try require(full.hit(at: start) === full.root, "Feedback badge blocks the full-screen top edge")
+        try full.routedGesture(from: start, to: CGPoint(x: start.x, y: start.y - 30))
+        try require(full.root.verificationSelection == CGRect(x: 0, y: 0, width: 800, height: 569),
+                    "Full-screen edge drag did not resize underneath feedback")
+    }
+
     @MainActor private static func preparedAnnotationFixture(_ image: CGImage, tool: String) throws -> SelectionUIFixture {
         let f = SelectionUIFixture(source: image)
         f.root.verificationSelect(CGRect(x: 140, y: 200, width: 440, height: 280))
@@ -1517,8 +1593,8 @@ private struct SelectionUIVerification {
             c.finishTextEditing()
             let text = c.annotations.last!
             let naturalWidth = ceil((text.text as NSString).size(withAttributes: [.font: field.font!]).width)
-            try require(abs(editingWidth - naturalWidth) <= 1,
-                        "IME input and committed text use different widths at y=\(y)")
+            try require(editingWidth >= naturalWidth && abs((text.textWrapWidth ?? 0) - editingWidth) <= 1,
+                        "IME text wraps early or loses the available line width at y=\(y)")
         }
 
         let long = try preparedAnnotationFixture(image, tool: "文字")
@@ -1531,8 +1607,8 @@ private struct SelectionUIVerification {
         longCanvas.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
         try require(!field.isBordered && !field.isBezeled && !field.drawsBackground,
                     "Inline editing still has a border or opaque background")
-        try require(field.frame.width > initialWidth && field.frame.height > field.font!.pointSize * 2,
-                    "Long text does not expand and wrap during editing")
+        try require(abs(field.frame.width - initialWidth) <= 1 && field.frame.height > field.font!.pointSize * 2,
+                    "Long text does not retain the available line width and expand vertically")
         func saveTextPreview(_ name: String) throws {
             guard let directory = ProcessInfo.processInfo.environment["PATCH_TEXT_PREVIEW_DIR"] else { return }
             long.root.layoutSubtreeIfNeeded()

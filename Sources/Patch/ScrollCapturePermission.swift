@@ -14,9 +14,9 @@ enum ScrollCapturePermission {
         var isGranted: Bool { accessibilityTrusted && canPostEvents }
         var explanation: String {
             if accessibilityTrusted && !canPostEvents {
-                return L("小贴的控制权限尚未完全生效。请在“系统设置 → 隐私与安全性 → 设备控制和数据访问／辅助功能”中确认小贴已开启。\n\n开启后请回到小贴重新开始；若已经开启，请退出并重新打开小贴后重试。")
+                return L("patch 的控制权限尚未完全生效。请在“系统设置 → 隐私与安全性 → 设备控制和数据访问／辅助功能”中确认 patch 已开启。\n\n开启后请回到 patch 重新开始；若已经开启，请退出并重新打开 patch 后重试。")
             }
-            return L("长截图需要控制权限，用于锁定横向滚动和自动滚动。请在“系统设置 → 隐私与安全性 → 设备控制和数据访问／辅助功能”中开启小贴。\n\n开启后请回到小贴重新开始长截图。")
+            return L("长截图需要控制权限，用于锁定横向滚动和自动滚动。请在“系统设置 → 隐私与安全性 → 设备控制和数据访问／辅助功能”中开启 patch。\n\n开启后请回到 patch 重新开始长截图。")
         }
     }
     enum Choice { case request, openSettings, later }
@@ -28,11 +28,11 @@ enum ScrollCapturePermission {
         return ensurePermission(snapshot: snapshot, choose: { snapshot in
             let alert = NSAlert()
             alert.messageText = L("长截图需要控制权限")
-            alert.informativeText = snapshot.explanation
             alert.addButton(withTitle: L("申请权限并打开设置"))
             alert.addButton(withTitle: L("打开系统设置"))
             alert.addButton(withTitle: L("稍后"))
             WindowActivationCoordinator.shared.register(alert.window)
+            PatchAlertLayout.apply(to: alert, text: snapshot.explanation, separateSentences: true)
             defer { WindowActivationCoordinator.shared.unregister(alert.window) }
             NSApp.activate(ignoringOtherApps: true)
             switch alert.runModal() {

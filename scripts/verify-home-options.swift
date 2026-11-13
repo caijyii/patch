@@ -72,11 +72,16 @@ import Darwin
             require(page.bounds.contains(view.frame), "Compact settings clips a visible control: \(view.identifier?.rawValue ?? "label")")
         }
         require(page.hidePinsControl.frame.maxX == rows[0].frame.maxX
-                && abs(page.hidePinsControl.frame.midY - 188) < 0.5,
+                && abs(page.hidePinsControl.frame.midY - 232) < 0.5,
                 "Capture switch must align with the settings right edge and its row")
         let captureLabel = views.first { $0.identifier?.rawValue == "options.hide-pins-label" } as! NSTextField
         require(captureLabel.fittingSize.width <= captureLabel.frame.width && !captureLabel.frame.intersects(page.hidePinsControl.frame),
                 "Localized capture label is clipped or overlaps its selector")
+        let pageLabel = views.first { $0.identifier?.rawValue == "options.capture-pages-label" } as! NSTextField
+        require(page.capturePagesControl.frame.maxX == rows[0].frame.maxX
+                && page.capturePagesControl.frame.minY - rows[2].frame.minY == 44
+                && pageLabel.fittingSize.width <= pageLabel.frame.width,
+                "Page hiding selector or localized label is misaligned/clipped")
         let recordingLabel = views.first { $0.identifier?.rawValue == "options.hide-recording-pins-label" } as! NSTextField
         require(page.hideRecordingPinsControl.frame.maxX == page.hidePinsControl.frame.maxX
                 && page.hideRecordingPinsControl.frame.midY - page.hidePinsControl.frame.midY == 44
@@ -286,6 +291,22 @@ import Darwin
         capturePage.hideRecordingPinsControl.state = .on
         capturePage.hideRecordingPinsControl.sendAction(capturePage.hideRecordingPinsControl.action, to: capturePage.hideRecordingPinsControl.target)
         require(PreferencesStore(storage: captureStorage).hidePinsWhenRecording, "Recording switch must persist On")
+        let beforeClick = capturePreferences.hidePinsWhenCapturing
+        capturePage.hidePinsControl.performClick(nil)
+        require(capturePreferences.hidePinsWhenCapturing != beforeClick, "Styled switch must retain native click toggling and persistence")
+        capturePage.hidePinsControl.isEnabled = false
+        capturePage.hidePinsControl.performClick(nil)
+        require(capturePreferences.hidePinsWhenCapturing != beforeClick, "Disabled styled switch accepted input")
+        capturePage.hidePinsControl.isEnabled = true
+        capturePage.hidePinsControl.performClick(nil)
+        require(capturePreferences.hidePinsWhenCapturing == beforeClick, "Styled switch cannot toggle back")
+        require(capturePreferences.capturePageVisibility == .automatic, "Page hiding must default to automatic")
+        for (index, mode) in CapturePageVisibilityPreference.allCases.enumerated() {
+            capturePage.capturePagesControl.selectItem(at: index)
+            capturePage.capturePagesControl.sendAction(capturePage.capturePagesControl.action, to: capturePage.capturePagesControl.target)
+            require(PreferencesStore(storage: captureStorage).capturePageVisibility == mode,
+                    "Page hiding selector did not persist its choice")
+        }
         let legacyStorage = MemoryPreferencesStorage(data: Data(#"{"version":1,"annotations":{},"shortcuts":{},"pinRecentCount":7}"#.utf8))
         let legacy = PreferencesStore(storage: legacyStorage)
         require(legacy.hidePinsWhenCapturing && legacy.hidePinsWhenRecording && legacy.pinRecentCount == 7, "Existing preferences must migrate without losing values")
@@ -349,11 +370,12 @@ import Darwin
                 "Settings repeats its title or includes clipboard retention details")
         require(originalWindow.title == L("Patch · 更多设置"), "Removing the body heading removed the native settings title")
         let popups = all(page).compactMap { $0 as? NSPopUpButton }
-        require(popups.count == 3 && popups.allSatisfy { $0 is SettingsSelector },
-                "Settings must expose appearance, language, bounded batch pin count and capture visibility")
+        require(popups.count == 4 && popups.allSatisfy { $0 is SettingsSelector },
+                "Settings must expose appearance, language, batch count and page visibility")
         dropdownConfiguration(page); footerAlignment(home); compactOptionsLayout(page)
         nativeDropdown(page.appearanceControl)
         nativeDropdown(page.languageControl)
+        nativeDropdown(page.capturePagesControl)
         nativeCountDropdown(page.countControl, selectLast: true)
         require(preferences.pinRecentCount == 20 && home.tiles[.pinRecent]!.launchButton.title == preferences.pinRecentTitle,
                 "Choosing row 20 did not immediately save the count and update Home")
@@ -375,6 +397,10 @@ import Darwin
             page.appearanceControl.menu!.performActionForItem(at: AppAppearancePreference.allCases.firstIndex(of: mode)!)
             require(preferences.appearancePreference == mode, "Appearance change was not saved")
             render(content, "options-\(mode.rawValue)")
+            let savedState = page.hideRecordingPinsControl.state
+            page.hideRecordingPinsControl.state = .off
+            render(content, "options-switch-states-\(mode.rawValue)")
+            page.hideRecordingPinsControl.state = savedState
             nativeDropdown(page.languageControl)
             permissionLayout(page, granted: false)
             compactOptionsLayout(page)

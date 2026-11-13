@@ -24,6 +24,31 @@ struct CaptureRegion {
     }
 }
 
+/// Keep every part of the alert in the system's layout. A fixed-width accessory
+/// can widen the panel while its native button column stays narrow.
+@MainActor
+enum PatchAlertLayout {
+    static func apply(to alert: NSAlert, text: String, separateSentences: Bool = false) {
+        var display = text
+        if separateSentences {
+            display = text.components(separatedBy: "\n").map { line in
+                var sentences: [String] = []
+                line.enumerateSubstrings(in: line.startIndex..<line.endIndex, options: .bySentences) { substring, _, _, _ in
+                    if let substring { sentences.append(substring.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                }
+                return sentences.isEmpty ? line : sentences.joined(separator: "\n\n")
+            }.joined(separator: "\n")
+            display = display.replacingOccurrences(of: " → ", with: "\n→ ")
+                .replacingOccurrences(of: "；", with: "；\n")
+                .replacingOccurrences(of: "首次允许后可能需要退出并重新打开 App。", with: "首次允许后可能需要\n退出并重新打开 App。")
+                .replacingOccurrences(of: "若已经开启，请", with: "若已经开启，\n请")
+                .replacingOccurrences(of: "／辅助功能", with: "／\n辅助功能")
+        }
+        alert.accessoryView = nil
+        alert.informativeText = display
+    }
+}
+
 @MainActor
 func showError(_ error: Error, title: String = "操作未完成") {
     let alert = NSAlert()
@@ -61,6 +86,9 @@ enum CaptureWindowPolicy {
         includedWindowIDs(hidePins: true)
     }
     static func includedWindowIDs(hidePins: Bool) -> Set<CGWindowID> {
-        Set(NSApp.windows.filter { includes($0, hidePins: hidePins) }.compactMap { CGWindowID(exactly: $0.windowNumber) })
+        // WindowServer can briefly retain ordered-out windows in its on-screen
+        // list. Native visibility must also govern pixels and window candidates.
+        Set(NSApp.windows.filter { $0.isVisible && !$0.isMiniaturized && includes($0, hidePins: hidePins) }
+            .compactMap { CGWindowID(exactly: $0.windowNumber) })
     }
 }

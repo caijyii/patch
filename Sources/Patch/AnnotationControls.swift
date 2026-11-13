@@ -33,6 +33,7 @@ enum ToolbarPalette {
     static let ink = AppTheme.color(NSColor(srgbRed: 45 / 255, green: 57 / 255, blue: 68 / 255, alpha: 1), NSColor(srgbRed: 0.88, green: 0.91, blue: 0.94, alpha: 1))
     static let secondaryInk = AppTheme.color(NSColor(srgbRed: 89 / 255, green: 106 / 255, blue: 121 / 255, alpha: 1), NSColor(srgbRed: 0.69, green: 0.75, blue: 0.81, alpha: 1))
     static let selectedInk = AppTheme.color(NSColor(srgbRed: 20 / 255, green: 43 / 255, blue: 63 / 255, alpha: 1), NSColor(srgbRed: 0.93, green: 0.97, blue: 1, alpha: 1))
+    static let workspace = AppTheme.color(NSColor(srgbRed: 0.93, green: 0.94, blue: 0.95, alpha: 1), NSColor(srgbRed: 0.18, green: 0.20, blue: 0.22, alpha: 1))
     static let surface = AppTheme.color(NSColor.white, NSColor(srgbRed: 0.14, green: 0.16, blue: 0.18, alpha: 1))
     static let border = AppTheme.color(NSColor(srgbRed: 224 / 255, green: 229 / 255, blue: 233 / 255, alpha: 1), NSColor(srgbRed: 0.32, green: 0.36, blue: 0.40, alpha: 1))
     static let selectedFill = AppTheme.color(NSColor(srgbRed: 231 / 255, green: 234 / 255, blue: 238 / 255, alpha: 1), NSColor(srgbRed: 0.27, green: 0.38, blue: 0.48, alpha: 1))

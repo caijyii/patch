@@ -55,8 +55,14 @@ private final class PinMagnifyEvent: NSEvent {
             window.orderFrontRegardless()
             print("FIXTURE: \(index) window=\(window.windowNumber) height=\(height)")
         }
-        interactiveMonitor = NSEvent.addLocalMonitorForEvents(matching: [.magnify, .beginGesture, .endGesture, .gesture, .smartMagnify]) { event in
+        interactiveMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .scrollWheel, .magnify, .beginGesture, .endGesture, .gesture, .smartMagnify]) { event in
             print("RECEIVED: type=\(event.type.rawValue) window=\(event.windowNumber) magnification=\(event.type == .magnify ? event.magnification : 0)")
+            if event.type == .leftMouseDown {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    print("FOCUS: appActive=\(NSRunningApplication.current.isActive) frontmostMatches=\(NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier) keyWindow=\(NSApp.keyWindow?.windowNumber ?? 0)")
+                    fflush(stdout)
+                }
+            }
             fflush(stdout)
             return event
         }

@@ -177,10 +177,10 @@ final class RegionSelector {
             if hasAnnotations {
                 let alert = NSAlert()
                 alert.messageText = L("进入长截图将清除当前标注")
-                alert.informativeText = L("保留当前选区重新捕获，完成拼接后可重新标注。")
                 alert.addButton(withTitle: L("继续长截图"))
                 alert.addButton(withTitle: L("取消"))
                 WindowActivationCoordinator.shared.register(alert.window)
+                PatchAlertLayout.apply(to: alert, text: L("保留当前选区重新捕获，完成拼接后可重新标注。"))
                 defer { WindowActivationCoordinator.shared.unregister(alert.window) }
                 NSApp.activate(ignoringOtherApps: true)
                 guard alert.runModal() == .alertFirstButtonReturn else { return false }
@@ -204,6 +204,10 @@ final class RegionSelector {
 
     private func visibleWindows() -> [SelectionCandidate] {
         guard let list = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return visibleWindows(from: list)
+    }
+
+    private func visibleWindows(from list: [[String: Any]]) -> [SelectionCandidate] {
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let included = CaptureWindowPolicy.includedWindowIDs
         return list.compactMap { item in
@@ -837,9 +841,8 @@ private final class SelectionView: NSView {
         addCursorRect(bounds, cursor: .crosshair)
         if let selection, selection != bounds, activeTool == nil { addCursorRect(selection, cursor: .openHand) }
         if let selection {
-            for handle in SelectionHandle.allCases {
-                let point = handle.point(in: selection)
-                addCursorRect(CGRect(x: point.x - 7, y: point.y - 7, width: 14, height: 14), cursor: cursor(for: handle))
+            for handle in SelectionHandle.hitTestOrder.reversed() {
+                addCursorRect(handle.hitRect(in: selection).intersection(bounds), cursor: cursor(for: handle))
             }
         }
         addCursorRect(toolbar.frame, cursor: .arrow)
@@ -851,10 +854,16 @@ private final class SelectionView: NSView {
 
     private func handle(at point: CGPoint) -> SelectionHandle? {
         guard let selection else { return nil }
-        return SelectionHandle.allCases.first {
+        // Keep the visible handles available even when ink lies underneath them.
+        if let control = SelectionHandle.hitTestOrder.first(where: {
             let anchor = $0.point(in: selection)
-            return abs(point.x - anchor.x) <= 7 && abs(point.y - anchor.y) <= 7
-        }
+            return abs(point.x - anchor.x) <= SelectionHandle.hitTolerance
+                && abs(point.y - anchor.y) <= SelectionHandle.hitTolerance
+        }) { return control }
+        guard let edge = SelectionGeometry.handle(at: point, in: selection) else { return nil }
+        // Existing annotations near the inside of an edge remain independently editable.
+        if selection.contains(point), canvas.annotationContains(convert(point, to: canvas)) { return nil }
+        return edge
     }
 
     private func nearBorder(_ point: CGPoint, rect: CGRect) -> Bool {

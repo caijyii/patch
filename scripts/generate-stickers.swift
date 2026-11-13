@@ -67,7 +67,7 @@ private struct GenerationFailure: Error { let message: String }
         try catalogData.write(to: output.appendingPathComponent("manifest.json"))
         try writePNG(preview.appendingPathComponent("all-stickers.png"), width: 1200, height: 990) { c in
             c.setFillColor(color("#f7f6f2")); c.fill(CGRect(x: 0, y: 0, width: 1200, height: 990))
-            label("小贴 · 原创手绘贴纸", x: 40, y: 24, size: 26, in: c)
+            label("patch · 原创手绘贴纸", x: 40, y: 24, size: 26, in: c)
             label("\(selectable.count) 个透明底矢量图案  ·  每格下方展示 16 / 24 点", x: 40, y: 66, size: 14, in: c, hex: "#85877b")
             for (index, item) in selectable.enumerated() {
                 let x = CGFloat(30 + index % 8 * 144), y = CGFloat(112 + index / 8 * 198)

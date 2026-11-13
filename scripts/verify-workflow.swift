@@ -81,6 +81,13 @@ import Darwin
 
             let store = delegate.workflowHistory
             let historyController = delegate.workflowHistoryController!
+            let status = delegate.workflowStatusControls
+            status.menuWillOpen(status.menu)
+            status.menuDidClose(status.menu)
+            let historyItem = status.menu.items.first { $0.action == NSSelectorFromString("showRecentContent") }!
+            status.menu.performActionForItem(at: status.menu.index(of: historyItem))
+            require(delegate.workflowHistoryController === historyController && historyController.window?.isVisible == true,
+                    "Menu and shortcut must reuse the same history without capturing a paste destination")
             let historyContent = historyController.window!.contentView!
             func historyViews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(historyViews) }
             let historyFilter = historyViews(historyContent).compactMap { $0 as? NSSegmentedControl }.first!

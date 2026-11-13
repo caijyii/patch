@@ -33,11 +33,11 @@ enum ShortcutUpdateError: Error, Equatable, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalid(let action): return LF("%@：请使用有效的组合；Shift 可配合功能键或方向键。", action.title)
-        case .applicationReserved(let action): return LF("%@的组合已被小贴的编辑或窗口操作保留，请换一个组合。", action.title)
+        case .applicationReserved(let action): return LF("%@的组合已被 patch 的编辑或窗口操作保留，请换一个组合。", action.title)
         case .duplicate(let first, let second): return LF("%@与%@使用了相同快捷键。", first.title, second.title)
         case .systemReserved(let action): return LF("%@的快捷键已被系统使用，请换一个组合。", action.title)
         case .systemCheckFailed: return L("暂时无法检查系统快捷键，请稍后重试。")
-        case .handlerFailed: return L("无法启用快捷键，请重新打开小贴。")
+        case .handlerFailed: return L("无法启用快捷键，请重新打开 patch。")
         case .registrationFailed(let action, _):
             return LF("%@的快捷键不可用，请换一个组合；原配置保留。", action.title)
         }

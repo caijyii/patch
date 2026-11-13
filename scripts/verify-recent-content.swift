@@ -14,7 +14,7 @@ private struct Failure: Error { let message: String }
     @MainActor static func main() {
         // macOS's crash dialog can relaunch this command-line probe without its output
         // argument. Exit before creating any windows instead of crashing a second time.
-        guard CommandLine.arguments.count == 2 || (CommandLine.arguments.count == 3 && CommandLine.arguments[2] == "--rich-text") else {
+        guard CommandLine.arguments.count == 2 || (CommandLine.arguments.count == 3 && ["--rich-text", "--text-actions"].contains(CommandLine.arguments[2])) else {
             fputs("This is a command-line test. Run scripts/verify-recent-content.sh from Terminal.\n", stderr)
             return
         }
@@ -24,10 +24,17 @@ private struct Failure: Error { let message: String }
     @MainActor private static func run() throws {
         _ = NSApplication.shared
         AppLocalization.language = .simplifiedChinese
+        if CommandLine.arguments.contains("--text-actions") {
+            try filteringAndScrollers()
+            try textHistoryActions()
+            print("PASS: text history actions verification completed")
+            return
+        }
         if CommandLine.arguments.contains("--rich-text") {
             try richTextHistory()
             try retention()
             try clipboard()
+            try textHistoryActions()
             print("PASS: rich history, retention and clipboard regression suite")
             return
         }
@@ -39,7 +46,80 @@ private struct Failure: Error { let message: String }
         try themesAndWindows()
         try englishHistory()
         try filteringAndScrollers()
+        try textHistoryActions()
         print("PASS: recent content, clipboard lifecycle, preference migration and appearance verification completed")
+    }
+    @MainActor private static func textHistoryActions() throws {
+        let store = RecentContentStore()
+        let rich = NSAttributedString(string: "Copy 中文", attributes: [.font: NSFont.boldSystemFont(ofSize: 28), .foregroundColor: NSColor.systemRed])
+        store.addText(rich)
+        let item = store.items[0]
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally(); AppLocalization.language = .simplifiedChinese }
+        board.setString("Unchanged until Copy", forType: .string)
+        var pinned = 0, copies = 0
+        let history = RecentContentWindowController(store: store, pasteboard: board, onCopy: { copies += 1 }) { _ in pinned += 1 }
+        defer { history.close() }
+        history.showWindow(nil)
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func button(_ action: String) throws -> NSButton {
+            guard let button = descendants(history.window!.contentView!).compactMap({ $0 as? NSButton }).first(where: {
+                $0.identifier?.rawValue == item.id.uuidString && $0.action == NSSelectorFromString(action)
+            }) else { throw Failure(message: "Missing text action: \(action)") }
+            return button
+        }
+        let body = try button("pinItem:")
+        try require(body.toolTip == L("贴出这条记录"), "Text card body must match image cards by pinning")
+        body.performClick(nil)
+        try require(pinned == 1 && copies == 0 && board.string(forType: .string) == "Unchanged until Copy",
+                    "Pinning text must not copy or paste it")
+        try button("copyItem:").performClick(nil)
+        guard let copied = ImageToolsUI.clipboardText(from: board) else { throw Failure(message: "Missing copied text") }
+        try require(copies == 1 && pinned == 1 && history.window?.isVisible == true
+                    && board.string(forType: .string) == rich.string && board.data(forType: .rtf) != nil
+                    && (copied.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize == 28,
+                    "Copy must preserve plain/rich text and leave history open without pinning")
+        for language in [AppLanguagePreference.simplifiedChinese, .english] {
+            AppLocalization.language = language
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                history.window?.appearance = NSAppearance(named: appearance)
+                for width: CGFloat in [460, 600, 880] {
+                    history.window?.setContentSize(CGSize(width: width, height: 420))
+                    history.reload()
+                    let content = history.window!.contentView!
+                    content.layoutSubtreeIfNeeded()
+                    try verifyAmbientLayout(history.window!)
+                    let views = descendants(content)
+                    try require(!views.contains { $0.identifier?.rawValue.hasPrefix("history.paste") == true }
+                                && !views.compactMap({ $0 as? NSButton }).contains { $0.action == NSSelectorFromString("pasteItem:") },
+                                "Removed direct-paste controls, target or permission reminder remain")
+                    let actions = views.compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue == item.id.uuidString }
+                    try require(actions.count == 3 && Set(actions.compactMap { $0.action.map(NSStringFromSelector) })
+                                == Set(["pinItem:", "copyItem:", "removeItem:"]),
+                                "Text history must expose only pin, copy and delete actions")
+                    let copy = try button("copyItem:"), remove = try button("removeItem:")
+                    try require(copy.toolTip == L("复制这条记录") && remove.toolTip == L("删除这条记录"),
+                                "Retained text actions lost localized hover hints")
+                    for card in views.filter({ $0.identifier?.rawValue.hasPrefix("history.card.") == true }) {
+                        try verifyCardFooter(card)
+                    }
+                    let historyScroll = views.compactMap { $0 as? NSScrollView }.first!
+                    let filter = views.first { $0.identifier?.rawValue == "history.filter" }!
+                    try require(historyScroll.frame.minY - filter.frame.maxY <= 56,
+                                "Removed paste target left an empty header row")
+                    if width == 460, let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                        content.cacheDisplay(in: content.bounds, to: bitmap)
+                        try bitmap.representation(using: .png, properties: [:])!.write(to:
+                            URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("history-text-actions-\(language.rawValue)-\(appearance.rawValue).png"))
+                    }
+                }
+            }
+        }
+        try require(store.items.count == 1 && store.items[0].id == item.id, "Pin or Copy changed history retention or recency")
+        try button("removeItem:").performClick(nil)
+        try require(store.items.isEmpty && pinned == 1 && copies == 1 && board.string(forType: .string) == rich.string,
+                    "Delete changed the clipboard or triggered a pin/copy action")
+        print("PASS: text history retains pin/copy/delete and rich/plain copying; direct paste, focus target and permission controls are absent")
     }
     private static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         if !condition() { throw Failure(message: message) }
@@ -52,6 +132,9 @@ private struct Failure: Error { let message: String }
         }), let remove = card.subviews.compactMap({ $0 as? NSButton }).first(where: {
             $0.action == NSSelectorFromString("removeItem:")
         }) else { throw Failure(message: "Card footer is missing metadata or actions") }
+        for button in card.subviews.compactMap({ $0 as? NSButton }) where !button.isHidden {
+            try require(!(button.toolTip ?? "").isEmpty, "Card action lacks a hover hint, including delete")
+        }
         try require(abs(metadata.frame.midY - copy.frame.midY) < 0.5
                     && abs(copy.frame.midY - remove.frame.midY) < 0.5,
                     "Type/time, copy and delete must share the same footer row")
@@ -75,6 +158,42 @@ private struct Failure: Error { let message: String }
                         "History content overlaps the title bar or escapes native layout bounds: \(view)")
         }
     }
+    @MainActor private static func verifyActionHint(_ button: NSButton, snapshot: String) throws {
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func bubble() -> NSView? {
+            NSApp.windows.filter(\.isVisible).compactMap(\.contentView).flatMap(descendants)
+                .first { $0.identifier?.rawValue == "history.action-hint" }
+        }
+        guard let explanation = button.toolTip, !explanation.isEmpty else { throw Failure(message: "Missing action description") }
+        button.window!.makeKeyAndOrderFront(nil)
+        button.scrollToVisible(button.bounds)
+        button.updateTrackingAreas()
+        try require(button.trackingAreas.contains { $0.options.contains(.activeAlways) && $0.options.contains(.mouseEnteredAndExited) },
+                    "Action has no active hover tracking")
+        let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        let enter = NSEvent.enterExitEvent(with: .mouseEntered, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: button.window!.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)!
+        let leave = NSEvent.enterExitEvent(with: .mouseExited, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: button.window!.windowNumber, context: nil, eventNumber: 1, trackingNumber: 0, userData: nil)!
+        button.mouseEntered(with: enter)
+        button.mouseExited(with: leave)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        try require(bubble() == nil, "A cancelled hover displayed a stale hint")
+        button.mouseEntered(with: enter)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        guard let view = bubble(), let label = descendants(view).compactMap({ $0 as? NSTextField }).first else {
+            throw Failure(message: "Hover did not display action hint: \(explanation)")
+        }
+        try require(label.stringValue == explanation, "Action hint has the wrong meaning")
+        let rendered = view.window!.contentView!
+        let bitmap = rendered.bitmapImageRepForCachingDisplay(in: rendered.bounds)!
+        rendered.cacheDisplay(in: rendered.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])!.write(to:
+            URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent(snapshot + ".png"))
+        button.mouseExited(with: leave)
+        try require(bubble() == nil, "Action hint remained after leaving the button")
+    }
+
     @MainActor private static func verifyInfoBubble(_ button: NSButton, explanation: String, snapshot: String) throws {
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         func visibleBubble() -> NSView? {
@@ -443,7 +562,7 @@ private struct Failure: Error { let message: String }
             }
             for (name, controller) in [("history", history as NSWindowController), ("home", home)] {
                 let content = controller.window!.contentView!
-                try require(content.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == (choice == .dark ? .darkAqua : .aqua), "Window ignores app appearance")
+                try require(content.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == (choice == .dark ? .darkAqua : .aqua), "Window ignores app appearance: \(name), requested=\(choice.rawValue), app=\(String(describing: NSApp.appearance?.name)), window=\(String(describing: controller.window?.appearance?.name)), actual=\(content.effectiveAppearance.name)")
                 let rendered = content.superview ?? content
                 guard let bitmap = rendered.bitmapImageRepForCachingDisplay(in: rendered.bounds) else { throw Failure(message: "Cannot render window") }
                 appearance.performAsCurrentDrawingAppearance {
@@ -458,6 +577,14 @@ private struct Failure: Error { let message: String }
         let rowButtons = descendants(history.window!.contentView!).compactMap { $0 as? NSButton }
             .filter { $0.identifier?.rawValue == targetID.uuidString }
         try require(rowButtons.count == 3, "History row must expose separate pin, copy and delete targets")
+        let allButtons = descendants(history.window!.contentView!).compactMap { $0 as? NSButton }
+        for (index, meaning) in ["复制这条记录", "删除这条记录", "贴出这条记录", "清空全部记录"].enumerated() {
+            guard let button = allButtons.first(where: { $0.toolTip == meaning }) else {
+                throw Failure(message: "Missing action for hover verification: \(meaning)")
+            }
+            try verifyActionHint(button, snapshot: "action-hint-\(index)")
+        }
+        print("PASS: copy, delete, pin and Clear display hover descriptions; leaving cancels pending and visible hints")
         let beforeCopy = store.items.map(\.id)
         let copyButton = rowButtons.first { $0.toolTip == "复制这条记录" }!
         copyButton.performClick(nil)

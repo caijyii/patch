@@ -44,6 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private lazy var clipboardMonitor = RecentClipboardMonitor(store: recentContent)
     private var recentController: RecentContentWindowController?
     private let monitorsClipboard: Bool
+    private let capturePages = CapturePageVisibility()
+    private var capturePreparation: Task<Void, Never>?
 
     init(preferences: PreferencesStore? = nil, hotKeyBackend: HotKeyBackend? = nil,
          monitorsClipboard: Bool = true, captureService: CaptureService? = nil) {
@@ -82,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = IconArtwork.applicationImage()
+        scrollCapture.onSessionEnd = { [weak self] in self?.capturePages.restore() }
         let current = NSWorkspace.shared.frontmostApplication
         if current?.processIdentifier != ProcessInfo.processInfo.processIdentifier { lastExternalApplication = current }
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
@@ -113,7 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
             imageTools.showEditor(DemoImage.make())
             imageTools.pinImage(DemoImage.make())
-            imageTools.pinText("小贴文字贴图\n可以编辑、选中文字并整体缩放。")
+            imageTools.pinText("patch 文字贴图\n可以编辑、选中文字并整体缩放。")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 print("Patch smoke test: menu, home, editor, image pin and text pin initialized")
                 NSApp.terminate(nil)
@@ -349,13 +352,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         homeController?.refreshPermissions()
         guard permitted else { return }
         if purpose == .scroll, !ScrollCapturePermission.ensurePermission() { return }
-        let target = NSWorkspace.shared.frontmostApplication
+        // A newer request invalidates both pending compositing waits and the
+        // selector's delayed delivery before it owns a new visibility transaction.
+        capturePreparation?.cancel(); capturePreparation = nil
+        selector.cancel(); capturePages.restore()
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let token: UUID?
+        if purpose == .record { token = nil }
+        else {
+            token = capturePages.begin(preference: preferences.capturePageVisibility, windows: NSApp.orderedWindows) {
+                let alert = NSAlert()
+                alert.messageText = L("截图时隐藏 patch 页面？")
+                alert.addButton(withTitle: L("隐藏并截图"))
+                alert.addButton(withTitle: L("保持显示并截图"))
+                alert.addButton(withTitle: L("取消"))
+                WindowActivationCoordinator.shared.register(alert.window)
+                defer { WindowActivationCoordinator.shared.unregister(alert.window) }
+                NSApp.activate(ignoringOtherApps: true)
+                switch alert.runModal() {
+                case .alertFirstButtonReturn: return .hide
+                case .alertSecondButtonReturn: return .keepVisible
+                default: return .cancel
+                }
+            }
+            guard token != nil else {
+                if let frontmost, frontmost.processIdentifier != ProcessInfo.processInfo.processIdentifier, !frontmost.isTerminated {
+                    NSApp.yieldActivation(to: frontmost); _ = frontmost.activate(options: [])
+                }
+                return
+            }
+        }
+        let hidden = capturePages.hasHiddenPages
+        let target = hidden && frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+            ? lastExternalApplication : frontmost
+        if hidden, let target, !target.isTerminated {
+            NSApp.yieldActivation(to: target); _ = target.activate(options: [])
+        }
         selector.authorizeScroll = { ScrollCapturePermission.ensurePermission() }
-        selector.select(purpose: purpose, initialMode: initialMode, targetApplication: target, capture: { [weak self] region in
-            guard let self else { throw PatchError(message: "截图任务已关闭。") }
-            return try await self.captureService.capture(region, hidePins: purpose == .record ? self.preferences.hidePinsWhenRecording : self.preferences.hidePinsWhenCapturing)
-        }) { [weak self] action, region, image in
-            self?.performSelectionAction(action, region: region, image: image)
+        capturePreparation = Task { [weak self] in
+            // Let ordered-out pages leave the compositor before freezing the screen.
+            if hidden { try? await Task.sleep(nanoseconds: 100_000_000) }
+            guard let self, !Task.isCancelled else { return }
+            if let token, self.capturePages.token != token { return }
+            self.capturePreparation = nil
+            self.selector.select(purpose: purpose, initialMode: initialMode, targetApplication: target, capture: { [weak self] region in
+                guard let self else { throw PatchError(message: "截图任务已关闭。") }
+                return try await self.captureService.capture(region, hidePins: purpose == .record ? self.preferences.hidePinsWhenRecording : self.preferences.hidePinsWhenCapturing)
+            }, onCancel: { [weak self] in
+                if let token { self?.capturePages.restore(ifCurrent: token) }
+            }) { [weak self] action, region, image in
+                guard let self else { return }
+                if action != .scroll, let token { self.capturePages.restore(ifCurrent: token) }
+                self.performSelectionAction(action, region: region, image: image)
+            }
         }
     }
 
@@ -410,8 +459,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             homeController?.showWindow(nil)
             return .terminateCancel
         }
+        capturePreparation?.cancel(); capturePreparation = nil
         selector.cancel()
         scrollCapture.cancel()
+        capturePages.restore()
         guard recording.isRecording else { return .terminateNow }
         recording.stop()
         quitTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] timer in

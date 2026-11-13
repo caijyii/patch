@@ -133,7 +133,7 @@ private final class HorizontalScrollLock {
     func install(onFailure: @escaping (String) -> Void) -> String? {
         self.onFailure = onFailure
         guard AXIsProcessTrusted() else {
-            return L("控制权限已失效。请完成或取消当前截图，在隐私与安全中允许小贴控制 Mac 后重新开始。")
+            return L("控制权限已失效。请完成或取消当前截图，在隐私与安全中允许 patch 控制 Mac 后重新开始。")
         }
         let mask = CGEventMask(1 << CGEventType.scrollWheel.rawValue)
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
@@ -160,7 +160,7 @@ private final class HorizontalScrollLock {
             HorizontalScrollFilter.apply(to: event)
             return Unmanaged.passUnretained(event)
         }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-            return L("无法启用横向锁，长截图尚未开始。请检查小贴的控制权限，再点击开始或继续。")
+            return L("无法启用横向锁，长截图尚未开始。请检查 patch 的控制权限，再点击开始或继续。")
         }
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
             CFMachPortInvalidate(tap)
@@ -330,6 +330,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     private var annotateButton = NSButton()
     private var cancelButton = NSButton()
 
+    var onSessionEnd: (() -> Void)?
     var isActive: Bool { panel != nil }
 
     init(capture: @escaping (CaptureRegion) async throws -> CGImage,
@@ -342,7 +343,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     }
 
     func start(region: CaptureRegion, initialFrame: CGImage? = nil) {
-        cancel()
+        cancel(notifyEnd: false)
         self.region = region
         targetApplication = region.targetPID.flatMap { NSRunningApplication(processIdentifier: $0) }
         processor = ScrollCaptureProcessor()
@@ -365,7 +366,8 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         }
     }
 
-    func cancel() {
+    func cancel(notifyEnd: Bool = true) {
+        let hadSession = region != nil
         session = UUID()
         run = UUID()
         task?.cancel()
@@ -394,6 +396,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
         previewView.preview = nil
         previewExpanded = true
         state = .preparing
+        if hadSession && notifyEnd { onSessionEnd?() }
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -839,7 +842,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
     @discardableResult private func scroll(_ region: CaptureRegion, direction: ScrollStitcher.Direction) -> Bool {
         guard CGPreflightPostEventAccess() else {
             Self.logger.error("Automatic scroll blocked: event posting permission denied")
-            pause(L("控制权限已失效 · 请检查设置"), detail: L("请完成或取消当前截图后检查控制权限。若设置已开启，请退出并重新打开小贴后重试。"))
+            pause(L("控制权限已失效 · 请检查设置"), detail: L("请完成或取消当前截图后检查控制权限。若设置已开启，请退出并重新打开 patch 后重试。"))
             return false
         }
         guard let pid = region.targetPID, ScrollEventRouting.isFrontmost(targetApplication) else {
@@ -962,6 +965,7 @@ final class ScrollCaptureCoordinator: NSObject, NSWindowDelegate {
                            width: size.width, height: size.height)
         panel.setFrame(frame, display: false)
         editor.frame = CGRect(origin: .zero, size: frame.size)
+        editor.autoresizingMask = [.width, .height]
         panel.contentView = editor
         outline?.orderOut(nil)
         editor.fitImage()

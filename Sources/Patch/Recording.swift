@@ -533,7 +533,7 @@ final class RecordingCoordinator: NSObject {
 
     private func authorizeCapture(microphone: Bool) async throws {
         if !CGPreflightScreenCaptureAccess(), !CGRequestScreenCaptureAccess() {
-            throw PatchError(message: L("请在“系统设置 → 隐私与安全性 → 屏幕与系统音频录制”中允许小贴，然后重新打开工具并重试。"))
+            throw PatchError(message: L("请在“系统设置 → 隐私与安全性 → 屏幕与系统音频录制”中允许 patch，然后重新打开工具并重试。"))
         }
         guard microphone else { return }
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -557,7 +557,7 @@ final class RecordingCoordinator: NSObject {
     }
 
     private func microphonePermissionError() -> PatchError {
-        PatchError(message: L("麦克风访问未获允许。请在“系统设置 → 隐私与安全性 → 麦克风”中允许小贴，或关闭麦克风开关后重试。"))
+        PatchError(message: L("麦克风访问未获允许。请在“系统设置 → 隐私与安全性 → 麦克风”中允许 patch，或关闭麦克风开关后重试。"))
     }
 
 

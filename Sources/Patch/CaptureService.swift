@@ -75,12 +75,12 @@ final class ScreenCapturePermission {
     }
     private static func showPrompt(activate: () -> Void) -> Choice {
         let alert = NSAlert()
-        alert.messageText = L("允许小贴捕获屏幕")
-        alert.informativeText = L("请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许小贴。首次允许后可能需要退出并重新打开 App。你也可以先用示例体验标注与贴图。")
+        alert.messageText = L("允许 patch 捕获屏幕")
         alert.addButton(withTitle: L("申请权限"))
         alert.addButton(withTitle: L("打开系统设置"))
         alert.addButton(withTitle: L("稍后"))
         WindowActivationCoordinator.shared.register(alert.window)
+        PatchAlertLayout.apply(to: alert, text: L("请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许 patch。首次允许后可能需要退出并重新打开 App。你也可以先用示例体验标注与贴图。"), separateSentences: true)
         defer { WindowActivationCoordinator.shared.unregister(alert.window) }
         activate()
         alert.window.center()

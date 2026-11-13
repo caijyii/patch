@@ -13,6 +13,9 @@ private struct ImageToolsTextLayoutSnapshot: Equatable {
 }
 
 extension ImageToolsCanvas {
+    fileprivate func verificationBeginText() { beginTextEditing(at: CGPoint(x: 40, y: 40)) }
+    fileprivate var verificationInput: NSTextField? { textEditor }
+    fileprivate func verificationResizeInput() { resizeTextEditor() }
     fileprivate func verificationSelectAnnotation(_ index: Int) { selectAnnotation(index) }
     fileprivate var verificationExportBounds: CGRect { exportBounds(for: annotations) }
     fileprivate var verificationHistoryRetainsRaster: Bool {
@@ -274,6 +277,8 @@ private struct ImageToolsVerification {
                 try verifyTextStyleRoundTrip()
                 try verifyTextPinStyleControls()
                 try verifyDefaultTextColorCopy()
+                try verifyAnnotationResizing()
+                try verifyAnnotationTextInput()
                 try verifyAnnotationStyleDefaults()
                 try verifyPinOutsideAnnotations()
                 try verifyObjectEditing()
@@ -745,6 +750,18 @@ private struct ImageToolsVerification {
             URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("chinese-italic.png"))
         pin.verificationTextStyles[1].performClick(nil)
         try require(try chinesePixels() == upright, "Turning Chinese italic off did not restore glyphs")
+        pin.window?.orderFrontRegardless()
+        pin.verificationEditing(true)
+        let boardBeforeCancel = board.changeCount
+        guard let cancel = pin.verificationHUDButtons.first(where: { $0.toolTip == L("取消文字编辑，返回贴图") }) else {
+            throw ImageToolsVerificationFailure(description: "Text edit toolbar has no cancellation action")
+        }
+        try require(!pin.verificationHUDButtons.contains { $0.toolTip == L("关闭贴图") }, "Editing exposes close instead of cancel")
+        cancel.performClick(nil)
+        try require(view.isMoving && !view.isEditable && pin.window?.isVisible == true
+                    && board.changeCount == boardBeforeCancel,
+                    "Cancelling text editing closed the pin, left editing active or copied content")
+        try require(pin.verificationHUDButtons.contains { $0.toolTip == L("关闭贴图") }, "Normal pin lost its close action after cancelling")
         print("PASS: text pin styles, Chinese italic pixels and RTF, undo/redo, full-card completion and empty text")
     }
 
@@ -838,6 +855,88 @@ private struct ImageToolsVerification {
             try require(abs(pin.verificationZoom - old) < 0.00001, "Text wheel cannot restore scale")
         }
         print("PASS: text pinch shrink/grow and full long-text half-screen presentation")
+    }
+
+    @MainActor private static func verifyAnnotationResizing() throws {
+        let source = try solidImage(width: 260, height: 180)
+        let pin = ImageToolsPinController(image: source, preferences: PreferencesStore(storage: MemoryPreferencesStorage()))
+        defer { pin.close() }
+        let original = pin.window!.frame
+        guard let editor = pin.verificationPrepareEditor(), let window = pin.window,
+              let border = editor.subviews.first(where: { $0 is AnnotationResizeBorder }) else {
+            throw ImageToolsVerificationFailure(description: "Missing annotation resize border")
+        }
+        editor.setZoom(0.75)
+        let start = window.frame
+        let export = try ImageToolsUI.png(editor.canvas.renderedImage())
+        for (x, y) in [(0,0), (1,0), (2,0), (0,1), (2,1), (0,2), (1,2), (2,2)] {
+            window.setFrame(start, display: false)
+            editor.layoutSubtreeIfNeeded()
+            let point = CGPoint(x: x == 0 ? 2 : x == 2 ? border.bounds.maxX - 2 : border.bounds.midX,
+                                y: y == 0 ? 2 : y == 2 ? border.bounds.maxY - 2 : border.bounds.midY)
+            let root = window.contentView!
+            try require(root.hitTest(root.convert(point, from: border)) === border, "Resize edge does not receive pointer input")
+            let screenPoint = window.convertPoint(toScreen: border.convert(point, to: nil))
+            func event(_ type: NSEvent.EventType, _ screen: CGPoint) -> NSEvent {
+                NSEvent.mouseEvent(with: type, location: window.convertPoint(fromScreen: screen), modifierFlags: [], timestamp: 0,
+                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            }
+            border.mouseDown(with: event(.leftMouseDown, screenPoint))
+            let target = CGPoint(x: screenPoint.x + (x == 0 ? 20 : x == 2 ? -20 : 0),
+                                 y: screenPoint.y + (y == 0 ? 20 : y == 2 ? -20 : 0))
+            border.mouseDragged(with: event(.leftMouseDragged, target))
+            border.mouseUp(with: event(.leftMouseUp, target))
+            try require(abs(window.frame.width - (start.width - (x == 1 ? 0 : 20))) < 0.1
+                        && abs(window.frame.height - (start.height - (y == 1 ? 0 : 20))) < 0.1,
+                        "Edge/corner did not resize annotation window: \(x),\(y)")
+            try require(abs(editor.bounds.width - window.contentView!.bounds.width) < 0.1
+                        && abs(editor.scroll.magnification - 0.75) < 0.001, "Resize lost content layout or changed magnification")
+            try require(try ImageToolsUI.png(editor.canvas.renderedImage()) == export, "Resizing changed export pixels")
+        }
+        window.setContentSize(CGSize(width: 380, height: 500))
+        editor.layoutSubtreeIfNeeded()
+        let narrowHeight = editor.scroll.frame.height
+        window.setContentSize(CGSize(width: 850, height: 500))
+        editor.layoutSubtreeIfNeeded()
+        try require(editor.scroll.frame.height > narrowHeight, "Toolbar did not reflow when resizing")
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
+            editor.appearance = NSAppearance(named: appearance)
+            editor.displayIfNeeded()
+            try cachePreview(editor, output: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("annotation-workspace-\(name).png"))
+        }
+        editor.onCancel?()
+        try require(window.frame == original, "Cancel after resizing failed to restore the original pin")
+        print("PASS: eight annotation resize edges/corners preserve zoom and export pixels; toolbar reflows and cancel restores pin")
+    }
+
+    @MainActor private static func verifyAnnotationTextInput() throws {
+        let canvas = ImageToolsCanvas(image: try solidImage(width: 1600, height: 900))
+        let window = NSWindow(contentRect: canvas.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = canvas
+        defer { window.orderOut(nil) }
+        canvas.annotationFontSize = 30
+        canvas.verificationBeginText()
+        guard let input = canvas.verificationInput, let editor = input.currentEditor() as? NSTextView else {
+            throw ImageToolsVerificationFailure(description: "Missing annotation field editor")
+        }
+        for text in ["页面空间足够时保持一行", "Mixed 中文 annotation text", "WWWW iiiii", "标注"] {
+            editor.string = text
+            canvas.verificationResizeInput()
+            guard let layout = editor.layoutManager, let container = editor.textContainer else { fatalError() }
+            layout.ensureLayout(for: container)
+            var lines = 0
+            layout.enumerateLineFragments(forGlyphRange: NSRange(location: 0, length: layout.numberOfGlyphs)) { _, _, _, _, _ in lines += 1 }
+            try require(lines == 1, "Annotation wrapped with ample page space: \(text), lines=\(lines), width=\(input.frame.width)")
+        }
+        editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+        let singleLineHeight = input.frame.height
+        _ = canvas.control(input, textView: editor, doCommandBy: #selector(NSResponder.insertNewline(_:)))
+        try require(input.frame.height > singleLineHeight, "Enter did not reveal the next line for typing")
+        try require(canvas.verificationInput != nil && editor.string.hasSuffix("\n"), "Enter must insert a newline and keep annotation input active")
+        editor.insertText("第二行", replacementRange: editor.selectedRange())
+        canvas.finishTextEditing()
+        try require(canvas.annotations.last?.text == "标注\n第二行", "Manual newline was lost on commit")
+        print("PASS: annotation input stays on one line with available space and Enter preserves explicit newlines")
     }
 
     @MainActor private static func verifyAnnotationStyleDefaults() throws {
@@ -993,7 +1092,7 @@ private struct ImageToolsVerification {
                     "Image and text pin annotation entries use different glyphs")
         textPin.verificationEditing(true)
         let textActions = textPin.verificationHUDMainButtons
-        try require(Array(textActions.suffix(2)).map(\.title) == ["关闭贴图", "完成编辑"],
+        try require(Array(textActions.suffix(2)).map(\.title) == ["取消", "完成编辑"],
                     "Text pin completion must follow other actions at the right end")
         try require(textActions.last?.isPrimaryAction == true && textActions.last?.imagePosition == .imageOnly,
                     "Text editing completion must share the emphasized icon style")
@@ -1655,10 +1754,11 @@ private struct ImageToolsVerification {
                     "Removing the pin frame changed the source PNG")
         let transparentFrame = transparentWindow.frame
         let editor = transparentPin.verificationPrepareEditor()!
-        let border = editor.subviews.compactMap { $0 as? ImageToolsWindowBorder }.first
+        let border = editor.subviews.compactMap { $0 as? AnnotationResizeBorder }.first
         try require(transparentWindow.hasShadow && border?.frame == editor.bounds
-                    && border?.hitTest(CGPoint(x: 0.5, y: 0.5)) == nil,
-                    "Transparent pin annotation lacks the shared passive editor border or shadow")
+                    && border?.hitTest(CGPoint(x: 0.5, y: 0.5)) === border
+                    && border?.hitTest(CGPoint(x: editor.bounds.midX, y: editor.bounds.midY)) == nil,
+                    "Transparent annotation must resize at its border, pass interior input through and retain its shadow")
         editor.onCancel?()
         try require(!transparentWindow.hasShadow && transparentWindow.frame == transparentFrame
                     && transparentPin.verificationImage === transparent,
@@ -2030,7 +2130,7 @@ private struct ImageToolsVerification {
         }
         let editorContent = edit
         try require(edit.window === pinWindow && allButtons(edit).contains { $0.title == "完成" }, "Pin editing is not hosted by its original window")
-        try require(pinWindow.hasShadow && edit.subviews.contains { $0 is ImageToolsWindowBorder },
+        try require(pinWindow.hasShadow && edit.subviews.contains { $0 is AnnotationResizeBorder },
                     "Pin annotation does not share the framed editor presentation")
         let canvas = edit.canvas
         canvas.tool = .rectangle

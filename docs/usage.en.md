@@ -4,6 +4,18 @@
 
 See the [installation guide](install.en.md) for setup and updates, and the [release notes](release-notes.en.md) for version changes.
 
+## Resizing a capture region
+
+- For screenshots, scrolling captures, text extraction, and recording, drag anywhere along any edge or use a corner to resize the region. You do not need to target an edge midpoint.
+- Hovering over an edge shows its resize cursor. You can still move the region or edit annotations inside it.
+
+## Patch pages during screenshots
+
+- More Settings → General → Hide Patch pages during capture offers Automatically hide, Keep visible, and Ask every time. Automatically hide is the default, including after upgrading.
+- This covers screenshots, subject captures, scrolling captures, and screen text extraction. Open settings, clipboard history, and text-result pages are temporarily hidden and return when capture finishes or is canceled. They stay hidden throughout a scrolling capture and return when that entire session ends.
+- Ask every time prompts only when pages are visible. Choose Hide and Capture, Keep Visible and Capture, or Cancel. Page content is preserved; previously hidden or closed pages are not reopened.
+- Desktop pins still follow their own screenshot setting. Recording settings are independent.
+
 ## Scrolling captures
 
 - Hover to identify a window and click to select it, or drag a region. Press `R` for free selection or `W` for window selection.
@@ -17,19 +29,24 @@ See the [installation guide](install.en.md) for setup and updates, and the [rele
 - Pin images or editable text to the desktop, including other apps' full-screen Spaces. New pins appear near the pointer.
 - Images keep their aspect ratio. Large images initially fit within half the available screen width and height. Zoom with two-finger scrolling, the mouse wheel, or pinch gestures, then drag the whole image to view it. Copy, save, and text recognition use the original pixels.
 - Text pins fit their content width. Long text wraps and expands fully without internal scrollbars, initially staying within half the available screen width and height. Zooming preserves styles and line breaks. Drag enlarged text to view it; while editing, use the toolbar's move handle or Option-drag.
-- Double-click a text pin or choose Edit Text, then select text to adjust color, font size, bold, or italic, with undo support. Finishing copies all text and styles; a separate Copy action prioritizes the selection.
+- Double-click a text pin or choose Edit Text, then select text to adjust color, font size, bold, or italic, with undo support. Finishing copies all text and styles; a separate Copy action prioritizes the selection. While editing, ❌ or Esc leaves editing and keeps the pin and its current text without copying. Outside editing, ❌ closes the pin.
 - Finishing image annotations automatically copies the result. New annotations are not automatically selected: style changes affect future annotations unless you explicitly select an existing one.
 - Click an image pin to activate Patch before pinching. After switching to another app, click the pin again. Scroll-wheel zoom works directly.
 - Pinning new content does not restore hidden pins. Show All Pins restores only the most recently hidden group at its previous positions.
 - Deleting or clearing history does not close existing pins. Quitting Patch closes all pins.
 - On the home screen, open More Settings → General for the separate Hide desktop pins in screenshots and Hide desktop pins in recordings switches. Both default to on and are saved automatically. Turn off screenshot hiding to include visible image and text pins in regular and scrolling captures; manually hidden pins stay hidden, and operation overlays remain excluded.
 
+## Annotations
+
+- When annotating a scrolling capture or image pin, drag any window edge or corner to resize the workspace. The toolbar reflows while the image keeps its current zoom.
+- Text annotations stay on one line when there is enough space to the right. Press Enter for a new line; click elsewhere on the canvas or finish the annotation to commit the text.
+
 ## Clipboard history
 
 - Patch reads the current clipboard at startup and automatically collects images, plain and basic rich text, video files copied in Finder, and recordings saved through Patch while running. Collection has no toggle and cannot detect all sensitive content.
 - History stays only in process memory, is not written to disk, and is cleared on quit. Closing the home window leaves Patch running and collecting in the menu bar; choose Quit from the Patch menu to exit.
 - Text color, size, bold, and italic survive history previews, copying, and repinning. Changes to text or styles create a new entry; identical content and styles remain deduplicated.
-- Filter by images, text, or videos. Click an image or text card to pin it, or a video card to open it in the default app. Each record can be copied or deleted directly.
+- Filter by images, text, or videos. Click a text or image card to pin it, or a video card to open it in the default app. Each record has separate Copy and Delete actions with hover descriptions. To paste text into another app, click Copy, return to the desired input, and press ⌘V. Copying preserves plain text and available basic rich text; the receiving app decides which styles it supports.
 - Clear removes only the selected category. Select All to clear every category.
 - Batch pinning uses recent images and text, regardless of the current filter. The default is 5 items, adjustable from 1 to 20 in More Settings.
 - Video records retain only file references and thumbnails. Deleting a record does not delete the video. Copy the file again if it has been moved, deleted, or become inaccessible.

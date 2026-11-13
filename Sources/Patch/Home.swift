@@ -632,7 +632,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         let granted = screenPermission()
         permissionBanner.isHidden = granted || isShowingOptions || isEditing || !feedback.stringValue.isEmpty
         optionsPage?.refreshPermissions(granted: granted)
-        permissionButton.toolTip = L("允许小贴截图、识别屏幕文字和录屏")
+        permissionButton.toolTip = L("允许 patch 截图、识别屏幕文字和录屏")
     }
     @objc private func requestPermission() {
         onRequestScreenPermission(); refreshPermissions()

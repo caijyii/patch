@@ -221,7 +221,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
     }
     private func textSize(_ annotation: ImageToolsAnnotation) -> CGSize {
         let text = styledText(annotation)
-        let width = max(1, min(annotation.textWrapWidth ?? .greatestFiniteMagnitude, ceil(text.size().width)))
+        let width = max(1, min(annotation.textWrapWidth ?? .greatestFiniteMagnitude, ceil(text.size().width) + 2))
         let measured = text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]).size
         return CGSize(width: width,
@@ -320,7 +320,7 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
     }
 
     private func drawContents(includeDraft: Bool) {
-        if allowsOutsideAnnotations { NSColor.white.setFill(); bounds.fill() }
+        if allowsOutsideAnnotations { ToolbarPalette.workspace.setFill(); bounds.fill() }
         NSImage(cgImage: source, size: sourceRect.size).draw(
             in: sourceRect, from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: nil)
         for (index, annotation) in annotations.enumerated() where index != editingTextIndex {
@@ -1028,8 +1028,9 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
         guard let input = textEditor, var annotation = pendingTextAnnotation else { return }
         annotation.text = input.currentEditor()?.string ?? input.stringValue
         let size = textSize(annotation)
-        input.setFrameSize(CGSize(width: min(annotation.textWrapWidth ?? size.width, max(24, size.width)),
-                                  height: size.height))
+        // Give the field editor the available line width. A tightly measured
+        // field can wrap earlier than the exported text due to glyph rounding.
+        input.setFrameSize(CGSize(width: max(1, annotation.textWrapWidth ?? size.width), height: size.height))
         if let editor = input.currentEditor() as? NSTextView {
             editor.textContainer?.containerSize = CGSize(width: input.bounds.width, height: .greatestFiniteMagnitude)
             editor.frame = input.bounds
@@ -1078,14 +1079,9 @@ final class ImageToolsCanvas: NSView, NSTextFieldDelegate {
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:))
-            || (commandSelector == #selector(NSResponder.insertNewline(_:))
-                && NSApp.currentEvent?.modifierFlags.contains(.shift) == true) {
+            || commandSelector == #selector(NSResponder.insertNewline(_:)) {
             textView.insertNewlineIgnoringFieldEditor(nil)
             resizeTextEditor()
-            return true
-        }
-        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            finishTextEditing()
             return true
         }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
@@ -1278,6 +1274,79 @@ private final class ImageToolsWindowBorder: NSView {
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
 }
 
+/// Borderless capture and pin panels share the same resize interaction.
+@MainActor
+private final class AnnotationResizeBorder: NSView {
+    private struct Edges: OptionSet {
+        let rawValue: Int
+        static let left = Edges(rawValue: 1), right = Edges(rawValue: 2)
+        static let bottom = Edges(rawValue: 4), top = Edges(rawValue: 8)
+    }
+    private var drag: (edges: Edges, point: CGPoint, frame: CGRect)?
+    private let grip: CGFloat = 6
+    override var isOpaque: Bool { false }
+    override var needsPanelToBecomeKey: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    private func edges(at point: CGPoint) -> Edges {
+        guard bounds.contains(point) else { return [] }
+        var edges: Edges = []
+        if point.x < grip { edges.insert(.left) }
+        if point.x >= bounds.maxX - grip { edges.insert(.right) }
+        if point.y < grip { edges.insert(.bottom) }
+        if point.y >= bounds.maxY - grip { edges.insert(.top) }
+        return edges
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        edges(at: convert(point, from: superview)).isEmpty ? nil : self
+    }
+    override func resetCursorRects() {
+        let w = bounds.width, h = bounds.height, g = grip
+        let grips: [(CGRect, NSCursor.FrameResizePosition)] = [
+            (CGRect(x: g, y: 0, width: max(0, w - 2*g), height: g), .bottom),
+            (CGRect(x: g, y: h-g, width: max(0, w - 2*g), height: g), .top),
+            (CGRect(x: 0, y: g, width: g, height: max(0, h - 2*g)), .left),
+            (CGRect(x: w-g, y: g, width: g, height: max(0, h - 2*g)), .right),
+            (CGRect(x: 0, y: 0, width: g, height: g), .bottomLeft),
+            (CGRect(x: w-g, y: 0, width: g, height: g), .bottomRight),
+            (CGRect(x: 0, y: h-g, width: g, height: g), .topLeft),
+            (CGRect(x: w-g, y: h-g, width: g, height: g), .topRight)]
+        for (rect, position) in grips { addCursorRect(rect, cursor: .frameResize(position: position, directions: .all)) }
+    }
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        drag = (edges(at: convert(event.locationInWindow, from: nil)), window.convertPoint(toScreen: event.locationInWindow), window.frame)
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let window, let drag else { return }
+        let point = window.convertPoint(toScreen: event.locationInWindow)
+        let dx = point.x - drag.point.x, dy = point.y - drag.point.y
+        let visible = window.screen?.visibleFrame ?? drag.frame.insetBy(dx: -2000, dy: -2000)
+        let minimum = CGSize(width: min(360, visible.width), height: min(320, visible.height))
+        var left = drag.frame.minX, right = drag.frame.maxX
+        var bottom = drag.frame.minY, top = drag.frame.maxY
+        if drag.edges.contains(.left) { left = min(right - minimum.width, max(visible.minX, left + dx)) }
+        if drag.edges.contains(.right) { right = max(left + minimum.width, min(visible.maxX, right + dx)) }
+        if drag.edges.contains(.bottom) { bottom = min(top - minimum.height, max(visible.minY, bottom + dy)) }
+        if drag.edges.contains(.top) { top = max(bottom + minimum.height, min(visible.maxY, top + dy)) }
+        window.setFrame(CGRect(x: left, y: bottom, width: right-left, height: top-bottom), display: true)
+        window.contentView?.layoutSubtreeIfNeeded()
+    }
+    override func mouseUp(with event: NSEvent) { drag = nil; window?.invalidateCursorRects(for: self) }
+    override func draw(_ dirtyRect: NSRect) {
+        ToolbarPalette.border.setStroke()
+        let border = NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5))
+        border.lineWidth = 1; border.stroke()
+        // A quiet corner affordance makes resizing discoverable.
+        let handle = NSBezierPath()
+        for inset: CGFloat in [5, 9] {
+            handle.move(to: CGPoint(x: bounds.maxX - inset - 5, y: 4))
+            handle.line(to: CGPoint(x: bounds.maxX - 4, y: inset + 5))
+        }
+        handle.lineWidth = 1; handle.stroke()
+    }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
+}
+
 private final class AnnotationZoomLabel: NSTextField {
     // Keep the toolbar width stable when fitting changes 100% to one or two digits.
     override var intrinsicContentSize: NSSize {
@@ -1292,7 +1361,7 @@ final class InlineAnnotationView: NSView {
     let canvas: ImageToolsCanvas
     let scroll: NSScrollView = AnnotationScrollView()
     private let toolbar = SelectionToolbar()
-    private let presentationBorder = ImageToolsWindowBorder()
+    private let presentationBorder = AnnotationResizeBorder()
     private(set) var controls: AnnotationControls!
     private let zoomLabel = AnnotationZoomLabel(labelWithString: "100%")
     private var actions: [NSView] = []
@@ -1311,12 +1380,12 @@ final class InlineAnnotationView: NSView {
         canvas = ImageToolsCanvas(image: image)
         canvas.allowsOutsideAnnotations = allowsOutsideAnnotations
         super.init(frame: .zero)
-        wantsLayer = true; layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        wantsLayer = true; layer?.backgroundColor = ToolbarPalette.workspace.cgColor
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true; scroll.allowsMagnification = true
         scroll.minMagnification = 0.02; scroll.maxMagnification = 8
         scroll.contentView = AnnotationClipView()
-        scroll.backgroundColor = .white
+        scroll.backgroundColor = ToolbarPalette.workspace
         scroll.documentView = canvas
         (scroll as? AnnotationScrollView)?.onZoom = { [weak self] in self?.zoomChanged() }
         addSubview(scroll); addSubview(toolbar)
@@ -1364,7 +1433,10 @@ final class InlineAnnotationView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        effectiveAppearance.performAsCurrentDrawingAppearance { layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = ToolbarPalette.workspace.cgColor
+            scroll.backgroundColor = ToolbarPalette.workspace
+        }
         needsDisplay = true
     }
     private func refresh() { needsLayout = true; layoutSubtreeIfNeeded() }
@@ -1384,7 +1456,7 @@ final class InlineAnnotationView: NSView {
         toolbar.rows = controls.rows(appendingActions: actions, maxWidth: usableWidth)
         let size = toolbar.arrange(maxWidth: usableWidth)
         toolbar.frame = CGRect(x: 8, y: max(0, bounds.height - size.height - 8), width: size.width, height: size.height)
-        scroll.frame = CGRect(x: 0, y: 0, width: bounds.width, height: max(1, toolbar.frame.minY - 8))
+        scroll.frame = CGRect(x: 6, y: 6, width: max(1, bounds.width - 12), height: max(1, toolbar.frame.minY - 14))
         updateWorkspace()
     }
     private func scrollTo(_ point: CGPoint) {
@@ -2146,7 +2218,13 @@ private final class ImageToolsPinController: NSWindowController, NSWindowDelegat
             save.toolTip = L("保存 PNG（⌘S）")
             row.append(save)
         }
-        row.append(button(L("关闭贴图"), "xmark") { [weak self] in self?.closePin() })
+        if textView?.isMoving == false {
+            row.append(SelectionButton.cancellation(toolTip: L("取消文字编辑，返回贴图")) { [weak self] in
+                self?.setTextEditing(false)
+            })
+        } else {
+            row.append(button(L("关闭贴图"), "xmark") { [weak self] in self?.closePin() })
+        }
         if let textCompletion { row.append(textCompletion) }
         toolbar.trailingActions = textCompletion == nil ? [] : Array(row.suffix(2))
         toolbar.rows = [row] + (textFormattingRow.isEmpty ? [] : [textFormattingRow])

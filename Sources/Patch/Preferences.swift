@@ -195,6 +195,17 @@ enum AppAppearancePreference: String, Codable, CaseIterable {
     var appearance: NSAppearance? { switch self { case .system: return nil; case .light: return NSAppearance(named: .aqua); case .dark: return NSAppearance(named: .darkAqua) } }
 }
 
+enum CapturePageVisibilityPreference: String, CaseIterable {
+    case automatic, never, ask
+    var title: String {
+        switch self {
+        case .automatic: return L("自动隐藏")
+        case .never: return L("不自动隐藏")
+        case .ask: return L("每次询问")
+        }
+    }
+}
+
 @MainActor
 final class PreferencesStore {
     static let shared = PreferencesStore(storage: UserDefaultsPreferencesStorage())
@@ -204,6 +215,7 @@ final class PreferencesStore {
         var appearance: AppAppearancePreference?
         var language: AppLanguagePreference?
         var pinRecentCount: Int?
+        var capturePageVisibility: String?
         var hidePinsWhenCapturing: Bool?
         var hidePinsWhenRecording: Bool?
         var shortcutLayoutVersion: Int?
@@ -226,6 +238,13 @@ final class PreferencesStore {
     var appearancePreference: AppAppearancePreference { snapshot.appearance ?? .system }
     var languagePreference: AppLanguagePreference { snapshot.language ?? .system }
     var pinRecentCount: Int { min(20, max(1, snapshot.pinRecentCount ?? 5)) }
+    var capturePageVisibility: CapturePageVisibilityPreference {
+        snapshot.capturePageVisibility.flatMap(CapturePageVisibilityPreference.init(rawValue:)) ?? .automatic
+    }
+    func setCapturePageVisibility(_ value: CapturePageVisibilityPreference) {
+        guard value != capturePageVisibility else { return }
+        snapshot.capturePageVisibility = value.rawValue; persist()
+    }
     var hidePinsWhenRecording: Bool { snapshot.hidePinsWhenRecording ?? true }
     func setHidePinsWhenRecording(_ value: Bool) {
         guard value != hidePinsWhenRecording else { return }

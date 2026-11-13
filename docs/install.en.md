@@ -6,7 +6,7 @@ Requires **Apple Silicon (M-series chips) and macOS 15 or later**. Xcode and Com
 
 ## Download and install
 
-1. Download the [latest stable release](https://github.com/caijyii/patch/releases/latest), currently **v0.1.4**. **DMG is recommended**: `Patch-0.1.4-macOS-arm64.dmg`. ZIP is an alternative installation method; choose just one. `Source code` contains source files, not an installer for ordinary users. If the maintainer provided a DMG directly, start with step 2.
+1. Download the [latest stable release](https://github.com/caijyii/patch/releases/latest), currently **v0.1.5**. **DMG is recommended**: `Patch-0.1.5-macOS-arm64.dmg`. ZIP is an alternative installation method; choose just one. `Source code` contains source files, not an installer for ordinary users. If the maintainer provided a DMG directly, start with step 2.
 2. **DMG**: Open it and drag `Patch.app` into the adjacent Applications folder, then eject the disk image. **ZIP**: Extract it and move `Patch.app` into Applications. Quit other Patch versions first and confirm any replacement of an existing installation.
 3. Open Patch from Applications and grant permissions for the features you use.
 
@@ -37,7 +37,7 @@ You can give your agent this instruction:
 Run this in the download directory, using the filename for the selected release:
 
 ```sh
-shasum -a 256 Patch-0.1.4-macOS-arm64.zip
+shasum -a 256 Patch-0.1.5-macOS-arm64.zip
 ```
 
 Compare the result with `SHA256SUMS.txt` from the same release. For a DMG, use `shasum -a 256 filename.dmg`. Both current installer formats are listed in `SHA256SUMS.txt`; only the DMG added later to `v0.1.0-preview.1` uses a separate `SHA256SUMS-DMG.txt`. You only need to download your preferred format.

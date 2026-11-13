@@ -88,6 +88,36 @@ enum SelectionVerification {
                   CGRect(origin: expected, size: .zero))
         }
 
+        func checkHandle(_ name: String, _ point: CGPoint, _ expected: SelectionHandle?) {
+            checks += 1
+            let actual = SelectionGeometry.handle(at: point, in: selection)
+            let passed = actual == expected
+            if !passed { failures += 1 }
+            print("\(passed ? "PASS" : "FAIL") \(name)\(passed ? "" : ": actual=\(String(describing: actual)), expected=\(String(describing: expected))")")
+        }
+        for fraction in [0.2, 0.4, 0.6, 0.8] {
+            for offset in [-6.0, 0, 6] {
+                let x = selection.minX + selection.width * fraction
+                let y = selection.minY + selection.height * fraction
+                checkHandle("上边任意位置及内外命中范围", CGPoint(x: x, y: selection.maxY + offset), .top)
+                checkHandle("下边任意位置及内外命中范围", CGPoint(x: x, y: selection.minY + offset), .bottom)
+                checkHandle("左边任意位置及内外命中范围", CGPoint(x: selection.minX + offset, y: y), .left)
+                checkHandle("右边任意位置及内外命中范围", CGPoint(x: selection.maxX + offset, y: y), .right)
+            }
+        }
+        for corner in [SelectionHandle.topLeft, .topRight, .bottomRight, .bottomLeft] {
+            let anchor = corner.point(in: selection)
+            for dx in [-6.0, 6] {
+                for dy in [-6.0, 6] {
+                    checkHandle("\(corner)优先于交叠的边", CGPoint(x: anchor.x + dx, y: anchor.y + dy), corner)
+                }
+            }
+        }
+        checkHandle("选区内部不触发缩放", CGPoint(x: selection.midX, y: selection.midY), nil)
+        checkHandle("超过边缘命中范围不触发缩放", CGPoint(x: selection.minX - 8, y: selection.midY), nil)
+        checkHandle("边延长线不触发缩放", CGPoint(x: selection.maxX + 8, y: selection.maxY), nil)
+        checkHandle("非有限坐标不触发缩放", CGPoint(x: CGFloat.nan, y: selection.maxY), nil)
+
         check("Retina顶部选区使用图像左上像素", SelectionGeometry.pixelRect(
             CGRect(x: 100, y: 700, width: 400, height: 200), in: main, imageSize: CGSize(width: 2880, height: 1800)),
             CGRect(x: 200, y: 0, width: 800, height: 400))

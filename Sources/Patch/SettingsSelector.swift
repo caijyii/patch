@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: MIT
 import AppKit
 
+enum SettingsControlSurface {
+    static func fill(in appearance: NSAppearance, pressed: Bool) -> NSColor {
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return NSColor(calibratedWhite: dark ? 1 : 0, alpha: pressed ? 0.16 : 0.08)
+    }
+    static let cornerRadius: CGFloat = 6
+}
+
 /// A shared selector with a bounded list aligned to the visible button edges.
 /// NSMenu remains the option model; its system popup geometry is not used.
 @MainActor
@@ -34,8 +42,7 @@ final class SettingsSelector: NSPopUpButton, NSWindowDelegate {
     override var acceptsFirstResponder: Bool { isEnabled }
 
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        NSColor(calibratedWhite: dark ? 1 : 0, alpha: isHighlighted ? 0.16 : 0.08).setFill()
+        SettingsControlSurface.fill(in: effectiveAppearance, pressed: isHighlighted).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         let font = NSFont.systemFont(ofSize: 13)
         let text = selectedItem?.title ?? ""

@@ -305,7 +305,7 @@ final class ShortcutEditorSession {
                             ? L("暂时不可用，已保留快捷键，可稍后重试。") : L("暂时不可用，另一组仍可使用。")
                     } else { message = issue.localizedDescription }
                 } else if recordingAction == action && recordingIndex == index { message = L("按下快捷键；Esc 取消，Tab 切换。") }
-                if hotKeys.cleanupFailures[action] != nil { message += (message.isEmpty ? "" : "\n") + L("快捷键释放未完成，请重新打开小贴。") }
+                if hotKeys.cleanupFailures[action] != nil { message += (message.isEmpty ? "" : "\n") + L("快捷键释放未完成，请重新打开 patch。") }
                 slotMessages[slot] = message
             }
         }

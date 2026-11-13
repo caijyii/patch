@@ -55,7 +55,7 @@ struct GenerateIcons {
             NSColor(calibratedWhite: 0.985, alpha: 1).setFill()
             bounds.fill()
             IconArtwork.applicationImage(size: 380).draw(in: NSRect(x: 90, y: 150, width: 380, height: 380))
-            drawLabel("小贴 · Patch", at: CGPoint(x: 115, y: 106), size: 26, color: titleColor)
+            drawLabel("patch", at: CGPoint(x: 115, y: 106), size: 26, color: titleColor)
             drawLabel("截图与贴图", at: CGPoint(x: 115, y: 72), size: 17, color: captionColor)
             drawLabel("菜单栏 · 实际尺寸与放大", at: CGPoint(x: 595, y: 500), size: 19, color: titleColor)
             for (index, dark) in [false, true].enumerated() {

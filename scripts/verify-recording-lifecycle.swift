@@ -505,7 +505,7 @@ extension RecordingCoordinator {
             let preview = fixture()
             for name in ["idle", "preparing", "countdown", "recording", "paused", "saved", "error"] {
                 preview.phase = ["preparing": .preparing, "countdown": .countdown, "recording": .recording, "paused": .paused][name] ?? .idle
-                preview.revealURL = ["saved", "error"].contains(name) ? URL(fileURLWithPath: "/tmp/小贴录屏.mp4") : nil
+                preview.revealURL = ["saved", "error"].contains(name) ? URL(fileURLWithPath: "/tmp/patch 录屏.mp4") : nil
                 preview.failure = name == "error" ? PatchError(message: "录屏权限不可用") : nil
                 preview.fileLabel.stringValue = preview.revealURL?.path ?? ""
                 let status = ["idle": L("准备录制"), "preparing": L("选择 MP4 保存位置"), "countdown": LF("%d 秒后开始录制", 3),

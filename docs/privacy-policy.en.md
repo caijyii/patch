@@ -2,7 +2,7 @@
 
 [简体中文](privacy-policy.md) · [English](privacy-policy.en.md)
 
-Updated: November 8, 2026. This notice describes Patch 0.1.4. The maintainer is caijyii, reachable at [caijyii@163.com](mailto:caijyii@163.com).
+Updated: November 13, 2026. This notice describes Patch 0.1.5. The maintainer is caijyii, reachable at [caijyii@163.com](mailto:caijyii@163.com).
 
 ## Local processing
 
@@ -12,7 +12,7 @@ Patch is a macOS tool for screenshots, annotations, desktop pins, scrolling capt
 
 - Screen and system audio recording: used for screenshots, scrolling captures, or recordings you start. System audio is controlled by the recording options.
 - Microphone: used only when you enable microphone recording.
-- Device control / accessibility: used for automatic scrolling and horizontal scroll filtering during the relevant capture workflows.
+- Device control / accessibility: used for automatic scrolling and horizontal scroll filtering in scrolling captures. Clipboard history does not use this access to locate external inputs or send paste commands.
 - User-selected file access: used to save output to a location you choose through the system save dialog.
 
 You can revoke permissions in macOS System Settings; the corresponding features will then be unavailable. Permission names may vary by macOS version.

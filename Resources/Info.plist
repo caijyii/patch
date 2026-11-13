@@ -9,12 +9,12 @@
     <key>CFBundleExecutable</key><string>Patch</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.4</string>
-    <key>CFBundleVersion</key><string>10</string>
+    <key>CFBundleShortVersionString</key><string>0.1.5</string>
+    <key>CFBundleVersion</key><string>11</string>
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>Copyright © 2026 caijyii. MIT License.</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
-    <key>NSMicrophoneUsageDescription</key><string>只有你开启麦克风录音时，小贴才会把你的讲解录入视频。</string>
+    <key>NSMicrophoneUsageDescription</key><string>只有你开启麦克风录音时，patch 才会把你的讲解录入视频。</string>
 </dict></plist>

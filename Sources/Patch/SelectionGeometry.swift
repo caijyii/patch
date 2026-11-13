@@ -8,6 +8,23 @@ import CoreGraphics
 enum SelectionHandle: CaseIterable {
     case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
 
+    static let hitTolerance: CGFloat = 7
+    // Corners take precedence where the horizontal and vertical edge bands meet.
+    static let hitTestOrder: [SelectionHandle] = [.topLeft, .topRight, .bottomRight, .bottomLeft, .top, .right, .bottom, .left]
+
+    func hitRect(in rect: CGRect) -> CGRect {
+        let anchor = point(in: rect)
+        let radius = Self.hitTolerance
+        switch self {
+        case .top, .bottom:
+            return CGRect(x: rect.minX - radius, y: anchor.y - radius, width: rect.width + 2 * radius, height: 2 * radius)
+        case .left, .right:
+            return CGRect(x: anchor.x - radius, y: rect.minY - radius, width: 2 * radius, height: rect.height + 2 * radius)
+        default:
+            return CGRect(x: anchor.x - radius, y: anchor.y - radius, width: 2 * radius, height: 2 * radius)
+        }
+    }
+
     func point(in rect: CGRect) -> CGPoint {
         switch self {
         case .topLeft: return CGPoint(x: rect.minX, y: rect.maxY)
@@ -23,6 +40,11 @@ enum SelectionHandle: CaseIterable {
 }
 
 enum SelectionGeometry {
+    static func handle(at point: CGPoint, in rect: CGRect) -> SelectionHandle? {
+        guard isFinite(rect), !rect.isEmpty, point.x.isFinite, point.y.isFinite else { return nil }
+        return SelectionHandle.hitTestOrder.first { $0.hitRect(in: rect).contains(point) }
+    }
+
     /// Convert WindowServer's global top-left coordinates to this screen's local coordinates.
     static func windowRect(_ quartzRect: CGRect, primaryTop: CGFloat, screenFrame: CGRect) -> CGRect? {
         guard isFinite(quartzRect), isFinite(screenFrame), primaryTop.isFinite else { return nil }

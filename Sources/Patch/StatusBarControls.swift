@@ -10,6 +10,7 @@ final class StatusBarControls: NSObject, NSMenuDelegate {
     let item: NSStatusItem
     let menu: NSMenu
     let menuButton: NSStatusBarButton
+    private var clickMonitor: Any?
 
     init(menu: NSMenu) {
         self.menu = menu
@@ -25,10 +26,22 @@ final class StatusBarControls: NSObject, NSMenuDelegate {
         menuButton.imagePosition = .imageOnly
         menuButton.imageScaling = .scaleProportionallyDown
         menuButton.setAccessibilityLabel("Patch")
-        menuButton.toolTip = L("小贴 · Patch · 截图、长截图、贴图和录屏")
+        menuButton.toolTip = L("patch · 截图、长截图、贴图和录屏")
+        if WindowActivationDiagnostics.shared != nil {
+            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                MainActor.assumeIsolated {
+                    if let self, event.window === self.menuButton.window {
+                        WindowActivationDiagnostics.shared?.record("status-button.mouse-down")
+                    }
+                }
+                return event
+            }
+            WindowActivationDiagnostics.shared?.record("status-item.created")
+        }
     }
 
     func remove() {
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor); self.clickMonitor = nil }
         menu.cancelTrackingWithoutAnimation()
         if menu.delegate === self { menu.delegate = nil }
         NSStatusBar.system.removeStatusItem(item)

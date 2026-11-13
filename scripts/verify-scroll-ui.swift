@@ -708,6 +708,16 @@ private struct ScrollUIVerification {
         try button("标注", in: coordinator).performClick(nil)
         await coordinator.verificationWaitForCompletion()
         guard let editor = coordinator.verificationEditor else { throw ScrollUIFailure(description: "No inline workspace") }
+        guard let panel = coordinator.verificationPanel else { throw ScrollUIFailure(description: "Missing annotation panel") }
+        let zoom = editor.scroll.magnification
+        let originalPixels = try ImageToolsUI.png(editor.canvas.renderedImage())
+        panel.setContentSize(CGSize(width: max(360, panel.frame.width - 80), height: max(320, panel.frame.height - 40)))
+        editor.layoutSubtreeIfNeeded()
+        try require(editor.bounds.size == panel.contentView?.bounds.size && editor.bounds.size == panel.frame.size,
+                    "Long screenshot annotation did not follow panel resizing")
+        let resizedPixels = try ImageToolsUI.png(editor.canvas.renderedImage())
+        try require(abs(editor.scroll.magnification - zoom) < 0.0001 && resizedPixels == originalPixels,
+                    "Long screenshot resize changed zoom or export pixels")
         var errors = 0
         editor.onError = { _ in errors += 1 }
         guard let finish = editor.subviews.compactMap({ $0 as? SelectionToolbar }).flatMap({ $0.rows.flatMap { $0 } })

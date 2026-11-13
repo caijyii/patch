@@ -13,7 +13,7 @@ enum IconArtwork {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "小贴 · Patch"
+        image.accessibilityDescription = "patch"
         return image
     }
 

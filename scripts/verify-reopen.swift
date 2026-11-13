@@ -301,7 +301,7 @@ import Darwin
         let settingsEntries = statusMenu.items.filter { $0.action == settingsAction }
         let mainSettingsEntries = menuItems(app.mainMenu!).filter { $0.action == settingsAction }
         require(settingsEntries.count == 1 && mainSettingsEntries.count == 1, "Settings menu action is duplicated or missing")
-        require(!statusMenu.items.contains { $0.title.contains("打开小贴") || $0.title.contains("修改快捷键") || $0.title.contains("设置快捷键") }, "obsolete settings entry remains")
+        require(!statusMenu.items.contains { $0.title.contains("打开 patch") || $0.title.contains("修改快捷键") || $0.title.contains("设置快捷键") }, "obsolete settings entry remains")
         for item in settingsEntries + mainSettingsEntries {
             require(item.title == "设置" && item.target === delegate && item.keyEquivalent == "," && item.keyEquivalentModifierMask == [.command],
                     "Settings lost its target or Command-comma shortcut")
