@@ -1,6 +1,10 @@
 import AppKit
 import Darwin
 
+@MainActor private final class WorkflowCaptureService: CaptureService {
+    override func capture(_ region: CaptureRegion, hidePins: Bool) async throws -> CGImage { DemoImage.make() }
+}
+
 @MainActor private final class WorkflowHotKeys: HotKeyBackend {
     var callback: ((UInt32) -> Void)?
     var ids: [KeyboardShortcut: UInt32] = [:]
@@ -33,7 +37,7 @@ import Darwin
         let memory = MemoryPreferencesStorage()
         let preferences = PreferencesStore(storage: memory)
         let delegate = AppDelegate(preferences: preferences, hotKeyBackend: backend, monitorsClipboard: false,
-                                   captureService: CaptureService(permission: permission))
+                                   captureService: WorkflowCaptureService(permission: permission))
         app.delegate = delegate
         func verifyAfterLaunch() async {
             func require(_ condition: Bool, _ message: String) {
@@ -74,6 +78,47 @@ import Darwin
             delegate.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
             require(prompts == 2 && permission.isGranted, "Activation requests permission rather than refreshing it")
             print("PASS: Home and shortcut share permission guidance; launch and return only read status")
+
+            if CommandLine.arguments.contains("--home-capture") {
+                // A programmatic click can reach a key window before its Space slides
+                // into view. Wait until Home is actually available to the user.
+                let ready = Date().addingTimeInterval(5)
+                while !(home.window!.isOnActiveSpace && home.window!.occlusionState.contains(.visible)) && Date() < ready {
+                    try? await Task.sleep(for: .milliseconds(20))
+                }
+                require(home.window!.isOnActiveSpace && home.window!.occlusionState.contains(.visible),
+                        "Home never became visible on the active desktop")
+                // AppKit reports visibility during the animation into Home's Space.
+                try? await Task.sleep(for: .seconds(1))
+                var changedSpace = false
+                let workspace = NSWorkspace.shared.notificationCenter
+                let observer = workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification,
+                    object: nil, queue: .main) { _ in MainActor.assumeIsolated { changedSpace = true } }
+                defer { workspace.removeObserver(observer) }
+                let homeFrame = home.window!.frame
+                home.tiles[.screenshot]!.launchButton.performClick(nil)
+                require(home.window?.isVisible == false, "Home was not hidden for capture")
+                let deadline = Date().addingTimeInterval(5)
+                while app.keyWindow?.level != .screenSaver && Date() < deadline {
+                    try? await Task.sleep(for: .milliseconds(20))
+                }
+                // Allow a pending native Space transition to deliver its cancellation.
+                try? await Task.sleep(for: .milliseconds(750))
+                guard let overlay = app.keyWindow, overlay.level == .screenSaver, overlay.isVisible else {
+                    delegate.workflowTrace("missing Home capture selector")
+                    print("FAIL: Home did not hand keyboard input to the selector"); exit(1)
+                }
+                require(!changedSpace && overlay.isOnActiveSpace, "Home capture switched desktops")
+                let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                    timestamp: 0, windowNumber: overlay.windowNumber, context: nil, characters: "\u{1b}",
+                    charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+                require(overlay.performKeyEquivalent(with: escape) && !overlay.isVisible
+                        && home.window?.isVisible == true && home.window?.frame == homeFrame,
+                        "Escape did not dismiss the selector and restore Home in place")
+                print("PASS: Home capture stays on its Space, accepts Escape and restores Home")
+                app.terminate(nil)
+                return
+            }
 
             backend.fire(preferences.shortcuts[.recentContent]!)
             require(app.windows.contains { $0.isVisible && $0.title == L("Patch · 剪贴记录") },

@@ -1,6 +1,14 @@
-# Patch 0.1.5
+# Patch 0.1.6
 
 [简体中文](release-notes.md) · [English](release-notes.en.md)
+
+- Starting a screenshot from the main window now opens the selection on the current desktop when Patch automatically hides its window, avoiding a jump to another full-screen app.
+- Click anywhere on an image card in clipboard history to pin the original image, including transparent pixels and the checkerboard margins around the thumbnail.
+- Copy and Delete now work on the first click, even when the button’s hover tip is visible.
+
+Requires a Mac with Apple silicon and macOS 15 or later. Save important pins and clipboard records before quitting the old version and replacing Patch.app. The app is ad-hoc signed and has not been notarized by Apple. [Installation guide](install.en.md)
+
+## Patch 0.1.5
 
 This update improves capture selection, annotation workspaces, and settings:
 

@@ -107,11 +107,18 @@ run_workflow() {
     local task_errors="$task_work/$1.stderr.log"
     local task_pass="$2"
     shift 2
-    : > "$task_log"
-    : > "$task_errors"
-    /usr/bin/open -n -W --stdout "$task_log" --stderr "$task_errors" "$task_app" --args "$@"
+    # LaunchServices may not open redirected streams inside a protected Documents folder.
+    local streams
+    streams="$(mktemp -d "${TMPDIR:-/tmp}/patch-workflow.XXXXXX")"
+    touch "$streams/out" "$streams/err"
+    local launch_status=0
+    /usr/bin/open -n -W --stdout "$streams/out" --stderr "$streams/err" "$task_app" --args "$@" || launch_status=$?
+    mv "$streams/out" "$task_log"
+    mv "$streams/err" "$task_errors"
+    rmdir "$streams"
     cat "$task_log"
     if [[ -s "$task_errors" ]]; then cat "$task_errors" >&2; fi
+    if [[ "$launch_status" != 0 ]]; then return "$launch_status"; fi
     # open waits for exit but does not propagate the application's exit status.
     grep -Fxq "$task_pass" "$task_log"
 }
@@ -121,6 +128,10 @@ if [[ "${1:-}" == "--status-layout" ]]; then
 fi
 if [[ "${1:-}" == "--startup-only" ]]; then
     run_workflow startup 'PASS: complete startup initializes menu before hotkeys, then refreshes shortcuts and shows Home' --startup-only
+    exit 0
+fi
+if [[ "${1:-}" == "--home-capture" ]]; then
+    run_workflow home-capture 'PASS: Home capture stays on its Space, accepts Escape and restores Home' --home-capture
     exit 0
 fi
 run_workflow results 'PASS: workflow verification completed'

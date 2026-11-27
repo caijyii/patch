@@ -7,8 +7,9 @@ case "${1:-}" in
     "") task_pass='PASS: recent content, clipboard lifecycle, preference migration and appearance verification completed' ;;
     --rich-text) task_pass='PASS: rich history, retention and clipboard regression suite' ;;
     --text-actions) task_pass='PASS: text history actions verification completed' ;;
+    --image-actions) task_pass='PASS: image card click target verification completed' ;;
     --build-only) task_pass='' ;;
-    *) printf 'Usage: scripts/verify-recent-content.sh [--build-only|--rich-text|--text-actions]\n' >&2; exit 64 ;;
+    *) printf 'Usage: scripts/verify-recent-content.sh [--build-only|--rich-text|--text-actions|--image-actions]\n' >&2; exit 64 ;;
 esac
 mkdir -p "$task_work"
 task_sources=()

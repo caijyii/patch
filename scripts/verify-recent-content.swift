@@ -14,7 +14,7 @@ private struct Failure: Error { let message: String }
     @MainActor static func main() {
         // macOS's crash dialog can relaunch this command-line probe without its output
         // argument. Exit before creating any windows instead of crashing a second time.
-        guard CommandLine.arguments.count == 2 || (CommandLine.arguments.count == 3 && ["--rich-text", "--text-actions"].contains(CommandLine.arguments[2])) else {
+        guard CommandLine.arguments.count == 2 || (CommandLine.arguments.count == 3 && ["--rich-text", "--text-actions", "--image-actions"].contains(CommandLine.arguments[2])) else {
             fputs("This is a command-line test. Run scripts/verify-recent-content.sh from Terminal.\n", stderr)
             return
         }
@@ -24,6 +24,10 @@ private struct Failure: Error { let message: String }
     @MainActor private static func run() throws {
         _ = NSApplication.shared
         AppLocalization.language = .simplifiedChinese
+        if CommandLine.arguments.contains("--image-actions") {
+            try imageCardClicks()
+            return
+        }
         if CommandLine.arguments.contains("--text-actions") {
             try filteringAndScrollers()
             try textHistoryActions()
@@ -47,7 +51,91 @@ private struct Failure: Error { let message: String }
         try englishHistory()
         try filteringAndScrollers()
         try textHistoryActions()
+        try imageCardClicks()
         print("PASS: recent content, clipboard lifecycle, preference migration and appearance verification completed")
+    }
+    @MainActor private static func imageCardClicks() throws {
+        NSApp.setActivationPolicy(.accessory)
+        NSApp.finishLaunching()
+        let store = RecentContentStore()
+        // The left quarter of this portrait image is transparent, even inside its fitted frame.
+        store.addImage(fixture().cropping(to: CGRect(x: 0, y: 0, width: 80, height: 240))!, pixelScale: 1)
+        let id = store.items[0].id
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        var pins: [UUID] = [], copies = 0
+        let history = RecentContentWindowController(store: store, pasteboard: board,
+            onCopy: { copies += 1 }, onPin: { pins.append($0.id) })
+        defer { history.close() }
+        history.showWindow(nil)
+        let window = history.window!, content = window.contentView!
+        content.layoutSubtreeIfNeeded()
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func waitForUI(_ condition: () -> Bool) -> Bool {
+            let deadline = Date().addingTimeInterval(2)
+            while !condition() && Date() < deadline {
+                if let event = NSApp.nextEvent(matching: .any, until: Date().addingTimeInterval(0.02), inMode: .default, dequeue: true) {
+                    NSApp.sendEvent(event)
+                }
+            }
+            return condition()
+        }
+        func hoverUntilHint(_ control: NSButton) throws {
+            let point = control.convert(CGPoint(x: control.bounds.midX, y: control.bounds.midY), to: nil)
+            control.mouseEntered(with: NSEvent.enterExitEvent(with: .mouseEntered, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 1, trackingNumber: 0, userData: nil)!)
+            let shown = waitForUI {
+                let hints = NSApp.windows.filter(\.isVisible).compactMap(\.contentView).flatMap(descendants)
+                    .compactMap { $0 as? NSTextField }.filter { $0.identifier?.rawValue == "history.action-hint-text" }
+                return hints.count == 1 && hints.first?.stringValue == control.toolTip
+            }
+            try require(shown, "The hover hint for \(control.action.debugDescription) did not appear")
+        }
+        let buttons = descendants(content).compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue == id.uuidString }
+        func button(_ action: String) throws -> NSButton {
+            guard let button = buttons.first(where: { $0.action == NSSelectorFromString(action) }) else {
+                throw Failure(message: "Missing image card action \(action)")
+            }
+            return button
+        }
+        func click(_ control: NSButton, at point: CGPoint) throws {
+            let location = control.convert(point, to: nil)
+            func event(_ type: NSEvent.EventType) -> NSEvent {
+                NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+            }
+            let down = event(.leftMouseDown)
+            try require(content.hitTest(control.convert(point, to: content.superview)) === control,
+                        "Another view intercepted \(control.action.debugDescription) at \(point)")
+            try require(control.cell!.hitTest(for: down, in: control.bounds, of: control).contains(.trackableArea),
+                        "Button cell did not accept \(control.action.debugDescription) at \(point)")
+            // Dequeue both events so AppKit's popover dismissal gets the same first click as the control.
+            NSApp.postEvent(event(.leftMouseUp), atStart: true)
+            NSApp.postEvent(down, atStart: true)
+            while let next = NSApp.nextEvent(matching: [.leftMouseDown, .leftMouseUp], until: Date(), inMode: .default, dequeue: true) {
+                NSApp.sendEvent(next)
+            }
+        }
+        let body = try button("pinItem:"), bounds = body.bounds
+        let points = [CGPoint(x: 18, y: 80), CGPoint(x: bounds.maxX - 18, y: 80), // checkerboard gutters
+                      CGPoint(x: bounds.midX - 20, y: 80), CGPoint(x: bounds.midX, y: 80), // clear / opaque pixels
+                      CGPoint(x: 16, y: bounds.maxY - 20)] // footer caption
+        for (index, point) in points.enumerated() {
+            try click(body, at: point)
+            try require(pins.count == index + 1 && pins.last == id && copies == 0 && store.items.count == 1,
+                        "Image card click at \(point) did not exclusively pin the original item once")
+        }
+        let copy = try button("copyItem:"), remove = try button("removeItem:")
+        try hoverUntilHint(body)
+        try hoverUntilHint(copy)
+        try click(copy, at: CGPoint(x: copy.bounds.midX, y: copy.bounds.midY))
+        try require(copies == 1 && pins.count == points.count && board.data(forType: .png) != nil && store.items.count == 1,
+                    "Copy click did not exclusively copy the image")
+        try hoverUntilHint(remove)
+        try click(remove, at: CGPoint(x: remove.bounds.midX, y: remove.bounds.midY))
+        try require(store.items.isEmpty && copies == 1 && pins.count == points.count, "Delete click also copied or pinned")
+        print("PASS: image card click target verification completed")
     }
     @MainActor private static func textHistoryActions() throws {
         let store = RecentContentStore()

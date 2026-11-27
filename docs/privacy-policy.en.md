@@ -2,7 +2,7 @@
 
 [简体中文](privacy-policy.md) · [English](privacy-policy.en.md)
 
-Updated: November 13, 2026. This notice describes Patch 0.1.5. The maintainer is caijyii, reachable at [caijyii@163.com](mailto:caijyii@163.com).
+Updated: November 27, 2026. This notice describes Patch 0.1.6. The maintainer is caijyii, reachable at [caijyii@163.com](mailto:caijyii@163.com).
 
 ## Local processing
 

@@ -9,12 +9,14 @@ Swift 模块与源码目录统一为 `Patch`（`Sources/Patch`），测试模块
 - 使用 macOS 15 或更新版本和支持 Swift 6 的 Apple 工具链。
 - `bash scripts/build-sandbox-app.sh` 构建隔离的本地开发包，不会自动启动或替换试用包。
 - `bash scripts/verify-capture-pages.sh` 用合成窗口、内存偏好和注入询问选择检查三档设置、旧配置默认值、窗口内容及位置恢复、不影响贴图和操作浮层、过期回调隔离、已关闭页面、隐藏/恢复后的截图白名单和长截图结束通知；不采集桌面或发送系统输入。
+- `bash scripts/verify-workflow.sh --home-capture` 从主界面按钮启动合成截图，检查自动隐藏、当前桌面、框选键盘焦点和 Esc 后的页面恢复。
 - `bash scripts/test.sh` 检查坐标、拼接、录屏文件保存和权限流程模型。
 - `bash scripts/verify-selection.sh` 检查四边整段命中、四角优先、最小尺寸和坐标裁切；`bash scripts/verify-selection-ui.sh` 使用合成图像及应用内鼠标事件检查四类选框的整边拖动、缩放光标、标注与工具栏命中，以及陈旧系统窗口列表中已隐藏页面的过滤，不采集桌面或注入系统输入。
 - `bash scripts/verify-scroll-fixed.sh` 用合成图像检查完整选区的真实像素硬接缝、固定元素重复、双向回访和内存上限；`bash scripts/verify-scroll-ui.sh` 检查原选区框线稳定、匹配失败后继续采样、已有结果可完成或标注，以及重选取消的会话隔离。`bash scripts/verify-selection-ui.sh --scroll-only` 验证长截图默认窗口识别、直接拖动框选、普通截图转长截图及选择器取消回调。这些检查不截取用户桌面或发送滚轮事件；两个 UI 脚本均支持 `--build-only`。
 - `bash scripts/verify-preferences.sh --model-only` 检查内存存储和虚拟热键后端；不注册真实系统快捷键。
 - `bash scripts/verify-multi-shortcut-ui.sh` 检查双快捷键的单行布局、编辑操作和屏幕像素对齐，使用内存设置与虚拟热键；加 `--build-only` 可只编译。
 - `bash scripts/verify-recent-content.sh` 用独立命名剪贴板、合成图片和内存偏好检查历史、自动收录、外观与界面，以及操作按钮悬浮气泡的显示、取消和关闭；不读取或修改系统通用剪贴板。`--text-actions` 单独检查文字卡片的贴出／复制／删除、富文本与纯文本复制、中英深浅外观及窄窗口布局，并确认直接粘贴按钮、目标定位与授权提醒已移除；不读取外部输入框或发送跨应用按键。
+- `bash scripts/verify-recent-content.sh --image-actions` 模拟点击图片卡片两侧的棋盘格、图内透明与不透明位置、底部时间文字，并验证从卡片移到复制或删除按钮后，即使悬停提示已经出现，第一次单击也只执行对应操作。
 - `bash scripts/verify-recent-quotas.sh` 验证文字、图片和视频的独立容量，以及合成视频的文件引用、缩略图、去重、清空竞态和失效处理。输出的合成视频可传给 `bash scripts/verify-history-video-ui.sh <合成视频路径>`，检查视频过滤、复制、播放器失败和原文件失效提示；使用独立命名剪贴板与注入的播放器，不启动真实播放器。
 - `bash scripts/verify-permissions.sh` 检查只读权限状态和授权提示顺序；`bash scripts/verify-workflow.sh` 检查中英菜单、按钮/快捷键授权入口与混合批量贴图。均不请求真实权限或读取通用剪贴板。
 - `bash scripts/verify-home-options.sh` 检查同窗口设置、授权按钮、中英布局以及透明度与深浅色对照。

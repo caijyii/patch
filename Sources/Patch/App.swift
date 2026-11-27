@@ -55,8 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.captureService = captureService ?? CaptureService()
         super.init()
     }
-    private var lastExternalApplication: NSRunningApplication?
-    private var activationObserver: NSObjectProtocol?
     private var quitTimer: Timer?
     private lazy var scrollCapture: ScrollCaptureCoordinator = ScrollCaptureCoordinator(capture: { [weak self] region in
         guard let self else { throw PatchError(message: "截图任务已关闭。") }
@@ -85,14 +83,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = IconArtwork.applicationImage()
         scrollCapture.onSessionEnd = { [weak self] in self?.capturePages.restore() }
-        let current = NSWorkspace.shared.frontmostApplication
-        if current?.processIdentifier != ProcessInfo.processInfo.processIdentifier { lastExternalApplication = current }
-        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
-                                                                               object: nil, queue: .main) { [weak self] notification in
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
-            MainActor.assumeIsolated { self?.lastExternalApplication = app }
-        }
         ImageToolsUI.onCompletedImage = { [weak self] image, scale in self?.recentContent.addImage(image, pixelScale: scale) }
         ImageToolsUI.onCompletedText = { [weak self] text in self?.recentContent.addText(text) }
         ImageToolsUI.onCompletedRichText = { [weak self] text in self?.recentContent.addText(text) }
@@ -367,7 +357,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 alert.addButton(withTitle: L("保持显示并截图"))
                 alert.addButton(withTitle: L("取消"))
                 WindowActivationCoordinator.shared.register(alert.window)
-                defer { WindowActivationCoordinator.shared.unregister(alert.window) }
+                defer {
+                    WindowActivationCoordinator.shared.unregister(alert.window)
+                    // Return focus only if this prompt took it from an external caller.
+                    if let frontmost, !frontmost.isEqual(NSRunningApplication.current),
+                       !frontmost.isTerminated, !frontmost.isActive {
+                        NSApp.yieldActivation(to: frontmost)
+                        frontmost.activate(options: [])
+                    }
+                }
                 NSApp.activate(ignoringOtherApps: true)
                 switch alert.runModal() {
                 case .alertFirstButtonReturn: return .hide
@@ -375,19 +373,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 default: return .cancel
                 }
             }
-            guard token != nil else {
-                if let frontmost, frontmost.processIdentifier != ProcessInfo.processInfo.processIdentifier, !frontmost.isTerminated {
-                    NSApp.yieldActivation(to: frontmost); _ = frontmost.activate(options: [])
-                }
-                return
-            }
+            guard token != nil else { return }
         }
         let hidden = capturePages.hasHiddenPages
-        let target = hidden && frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier
-            ? lastExternalApplication : frontmost
-        if hidden, let target, !target.isTerminated {
-            NSApp.yieldActivation(to: target); _ = target.activate(options: [])
-        }
         selector.authorizeScroll = { ScrollCapturePermission.ensurePermission() }
         capturePreparation = Task { [weak self] in
             // Let ordered-out pages leave the compositor before freezing the screen.
@@ -395,7 +383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let self, !Task.isCancelled else { return }
             if let token, self.capturePages.token != token { return }
             self.capturePreparation = nil
-            self.selector.select(purpose: purpose, initialMode: initialMode, targetApplication: target, capture: { [weak self] region in
+            self.selector.select(purpose: purpose, initialMode: initialMode, targetApplication: frontmost, capture: { [weak self] region in
                 guard let self else { throw PatchError(message: "截图任务已关闭。") }
                 return try await self.captureService.capture(region, hidePins: purpose == .record ? self.preferences.hidePinsWhenRecording : self.preferences.hidePinsWhenCapturing)
             }, onCancel: { [weak self] in
@@ -482,7 +470,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         ImageToolsUI.onCompletedImage = nil; ImageToolsUI.onCompletedText = nil; ImageToolsUI.onCompletedRichText = nil
         recentController?.close()
         imageTools.closeAll()
-        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
     }
 }
 

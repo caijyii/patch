@@ -70,6 +70,7 @@ private final class RecentInfoButton: NSButton {
 /// full-card target. Keep toolTip as the semantic description for every action.
 @MainActor
 private class RecentActionButton: NSButton {
+    private static weak var hintOwner: RecentActionButton?
     private var hint: String?
     private var tracking: NSTrackingArea?
     private var pendingHint: DispatchWorkItem?
@@ -87,7 +88,8 @@ private class RecentActionButton: NSButton {
     }
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
-        dismissHint()
+        RecentActionButton.hintOwner?.dismissHint()
+        RecentActionButton.hintOwner = self
         let work = DispatchWorkItem { [weak self] in self?.showHint() }
         pendingHint = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
@@ -102,6 +104,7 @@ private class RecentActionButton: NSButton {
     private func dismissHint() {
         pendingHint?.cancel(); pendingHint = nil
         hintPopover?.close(); hintPopover = nil
+        if RecentActionButton.hintOwner === self { RecentActionButton.hintOwner = nil }
     }
     private func showHint() {
         guard let hint, !hint.isEmpty, isEnabled, !isHiddenOrHasHiddenAncestor,
@@ -116,10 +119,12 @@ private class RecentActionButton: NSButton {
         controller.view.identifier = NSUserInterfaceItemIdentifier("history.action-hint")
         label.frame = CGRect(x: 10, y: 7, width: width, height: height)
         controller.view.addSubview(label)
-        let popover = NSPopover(); popover.behavior = .transient; popover.animates = false
+        // The button dismisses its hint on exit or press. Transient dismissal consumes the first click.
+        let popover = NSPopover(); popover.behavior = .applicationDefined; popover.animates = false
         popover.contentViewController = controller; popover.contentSize = controller.view.bounds.size
         hintPopover = popover
         popover.show(relativeTo: bounds, of: self, preferredEdge: .minY)
+        controller.view.window?.ignoresMouseEvents = true
     }
 }
 
@@ -493,6 +498,15 @@ private final class RecentCopyButton: RecentActionButton {
     }
 }
 
+private final class RecentItemButtonCell: NSButtonCell {
+    override func hitTest(for event: NSEvent, in cellFrame: NSRect, of controlView: NSView) -> NSCell.HitResult {
+        // The button draws the entire card, including the space around a fitted thumbnail.
+        let point = controlView.convert(event.locationInWindow, from: nil)
+        guard controlView.isMousePoint(point, in: cellFrame) else { return [] }
+        return isEnabled ? [.contentArea, .trackableArea] : [.contentArea]
+    }
+}
+
 private final class RecentItemButton: RecentActionButton {
     private let item: RecentContentStore.Item
     private var time: String
@@ -502,6 +516,7 @@ private final class RecentItemButton: RecentActionButton {
     init(item: RecentContentStore.Item, now: Date) {
         self.item = item; time = RecentContentPresentation.timeLabel(item.date, now: now)
         super.init(frame: .zero)
+        cell = RecentItemButtonCell()
         title = item.title; isBordered = false; setButtonType(.momentaryPushIn)
         refreshAccessibility()
     }

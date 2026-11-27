@@ -32,6 +32,16 @@ enum HomeSceneryArtwork {
         context.setFillColor(color(groundColor(for: season, dark: dark),
             alpha: season == .winter ? (dark ? 0.20 : 0.65) : (dark ? 0x35 / 255.0 : 0x3d / 255.0)))
         context.fillPath()
+        if season == .winter && !dark {
+            context.saveGState()
+            context.addPath(ground)
+            context.clip()
+            drawWash(sunlight, in: context, at: CGPoint(x: 156, y: 423),
+                     radiusX: 188, radiusY: 22, tilt: 0.07)
+            drawWash(sunlight, in: context, at: CGPoint(x: 332, y: 454),
+                     radiusX: 117, radiusY: 14, tilt: 0.09, opacity: 0.65)
+            context.restoreGState()
+        }
         context.addPath(horizon)
         context.setStrokeColor(color(season == .winter ? (dark ? 0xb8c7cd : 0xa1b1ba) :
             (dark ? 0x747579 : 0x95a485), alpha: 0.4))
@@ -49,7 +59,7 @@ enum HomeSceneryArtwork {
         context.scaleBy(x: Self.treeScale, y: Self.treeScale)
         let sway = CGFloat(sin(motionTime * 0.55)) * 1.8 / Self.treeScale
         context.setStrokeColor(color(season == .winter ? (dark ? 0xabb9bc : 0x8c9da0) :
-            (dark ? 0x797a7e : 0x829274)))
+            (dark ? 0x797a7e : 0x829274), alpha: season == .winter ? 0.72 : 1))
         context.setFillColor(color(season == .winter ? (dark ? 0x7b8b8e : 0xb4c0bf) :
             (dark ? 0x444548 : 0xa9b58f), alpha: dark ? 0x55 / 255.0 : 0x60 / 255.0))
         context.setLineWidth(1.8 / sqrt(Self.treeScale))
@@ -65,6 +75,13 @@ enum HomeSceneryArtwork {
         context.addCurve(to: CGPoint(x: 35, y: 369), control1: CGPoint(x: 11, y: 302),
                          control2: CGPoint(x: 15, y: 346))
         context.addQuadCurve(to: CGPoint(x: -28, y: 370), control: CGPoint(x: 3, y: 361))
+        if season == .winter, let trunk = context.path {
+            context.saveGState()
+            context.clip()
+            drawWinterBarkTint(in: context, dark: dark)
+            context.restoreGState()
+            context.addPath(trunk)
+        }
         context.drawPath(using: .fillStroke)
 
         let limbs: [(CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)] = [
@@ -149,6 +166,25 @@ enum HomeSceneryArtwork {
         context.restoreGState()
     }
 
+    private static let barkTint = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+        colors: [color(0x89a080, alpha: 0.72), color(0x89a080, alpha: 0)] as CFArray, locations: [0, 1])!
+
+    private static func drawWinterBarkTint(in context: CGContext, dark: Bool) {
+        // The clipped washes sit beneath the translucent bark fill and its outline.
+        for (x, y, width, length, tilt): (CGFloat, CGFloat, CGFloat, CGFloat, CGFloat) in [
+            (-4, 288, 18, 74, 0.06), (13, 199, 11, 38, 0.64)
+        ] {
+            drawWash(barkTint, in: context, at: CGPoint(x: x, y: y),
+                     radiusX: width, radiusY: length, tilt: tilt, opacity: dark ? 0.45 : 1)
+        }
+        if !dark {
+            drawWash(sunlight, in: context, at: CGPoint(x: -47, y: 194),
+                     radiusX: 54, radiusY: 9, tilt: 0.49)
+            drawWash(sunlight, in: context, at: CGPoint(x: -9, y: 253),
+                     radiusX: 8, radiusY: 46, tilt: 0.01, opacity: 0.75)
+        }
+    }
+
     private static func drawSpringBuds(in context: CGContext, dark: Bool, sway: CGFloat) {
         context.setLineWidth(0.7)
         let buds: [(CGFloat, CGFloat)] = [(-199, 91), (-171, 119), (-120, 82),
@@ -198,7 +234,7 @@ enum HomeSceneryArtwork {
             (3, 0.93, 164, 67, 183, 63), (4, 0.43, 130, 122, 147, 96),
             (4, 0.70, 167, 143, 178, 171)
         ]
-        context.setStrokeColor(color(dark ? 0xb6c3c5 : 0x9aabad, alpha: 0.78))
+        context.setStrokeColor(color(dark ? 0xc2b7ae : 0xab9e90, alpha: 0.78))
         context.setLineWidth(1.05 / sqrt(Self.treeScale))
         for (index, twig) in twigs.enumerated() {
             let (parent, t, qx, qy, ex, ey) = twig
@@ -220,10 +256,11 @@ enum HomeSceneryArtwork {
                 context.strokePath()
             }
         }
-        // Thin white deposits follow the upper side of gently sloping limbs.
-        context.setStrokeColor(color(dark ? 0xe4edef : 0xffffff, alpha: dark ? 0.76 : 0.97))
+        // Only the snow on the bough closest to the low sun catches its warm rim.
         context.setLineWidth(3.0 / sqrt(Self.treeScale))
         for (parent, start, end): (Int, CGFloat, CGFloat) in [(0, 0.53, 0.96), (3, 0.60, 0.95), (4, 0.27, 0.67)] {
+            let snow: UInt32 = dark ? 0xe4edef : (parent == 0 ? 0xffedca : 0xffffff)
+            context.setStrokeColor(color(snow, alpha: dark ? 0.76 : 0.97))
             context.beginPath()
             for step in 0...12 {
                 var p = point(on: limbs[parent], at: start + (end - start) * CGFloat(step) / 12)
@@ -231,6 +268,15 @@ enum HomeSceneryArtwork {
                 if step == 0 { context.move(to: p) } else { context.addLine(to: p) }
             }
             context.strokePath()
+        }
+
+        for (branch, t, radius, tilt): (Int, CGFloat, CGFloat, CGFloat) in [
+            (0, 0.81, 6.8, -0.45), (0, 0.26, 4.9, 0.64), (1, 0.63, 5.7, -0.92),
+            (2, 0.20, 5.6, 0.94), (3, 0.78, 6.2, -0.38), (4, 0.28, 4.7, 0.32)
+        ] {
+            let base = point(on: limbs[branch], at: t)
+            drawWash(winterLeafGlow, in: context, at: CGPoint(x: base.x, y: base.y + 1.6),
+                     radiusX: radius, radiusY: radius * 0.60, tilt: tilt, opacity: dark ? 0.80 : 1)
         }
     }
 
@@ -284,6 +330,29 @@ enum HomeSceneryArtwork {
         context.setFillColor(color(0xffedbf, alpha: 0.9))
         context.fillEllipse(in: CGRect(x: center.x - 23, y: center.y - 23, width: 46, height: 46))
         context.restoreGState()
+    }
+
+    private static let winterLeafGlow = winterGlow(center: 0x8cb897, edge: 0xa3c5a6)
+    private static let sunlight = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+        colors: [color(0xf8dba0, alpha: 0.84), color(0xfbe7bc, alpha: 0.50),
+                 color(0xfbe7bc, alpha: 0)] as CFArray, locations: [0, 0.48, 1])!
+
+    private static func drawWash(_ gradient: CGGradient, in context: CGContext, at point: CGPoint,
+                                 radiusX: CGFloat, radiusY: CGFloat, tilt: CGFloat, opacity: CGFloat = 1) {
+        context.saveGState()
+        context.translateBy(x: point.x, y: point.y)
+        context.rotate(by: tilt)
+        context.scaleBy(x: radiusX, y: radiusY)
+        context.setAlpha(opacity)
+        context.drawRadialGradient(gradient, startCenter: .zero, startRadius: 0,
+            endCenter: .zero, endRadius: 1, options: [])
+        context.restoreGState()
+    }
+
+    private static func winterGlow(center: UInt32, edge: UInt32) -> CGGradient {
+        let stops = [color(center, alpha: 0.94), color(edge, alpha: 0.62), color(edge, alpha: 0)]
+        return CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: stops as CFArray,
+                          locations: [0, 0.30, 1])!
     }
 
     private static func drawWinterSnowflakes(in context: CGContext) {

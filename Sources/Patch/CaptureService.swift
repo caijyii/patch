@@ -5,7 +5,7 @@ import AppKit
 import ScreenCaptureKit
 
 @MainActor
-final class CaptureService {
+class CaptureService {
     private let permission: ScreenCapturePermission
     init(permission: ScreenCapturePermission? = nil) { self.permission = permission ?? ScreenCapturePermission() }
     var hasPermission: Bool { permission.isGranted }
