@@ -28,14 +28,15 @@ Content is processed locally, with no accounts, ads, or cloud uploads. The inter
 
 Requires **macOS 15+ and Apple Silicon (M-series chips)**.
 
-- **Download**: Get the [latest stable release, v0.1.6](https://github.com/caijyii/patch/releases/tag/v0.1.6). **DMG is recommended**; ZIP is an alternative, so choose just one. Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. `Source code` contains source files, not an installer for ordinary users. No developer tools are required.
-- **Ask an agent to install**: Give your agent this instruction:
+### Direct download
+
+Download the **DMG** (recommended) or ZIP from the [latest stable release, v0.1.6](https://github.com/caijyii/patch/releases/tag/v0.1.6). Open the DMG or extract the ZIP, then drag `Patch.app` into Applications. No developer tools are required. The `Source code` archives are for building Patch from source.
+
+### Ask an agent to install
+
+Give your agent the following instruction.
 
 > Download the Patch installer compatible with my Mac from the GitHub Releases at https://github.com/caijyii/patch and install it.
-
-The current release uses ad-hoc signing and is not notarized. You may need to confirm the first launch in System Settings. See the [installation and permissions guide](docs/install.en.md).
-
-Updates are manual: download a newer version from the [latest stable release](https://github.com/caijyii/patch/releases/latest), then follow the [update steps](docs/install.en.md#update-or-uninstall) to save any pins you need, quit, and replace the old app. Patch does not automatically check for or install updates.
 
 ### Build from source
 
@@ -46,6 +47,12 @@ bash scripts/build-sandbox-app.sh
 ```
 
 Output: `.build/distribution-check/Patch.app` (Patch Development). This is an ad-hoc signed local development build. Avoid running it alongside another Patch version. See [build and signing details (Chinese)](Distribution/README.md).
+
+## First launch and updates
+
+The current release uses ad-hoc signing and is not notarized. You may need to confirm the first launch in System Settings. See the [installation and permissions guide](docs/install.en.md).
+
+Updates are manual: download a newer version from the [latest stable release](https://github.com/caijyii/patch/releases/latest), then follow the [update steps](docs/install.en.md#update-or-uninstall) to save any pins you need, quit, and replace the old app. Patch does not automatically check for or install updates.
 
 ## Usage notes
 

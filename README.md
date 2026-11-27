@@ -28,14 +28,15 @@
 
 需要 **macOS 15+、Apple Silicon（M 系列芯片）**。
 
-- **直接下载**：[最新正式版 v0.1.6](https://github.com/caijyii/patch/releases/tag/v0.1.6)，推荐下载 **DMG**；ZIP 是另一种安装方式，二选一即可。打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。`Source code` 是源码，不是普通用户的安装包；安装无需开发工具。
-- **让 Agent 安装**：把下面这句话交给自己的 Agent。
+### 直接下载
+
+从[最新正式版 v0.1.6](https://github.com/caijyii/patch/releases/tag/v0.1.6) 下载 **DMG**（推荐）或 ZIP。打开 DMG 或解压 ZIP 后，将 `Patch.app` 拖入「应用程序」。安装无需开发工具。发布页的 `Source code` 供从源码构建时使用。
+
+### 让 Agent 安装
+
+把下面这句话交给自己的 Agent。
 
 > 请从 https://github.com/caijyii/patch 的 GitHub Releases 下载适合我的 Mac 的 Patch 安装包并安装。
-
-当前安装包采用临时签名，尚未公证，首次打开可能需要你在系统设置中确认。[安装与权限说明](docs/install.md)
-
-目前需手动更新：到 [最新正式 Release](https://github.com/caijyii/patch/releases/latest) 下载新版，按[更新步骤](docs/install.md#更新与卸载)保存所需贴图、退出并替换旧版；应用没有自动检查或安装更新。
 
 ### 从源码构建
 
@@ -46,6 +47,12 @@ bash scripts/build-sandbox-app.sh
 ```
 
 构建结果：`.build/distribution-check/Patch.app`（Patch Development）。这是临时签名的本地开发包，请避免与其他 Patch 版本同时运行。详见[构建与签名说明](Distribution/README.md)。
+
+## 首次启动与更新
+
+当前安装包采用临时签名，尚未公证，首次打开可能需要你在系统设置中确认。[安装与权限说明](docs/install.md)
+
+目前需手动更新：到 [最新正式 Release](https://github.com/caijyii/patch/releases/latest) 下载新版，按[更新步骤](docs/install.md#更新与卸载)保存所需贴图、退出并替换旧版；应用没有自动检查或安装更新。
 
 ## 使用须知
 
