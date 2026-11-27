@@ -56,7 +56,9 @@ Updates are manual: download a newer version from the [latest stable release](ht
 
 ## Usage notes
 
-- **Clipboard history is automatic.** Patch reads the clipboard at startup, then records images, text, and video file references as you copy them. History can include sensitive content.
+**Patch processes your content on your Mac.** It does not send screen content, recognized text, or audio recordings to the developer.
+
+- **Clipboard history stays on your Mac.** Patch reads the clipboard at startup, then automatically records images, text, and video file references as you copy them. History can include sensitive content.
 - **Quit Patch to stop collection.** Collection continues after you close the main window. There is no separate switch. Choose Quit from the Patch menu in the menu bar.
 - **Quitting clears clipboard history and closes all pins.** History stays in memory on your Mac. Save anything you want to keep before you quit.
 - **Patch requests permissions as needed.** If a feature still won’t work after you grant permission, restart Patch.
