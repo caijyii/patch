@@ -56,9 +56,11 @@ Updates are manual: download a newer version from the [latest stable release](ht
 
 ## Usage notes
 
-- Permissions are requested as needed. Restart the app if a newly granted permission has not taken effect.
-- Patch reads the current clipboard at startup and automatically collects images, text, and video file references while running. Collection has no toggle and cannot detect all sensitive content. History stays only in process memory and is cleared on quit; pins also close. Closing the home window leaves Patch running and collecting in the menu bar; choose Quit from the Patch menu to exit.
-- Scrolling captures may not stitch reliably with dynamic layouts or multiple scrollable areas. Fixed headers and overlays may remain visible or appear more than once.
+- **Clipboard history is automatic.** Patch reads the clipboard at startup, then records images, text, and video file references as you copy them. History can include sensitive content.
+- **Quit Patch to stop collection.** Collection continues after you close the main window. There is no separate switch. Choose Quit from the Patch menu in the menu bar.
+- **Quitting clears clipboard history and closes all pins.** History stays in memory on your Mac. Save anything you want to keep before you quit.
+- **Patch requests permissions as needed.** If a feature still won’t work after you grant permission, restart Patch.
+- **Scrolling captures can have stitching errors.** Content can shift out of alignment on pages with changing layouts or multiple scrollable areas. Fixed headers and overlays may remain visible or appear more than once.
 
 See the [usage guide](docs/usage.en.md) and [privacy notice](docs/privacy-policy.en.md).
 
