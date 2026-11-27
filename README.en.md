@@ -56,15 +56,13 @@ Updates are manual: download a newer version from the [latest stable release](ht
 
 ## Usage notes
 
-**Patch processes your content on your Mac.** It does not send screen content, recognized text, or audio recordings to the developer.
-
-- **Clipboard history stays on your Mac.** Patch reads the clipboard at startup, then automatically records images, text, and video file references as you copy them. History can include sensitive content.
-- **Quit Patch to stop collection.** Collection continues after you close the main window. There is no separate switch. Choose Quit from the Patch menu in the menu bar.
-- **Quitting clears clipboard history and closes all pins.** History stays in memory on your Mac. Save anything you want to keep before you quit.
-- **Patch requests permissions as needed.** If a feature still won’t work after you grant permission, restart Patch.
-- **Scrolling captures can have stitching errors.** Content can shift out of alignment on pages with changing layouts or multiple scrollable areas. Fixed headers and overlays may remain visible or appear more than once.
-
-See the [usage guide](docs/usage.en.md) and [privacy notice](docs/privacy-policy.en.md).
+- **On-device processing** · Patch never sends screen content, recognized text, or audio to the developer.
+- **Clipboard history** · Copied text, images, and video file references are recorded from launch and may include sensitive content.
+- **Stop collection** · Closing the main window keeps history active. Choose Quit from the Patch menu to stop.
+- **Save before quitting** · History lives in memory. Quitting clears it and closes all pins.
+- **Permissions** · Patch asks as needed. Restart it if a new permission hasn’t taken effect.
+- **Scrolling captures** · Changing layouts or multiple scroll areas can cause misalignment or repeated headers and overlays.
+- **More details** · [Usage guide](docs/usage.en.md) · [Privacy notice](docs/privacy-policy.en.md)
 
 ## Default shortcuts
 
